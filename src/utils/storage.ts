@@ -75,6 +75,10 @@ export const setActiveUser = (user: User | null): void => {
 
 // Patient APIs
 export const fetchPatientsApi = async (): Promise<Patient[]> => {
+  const user = getActiveUser();
+  if (!user || !user.token) {
+    return getPatientsLocal();
+  }
   try {
     const res = await fetch('/api/patients', { headers: getAuthHeader() });
     if (res.ok) {
@@ -96,16 +100,22 @@ export const getPatientsLocal = (): Patient[] => {
       patients = JSON.parse(data);
     }
     // Ensure strictly unique IDs across loaded patients
+    let idWasGenerated = false;
     const seen = new Set<string>();
     const uniquePatients: Patient[] = [];
     patients.forEach((p, idx) => {
       let id = p.id;
       if (!id || seen.has(id)) {
         id = `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`;
+        idWasGenerated = true;
       }
       seen.add(id);
       uniquePatients.push({ ...p, id });
     });
+
+    if (idWasGenerated && uniquePatients.length > 0) {
+      savePatientsLocal(uniquePatients);
+    }
     return uniquePatients;
   } catch (err) {
     return INITIAL_PATIENTS;
@@ -211,6 +221,10 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
 
 // Quotation APIs
 export const fetchQuotationsApi = async (): Promise<InvoiceQuotation[]> => {
+  const user = getActiveUser();
+  if (!user || !user.token) {
+    return getQuotationsLocal();
+  }
   try {
     const res = await fetch('/api/quotations', { headers: getAuthHeader() });
     if (res.ok) {
@@ -281,6 +295,10 @@ export const saveQuotationApi = async (quotation: InvoiceQuotation): Promise<Inv
 
 // Catalog APIs
 export const fetchCatalogApi = async (): Promise<CatalogItem[]> => {
+  const user = getActiveUser();
+  if (!user || !user.token) {
+    return getCatalogLocal();
+  }
   try {
     const res = await fetch('/api/catalog', { headers: getAuthHeader() });
     if (res.ok) {
@@ -407,6 +425,10 @@ export const clearDemoDataApi = async (): Promise<{ users: User[], patients: Pat
 };
 
 export const fetchUsersApi = async (): Promise<User[]> => {
+  const user = getActiveUser();
+  if (!user || !user.token) {
+    return getUsersLocal();
+  }
   try {
     const res = await fetch('/api/users', { headers: getAuthHeader() });
     if (res.ok) {

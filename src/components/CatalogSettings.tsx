@@ -16,7 +16,10 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
 
   useEffect(() => {
     if (catalog && catalog.length > 0) {
-      setItems(catalog);
+      setItems(prev => {
+        if (JSON.stringify(prev) === JSON.stringify(catalog)) return prev;
+        return catalog;
+      });
     }
   }, [catalog]);
 

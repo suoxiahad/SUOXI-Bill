@@ -65,7 +65,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, canClose = true,
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden transition-all duration-200 ease-out">
         
         {/* Header */}
         <div className="bg-slate-900 text-white p-6 text-center relative">

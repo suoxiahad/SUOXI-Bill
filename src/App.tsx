@@ -45,32 +45,38 @@ export default function App() {
   // Initial Load
   useEffect(() => {
     // Load local cache immediately
-    setPatients(getPatientsLocal());
-    setQuotations(getQuotationsLocal());
-    setCatalog(getCatalogLocal());
+    const localP = getPatientsLocal();
+    const localQ = getQuotationsLocal();
+    const localC = getCatalogLocal();
+
+    setPatients(localP);
+    setQuotations(localQ);
+    setCatalog(localC);
 
     // Check saved user session
     const savedUser = getActiveUser();
-    if (savedUser) {
+    if (savedUser && savedUser.token) {
       setCurrentUser(savedUser);
+      // Async sync from API backend only if user has an active session token
+      refreshAllDataFromApi();
     } else {
       setCurrentUser(null);
       setIsLoginModalOpen(true);
     }
-
-    // Async sync from API backend
-    refreshAllDataFromApi();
   }, []);
 
   const refreshAllDataFromApi = async () => {
+    const user = getActiveUser();
+    if (!user || !user.token) return;
+
     const p = await fetchPatientsApi();
-    setPatients(p);
+    if (p && p.length >= 0) setPatients(p);
 
     const q = await fetchQuotationsApi();
-    setQuotations(q);
+    if (q && q.length >= 0) setQuotations(q);
 
     const c = await fetchCatalogApi();
-    setCatalog(c);
+    if (c && c.length > 0) setCatalog(c);
 
     await fetchUsersApi();
   };
@@ -82,6 +88,7 @@ export default function App() {
     } else if (user.role === 'Doctor') {
       setActiveTab('quotation');
     }
+    refreshAllDataFromApi();
   };
 
   const handleLogout = () => {

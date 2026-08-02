@@ -109,6 +109,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [treatmentSearch, setTreatmentSearch] = useState('');
   const [treatmentList, setTreatmentList] = useState<TreatmentListItem[]>([]);
 
+  const catalogKey = JSON.stringify(catalog);
+
   // Initialize treatment list from catalog setup (Admin entry)
   useEffect(() => {
     const treatmentCatalog = catalog.filter(c => c.category === 'treatment' || c.category === 'consultation');
@@ -180,7 +182,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalog]);
+  }, [catalogKey]);
 
   const toggleTreatmentSelection = (id: string) => {
     setTreatmentList(prev => prev.map(item => {
@@ -306,7 +308,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalog]);
+  }, [catalogKey]);
 
   const toggleOutdoorPackageSelection = (id: string) => {
     setOutdoorPackageList(prev => prev.map(item => {
@@ -422,7 +424,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalog]);
+  }, [catalogKey]);
 
   const toggleIndoorServiceSelection = (id: string) => {
     setIndoorServiceList(prev => prev.map(item => {
