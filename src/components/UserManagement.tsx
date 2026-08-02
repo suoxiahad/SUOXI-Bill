@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { UserPlus, Shield, Stethoscope, PhoneCall, Trash2, Key, Edit3, CheckCircle, AlertCircle } from 'lucide-react';
-import { getUsersLocal, fetchUsersApi, saveUserApi, deleteUserApi } from '../utils/storage';
+import { UserPlus, Shield, Stethoscope, PhoneCall, Trash2, Key, Edit3, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
+import { getUsersLocal, fetchUsersApi, saveUserApi, deleteUserApi, clearDemoDataApi } from '../utils/storage';
 
 interface UserManagementProps {
   currentUser: User | null;
@@ -27,6 +27,28 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
       setUsers(u);
     } catch (err) {
       console.error('Failed to load users:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearDemoData = async () => {
+    if (!window.confirm('Are you sure you want to purge all demo patients and demo staff accounts? Only the System Admin account will remain.')) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await clearDemoDataApi();
+      setUsers(result.users);
+      setStatusMessage({
+        type: 'success',
+        text: 'All demo patients and non-admin demo staff accounts purged! Only admin credentials remain active.'
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Failed to purge demo data: ' + (err.message || 'Error occurred')
+      });
     } finally {
       setLoading(false);
     }
@@ -127,6 +149,17 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
             Create and manage login accounts & permissions for Doctors, Call Center, and System Administrators.
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={handleClearDemoData}
+          disabled={loading}
+          className="px-4 py-2.5 bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-semibold rounded-xl border border-rose-500 shadow-md transition flex items-center gap-2 cursor-pointer shrink-0"
+          title="Purge demo patients and non-admin demo staff accounts for live deployment"
+        >
+          <Trash2 className="w-4 h-4" />
+          Purge Demo Data (Keep Admin Only)
+        </button>
       </div>
 
       {statusMessage && (

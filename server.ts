@@ -126,7 +126,47 @@ const DEFAULT_CATALOG = [
   { id: 'cat-12', name: 'Doctor Assessment & Counseling Fee', category: 'consultation', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Doctor first visit counseling fee' }
 ];
 
-const INITIAL_PATIENTS = [
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const FORCE_CLEAR_DEMO = process.env.CLEAR_DEMO_DATA === 'true';
+
+// Permanent Admin Credential
+const ADMIN_USER_RECORD: UserRecord = {
+  id: 'usr-admin',
+  username: 'admin',
+  password_hash: bcrypt.hashSync('admin123', 10),
+  name: 'Hospital System Admin',
+  role: 'System Admin',
+  phone: '01700000000',
+  is_active: 1
+};
+
+// Demo accounts (only active in development)
+const DEMO_STAFF_USERS: UserRecord[] = [
+  {
+    id: 'usr-doctor',
+    username: 'doctor',
+    password_hash: bcrypt.hashSync('doctor123', 10),
+    name: 'Prof. Dr. SM Shahidullah',
+    role: 'Doctor',
+    phone: '01711111111',
+    is_active: 1
+  },
+  {
+    id: 'usr-callcenter',
+    username: 'callcenter',
+    password_hash: bcrypt.hashSync('cc123', 10),
+    name: 'Call Center Desk',
+    role: 'Call Center',
+    phone: '01722222222',
+    is_active: 1
+  }
+];
+
+const INITIAL_USERS: UserRecord[] = (IS_PRODUCTION || FORCE_CLEAR_DEMO)
+  ? [ADMIN_USER_RECORD]
+  : [ADMIN_USER_RECORD, ...DEMO_STAFF_USERS];
+
+const DEMO_PATIENTS = [
   {
     id: 'pat-101',
     name: 'Md. Rafiqul Islam',
@@ -161,35 +201,7 @@ const INITIAL_PATIENTS = [
   }
 ];
 
-const INITIAL_USERS: UserRecord[] = [
-  {
-    id: 'usr-admin',
-    username: 'admin',
-    password_hash: bcrypt.hashSync('admin123', 10),
-    name: 'Hospital System Admin',
-    role: 'System Admin',
-    phone: '01700000000',
-    is_active: 1
-  },
-  {
-    id: 'usr-doctor',
-    username: 'doctor',
-    password_hash: bcrypt.hashSync('doctor123', 10),
-    name: 'Prof. Dr. SM Shahidullah',
-    role: 'Doctor',
-    phone: '01711111111',
-    is_active: 1
-  },
-  {
-    id: 'usr-callcenter',
-    username: 'callcenter',
-    password_hash: bcrypt.hashSync('cc123', 10),
-    name: 'Call Center Desk',
-    role: 'Call Center',
-    phone: '01722222222',
-    is_active: 1
-  }
-];
+const INITIAL_PATIENTS = (IS_PRODUCTION || FORCE_CLEAR_DEMO) ? [] : DEMO_PATIENTS;
 
 // Local JSON DB Helper
 let localData = {
@@ -204,10 +216,24 @@ function loadLocalDb() {
     if (fs.existsSync(LOCAL_DB_FILE)) {
       const raw = fs.readFileSync(LOCAL_DB_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
+      
+      let users = Array.isArray(parsed.users) && parsed.users.length > 0 ? parsed.users : INITIAL_USERS;
+      let patients = Array.isArray(parsed.patients) ? parsed.patients : INITIAL_PATIENTS;
+      let quotations = Array.isArray(parsed.quotations) ? parsed.quotations : [];
+
+      // In production mode, remove all demo patients and demo staff accounts
+      if (IS_PRODUCTION || FORCE_CLEAR_DEMO) {
+        patients = patients.filter((p: any) => p.id !== 'pat-101' && p.id !== 'pat-102');
+        users = users.filter((u: any) => u.username === 'admin' || (u.id !== 'usr-doctor' && u.id !== 'usr-callcenter'));
+        if (!users.some((u: any) => u.username === 'admin')) {
+          users.unshift(ADMIN_USER_RECORD);
+        }
+      }
+
       localData = {
-        users: Array.isArray(parsed.users) && parsed.users.length > 0 ? parsed.users : INITIAL_USERS,
-        patients: Array.isArray(parsed.patients) ? parsed.patients : INITIAL_PATIENTS,
-        quotations: Array.isArray(parsed.quotations) ? parsed.quotations : [],
+        users,
+        patients,
+        quotations,
         catalog: Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : DEFAULT_CATALOG
       };
     } else {
@@ -250,7 +276,8 @@ async function initDatabase() {
         database,
         waitForConnections: true,
         connectionLimit: 10,
-        queueLimit: 0
+        queueLimit: 0,
+        connectTimeout: 3000
       });
 
       const connection = await pool.getConnection();
@@ -334,11 +361,11 @@ async function initDatabase() {
         }
       }
     } catch (err: any) {
-      console.warn('⚠️ MySQL connection failed:', err.message);
-      console.warn('⚡ Operating in Central Local File Persistence Mode. Data persists across restarts!');
+      console.log(`ℹ️ MySQL connection at ${host}:${dbPort} skipped (${err.code || err.message}).`);
+      console.log('⚡ Operating in Central Local File Persistence Mode. Data persists across restarts!');
     }
   } else {
-    console.log('ℹ️ No MYSQL_HOST configured in environment. Using Local File Storage. Configure MYSQL_HOST in .env for VPS deployment.');
+    console.log('ℹ️ No MYSQL_HOST configured in environment. Using Local File Storage.');
   }
 }
 
@@ -1161,6 +1188,39 @@ app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor'
     return res.json({ message: 'Catalog price updated successfully', catalog: localData.catalog });
   }
   res.status(400).json({ error: 'Invalid catalog data' });
+});
+
+// 7. System Admin Clear Demo Data API
+app.post('/api/admin/clear-demo-data', authenticateToken, requireRole('System Admin'), async (req, res) => {
+  try {
+    // Remove demo patients pat-101, pat-102
+    localData.patients = localData.patients.filter(p => p.id !== 'pat-101' && p.id !== 'pat-102');
+
+    // Remove demo staff accounts, retain admin
+    localData.users = localData.users.filter(u => u.username === 'admin' || (u.id !== 'usr-doctor' && u.id !== 'usr-callcenter'));
+    if (!localData.users.some(u => u.username === 'admin')) {
+      localData.users.unshift(ADMIN_USER_RECORD);
+    }
+
+    saveLocalDb();
+
+    if (isMySqlActive && mysqlPool) {
+      try {
+        await mysqlPool.execute("DELETE FROM patients WHERE id IN ('pat-101', 'pat-102')");
+        await mysqlPool.execute("DELETE FROM users WHERE id IN ('usr-doctor', 'usr-callcenter')");
+      } catch (err) {
+        console.error('MySQL clear demo error:', err);
+      }
+    }
+
+    return res.json({
+      message: 'Demo data cleared successfully. Only admin login credentials remain.',
+      users: localData.users,
+      patients: localData.patients
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to clear demo data: ' + err.message });
+  }
 });
 
 

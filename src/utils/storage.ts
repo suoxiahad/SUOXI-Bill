@@ -6,8 +6,8 @@ const QUOTATIONS_KEY = 'suoxi_quotations_db';
 const CATALOG_KEY = 'suoxi_catalog_db';
 const AUTH_KEY = 'suoxi_auth_user';
 
-// Initial sample patient data
-const INITIAL_PATIENTS: Patient[] = [
+// Initial sample patient data (development only)
+const DEMO_PATIENTS_LIST: Patient[] = [
   {
     id: 'pat-101',
     name: 'MD. RAFIQUL ISLAM',
@@ -39,6 +39,8 @@ const INITIAL_PATIENTS: Patient[] = [
     notes: 'Stroke rehabilitation, Facial palsy'
   }
 ];
+
+const INITIAL_PATIENTS: Patient[] = import.meta.env.PROD ? [] : DEMO_PATIENTS_LIST;
 
 // Helper to get auth header
 function getAuthHeader(): Record<string, string> {
@@ -339,11 +341,17 @@ export const saveCatalogApi = async (catalog: CatalogItem[]): Promise<CatalogIte
 // Users APIs & Persistence
 const USERS_KEY = 'suoxi_users_db';
 
-const DEFAULT_USERS_LIST: User[] = [
-  { id: 'usr-admin', username: 'admin', name: 'Hospital System Admin', role: 'System Admin', phone: '01700000000' },
+const ADMIN_ONLY_USER: User[] = [
+  { id: 'usr-admin', username: 'admin', name: 'Hospital System Admin', role: 'System Admin', phone: '01700000000' }
+];
+
+const ALL_DEV_USERS: User[] = [
+  ...ADMIN_ONLY_USER,
   { id: 'usr-doc1', username: 'doctor', name: 'Prof. Dr. SM Shahidullah', role: 'Doctor', phone: '01711111111' },
   { id: 'usr-cc1', username: 'callcenter', name: 'Call Center Desk', role: 'Call Center', phone: '01722222222' }
 ];
+
+const DEFAULT_USERS_LIST: User[] = import.meta.env.PROD ? ADMIN_ONLY_USER : ALL_DEV_USERS;
 
 export const getUsersLocal = (): User[] => {
   try {
@@ -360,6 +368,42 @@ export const saveUsersLocal = (users: User[]): void => {
   } catch (err) {
     console.error('Error saving local users', err);
   }
+};
+
+export const clearDemoDataApi = async (): Promise<{ users: User[], patients: Patient[] }> => {
+  let users: User[] = [];
+  let patients: Patient[] = [];
+
+  try {
+    const res = await fetch('/api/admin/clear-demo-data', {
+      method: 'POST',
+      headers: getAuthHeader()
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.users)) users = data.users;
+      if (Array.isArray(data.patients)) patients = data.patients;
+    }
+  } catch (err) {
+    console.warn('Error clearing demo data via API:', err);
+  }
+
+  // Fallback / local cleanup
+  if (users.length === 0) {
+    const currentUsers = getUsersLocal();
+    users = currentUsers.filter(u => u.username === 'admin' || (u.id !== 'usr-doc1' && u.id !== 'usr-doctor' && u.id !== 'usr-cc1' && u.id !== 'usr-callcenter'));
+    if (!users.some(u => u.username === 'admin')) {
+      users.unshift(ADMIN_ONLY_USER[0]);
+    }
+  }
+
+  const currentPatients = getPatientsLocal();
+  patients = currentPatients.filter(p => p.id !== 'pat-101' && p.id !== 'pat-102');
+
+  saveUsersLocal(users);
+  savePatientsLocal(patients);
+
+  return { users, patients };
 };
 
 export const fetchUsersApi = async (): Promise<User[]> => {
