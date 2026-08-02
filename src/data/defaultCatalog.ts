@@ -1,0 +1,150 @@
+import { CatalogItem } from '../types';
+
+export const DEFAULT_CATALOG: CatalogItem[] = [
+  // Acupuncture & Individual Treatments
+  {
+    id: 'tr-scalp',
+    name: 'Scalp Acupuncture',
+    category: 'treatment',
+    defaultPrice: 1000,
+    defaultDiscountPercent: 0,
+    description: 'Neurological scalp acupuncture therapy'
+  },
+  {
+    id: 'tr-tongue',
+    name: 'Tongue Acupuncture',
+    category: 'treatment',
+    defaultPrice: 1000,
+    defaultDiscountPercent: 0,
+    description: 'Specialized tongue acupuncture session'
+  },
+  {
+    id: 'tr-ear',
+    name: 'Ear Acupuncture',
+    category: 'treatment',
+    defaultPrice: 1000,
+    defaultDiscountPercent: 0,
+    description: 'Auricular acupuncture therapy'
+  },
+  {
+    id: 'tr-1',
+    name: 'Traditional Body Acupuncture',
+    category: 'treatment',
+    defaultPrice: 1200,
+    defaultDiscountPercent: 0,
+    description: 'Acupuncture session with sterile needles'
+  },
+  {
+    id: 'tr-2',
+    name: 'Electro-Acupuncture Therapy',
+    category: 'treatment',
+    defaultPrice: 1500,
+    defaultDiscountPercent: 0,
+    description: 'Targeted nerve stimulation with micro-current'
+  },
+  {
+    id: 'tr-3',
+    name: 'Cupping / Hijama Therapy',
+    category: 'treatment',
+    defaultPrice: 1000,
+    defaultDiscountPercent: 0,
+    description: 'Dry/Wet cupping for blood circulation and detoxification'
+  },
+  {
+    id: 'tr-4',
+    name: 'Moxibustion Heat Therapy',
+    category: 'treatment',
+    defaultPrice: 800,
+    defaultDiscountPercent: 0,
+    description: 'Heat therapy using moxa wool'
+  },
+  {
+    id: 'tr-5',
+    name: 'Physiotherapy & Rehabilitation',
+    category: 'treatment',
+    defaultPrice: 1000,
+    defaultDiscountPercent: 0,
+    description: 'Manual rehabilitation and joint mobilization'
+  },
+  {
+    id: 'tr-6',
+    name: 'Laser Acupuncture Therapy',
+    category: 'treatment',
+    defaultPrice: 1800,
+    defaultDiscountPercent: 0,
+    description: 'Non-invasive laser stimulation'
+  },
+  {
+    id: 'tr-7',
+    name: 'Infrared & TENS Pain Therapy',
+    category: 'treatment',
+    defaultPrice: 700,
+    defaultDiscountPercent: 0,
+    description: 'Pain management thermal therapy'
+  },
+
+  // Outdoor Packages
+  {
+    id: 'pkg-30',
+    name: '30-Day Comprehensive Outdoor Package',
+    category: 'outdoor_package',
+    defaultPrice: 36000,
+    defaultDiscountPercent: 20,
+    description: 'Comprehensive 30 days daily acupuncture & rehab sessions'
+  },
+  {
+    id: 'pkg-15',
+    name: '15-Day Intensive Outdoor Package',
+    category: 'outdoor_package',
+    defaultPrice: 18000,
+    defaultDiscountPercent: 15,
+    description: 'Intensive 15 days acupuncture regimen'
+  },
+  {
+    id: 'pkg-1',
+    name: 'Daily Special Combination Package',
+    category: 'outdoor_package',
+    defaultPrice: 2500,
+    defaultDiscountPercent: 10,
+    description: 'Combined multi-therapy day package'
+  },
+
+  // Indoor Accommodation Services
+  {
+    id: 'room-single',
+    name: 'Single Premium AC Cabin',
+    category: 'indoor_room',
+    defaultPrice: 3500,
+    description: 'Attached bath, LED TV, attendant couch, AC'
+  },
+  {
+    id: 'room-sharing',
+    name: 'Sharing Deluxe AC Cabin',
+    category: 'indoor_room',
+    defaultPrice: 2000,
+    description: 'Two patient bed sharing cabin'
+  },
+  {
+    id: 'room-ac-ward',
+    name: 'General AC Ward Bed',
+    category: 'indoor_room',
+    defaultPrice: 1200,
+    description: 'Air conditioned general ward bed'
+  },
+  {
+    id: 'room-non-ac',
+    name: 'General Non-AC Ward Bed',
+    category: 'indoor_room',
+    defaultPrice: 800,
+    description: 'General ward bed with fan'
+  },
+
+  // Consultation
+  {
+    id: 'doc-consult',
+    name: 'Doctor Counseling & Assessment Fee',
+    category: 'consultation',
+    defaultPrice: 1000,
+    description: 'Senior acupuncture doctor consultation'
+  }
+];

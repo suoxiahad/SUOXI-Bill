@@ -1,0 +1,113 @@
+export interface Patient {
+  id: string;
+  serialNo?: string;
+  name: string;
+  phone: string;
+  age?: number | string;
+  gender?: 'Male' | 'Female' | 'Other' | string;
+  address?: string;
+  doctorName?: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
+  department?: string;
+  status: 'Pending Counseling' | 'Quotation Created' | 'Treatment Ongoing' | 'Completed';
+  createdAt: string;
+  notes?: string; // Remark / Disease / Medical Condition
+  remark?: string;
+}
+
+export interface IndividualTreatment {
+  id: string;
+  treatmentName: string;
+  unitCost: number; // Cost per session
+  sessions: number; // Number of sessions
+  discountPercent: number; // Discount percentage (%)
+  discountAmount: number; // Discount amount
+  totalCost: number; // Total cost
+}
+
+export interface OutdoorPackage {
+  id: string;
+  packageType: '30_day' | '15_day' | 'daily' | 'custom' | string;
+  packageName: string; // e.g. 30 Days Comprehensive Package
+  totalBaseCost: number;
+  discountPercent: number;
+  discountAmount: number;
+  netCost: number;
+  description?: string;
+}
+
+export interface IndoorService {
+  id: string;
+  roomType: 'Single Cabin' | 'Sharing Cabin' | 'AC Ward' | 'Non AC Ward' | 'VIP Suite' | string;
+  dailyRate: number; // Daily room rate
+  days: number; // Number of days
+  totalAmount: number; // Total amount
+  remarks?: string;
+}
+
+export interface InvoiceQuotation {
+  id: string;
+  quotationNumber: string; // e.g. SXH-2026-0001
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  patientAge?: string | number;
+  patientGender?: string;
+  doctorName?: string;
+  createdDate: string;
+  validUntil: string;
+  visitNumber?: number;
+  visitLabel?: string;
+  
+  // Section 1: Individual Treatments
+  treatments: IndividualTreatment[];
+  treatmentsSubtotal: number;
+  
+  // Section 2: Outdoor Service Packages
+  outdoorPackages: OutdoorPackage[];
+  outdoorSubtotal: number;
+  
+  // Section 3: Indoor Accommodation
+  indoorServices: IndoorService[];
+  indoorSubtotal: number;
+
+  // Additional Fees & Discounts
+  admissionFee?: number;
+  consultationFee?: number;
+  investigationFee?: number;
+  overallDiscountPercent: number;
+  overallDiscountAmount: number;
+  
+  // Grand Summary
+  grossTotal: number;
+  grandTotal: number;
+  advancePaid: number;
+  dueAmount: number;
+  
+  paymentStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid';
+  notes?: string;
+  createdBy: string;
+}
+
+export interface CatalogItem {
+  id: string;
+  name: string;
+  category: 'treatment' | 'outdoor_package' | 'indoor_room' | 'consultation';
+  defaultPrice: number;
+  defaultDiscountPercent?: number;
+  description?: string;
+  rateNote?: string;
+}
+
+export type UserRole = 'System Admin' | 'Doctor' | 'Call Center';
+
+export interface User {
+  id: string;
+  username: string;
+  name: string;
+  role: UserRole;
+  phone?: string;
+  token?: string;
+}
+
