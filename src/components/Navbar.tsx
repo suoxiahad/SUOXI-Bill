@@ -193,7 +193,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span>Appointments & PDF Import</span>
+              <span>Appointments & Sheet Import</span>
               {patientCount > 0 && (
                 <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'appointments' ? 'bg-slate-900 text-emerald-300' : 'bg-slate-800 text-emerald-400'}`}>
                   {patientCount}
