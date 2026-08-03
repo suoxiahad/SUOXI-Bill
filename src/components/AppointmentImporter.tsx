@@ -44,6 +44,32 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     text: string;
   } | null>(null);
 
+  const processFileDirectly = async (file: File) => {
+    setSelectedFile(file);
+    setIsProcessing(true);
+    setUploadMessage({
+      type: 'info',
+      text: `Reading & extracting patients from "${file.name}"...`
+    });
+
+    const result = await parseExcelAppointmentFile(file);
+
+    if (result.success && result.data.length > 0) {
+      setParsedPreview(result.data);
+      setUploadMessage({
+        type: 'success',
+        text: `Extracted ${result.data.length} patient records from ${file.name}. Review the preview below and click "Confirm & Import to Database".`
+      });
+    } else {
+      setParsedPreview([]);
+      setUploadMessage({
+        type: 'error',
+        text: result.error || 'Failed to parse records from the file. Please download the sample Excel template for the required column format.'
+      });
+    }
+    setIsProcessing(false);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -56,8 +82,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         file.type.includes('excel') ||
         file.type.includes('csv')
       ) {
-        setSelectedFile(file);
-        setUploadMessage(null);
+        processFileDirectly(file);
       } else {
         setUploadMessage({
           type: 'error',
@@ -68,29 +93,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   };
 
   const handleProcessFile = async () => {
-    if (!selectedFile) return;
-
-    setIsProcessing(true);
-    setUploadMessage({
-      type: 'info',
-      text: 'Reading Excel spreadsheet data...'
-    });
-
-    const result = await parseExcelAppointmentFile(selectedFile);
-
-    if (result.success && result.data.length > 0) {
-      setParsedPreview(result.data);
-      setUploadMessage({
-        type: 'success',
-        text: `Successfully extracted ${result.data.length} patient records from ${selectedFile.name}. Click "Confirm & Import to Database" below.`
-      });
-    } else {
-      setUploadMessage({
-        type: 'error',
-        text: result.error || 'Failed to parse records from the file. Please download the sample Excel template for the required column format.'
-      });
+    if (selectedFile) {
+      await processFileDirectly(selectedFile);
     }
-    setIsProcessing(false);
   };
 
   const handleSaveParsedRecords = async () => {

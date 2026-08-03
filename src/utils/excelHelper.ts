@@ -152,7 +152,8 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       if (!val) return;
 
       // Detect Phone Number
-      const pMatch = val.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/);
+      const cleanedCellStr = val.replace(/[\s\-\(\)]/g, '');
+      const pMatch = val.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/) || cleanedCellStr.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/);
       if (pMatch && !phone) {
         phone = pMatch[0];
       }
