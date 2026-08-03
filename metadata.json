@@ -1,5 +1,5 @@
 {
-  "name": "SUO XI Hospital Billing & Quotation System",
+  "name": "SUOXI Billing System",
   "description": "Invoice and quotation management system for SUO XI Hospital Acupuncture billing counter featuring Excel appointment imports, patient lookup, custom treatment and package calculations, indoor/outdoor billing, and printable quotation invoices.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

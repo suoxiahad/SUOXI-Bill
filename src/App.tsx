@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Lock, LogIn } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { AppointmentImporter } from './components/AppointmentImporter';
@@ -8,31 +8,27 @@ import { QuotationHistory } from './components/QuotationHistory';
 import { CatalogSettings } from './components/CatalogSettings';
 import { UserManagement } from './components/UserManagement';
 import { PatientModal } from './components/PatientModal';
-import { VpsGuideModal } from './components/VpsGuideModal';
 import { LoginModal } from './components/LoginModal';
 
 import { Patient, InvoiceQuotation, CatalogItem, User } from './types';
 import { 
   getActiveUser,
   setActiveUser,
-  fetchPatientsApi,
+  fetchInitApi,
   getPatientsLocal,
   addOrUpdatePatientApi,
-  fetchQuotationsApi,
   getQuotationsLocal,
   saveQuotationApi,
-  fetchCatalogApi,
   getCatalogLocal,
-  saveCatalogApi,
-  fetchUsersApi,
-  getUsersLocal
+  saveCatalogApi
 } from './utils/storage';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'appointments' | 'quotation' | 'history' | 'catalog' | 'vps_guide' | 'users'>('appointments');
+  const [activeTab, setActiveTab] = useState<'appointments' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
   
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [quotations, setQuotations] = useState<InvoiceQuotation[]>([]);
@@ -42,53 +38,44 @@ export default function App() {
   const [printQuotation, setPrintQuotation] = useState<InvoiceQuotation | null>(null);
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
 
-  // Initial Load
-  useEffect(() => {
-    // Load local cache immediately
-    const localP = getPatientsLocal();
-    const localQ = getQuotationsLocal();
-    const localC = getCatalogLocal();
-
-    setPatients(localP);
-    setQuotations(localQ);
-    setCatalog(localC);
-
-    // Check saved user session
+  const initializeAppData = useCallback(async () => {
+    setIsLoading(true);
     const savedUser = getActiveUser();
     if (savedUser && savedUser.token) {
       setCurrentUser(savedUser);
-      // Async sync from API backend only if user has an active session token
-      refreshAllDataFromApi();
+      const initData = await fetchInitApi();
+      if (initData) {
+        setPatients(initData.patients);
+        setQuotations(initData.quotations);
+        setCatalog(initData.catalog);
+      } else {
+        setPatients(getPatientsLocal());
+        setQuotations(getQuotationsLocal());
+        setCatalog(getCatalogLocal());
+      }
     } else {
       setCurrentUser(null);
+      setPatients(getPatientsLocal());
+      setQuotations(getQuotationsLocal());
+      setCatalog(getCatalogLocal());
       setIsLoginModalOpen(true);
     }
+    setIsLoading(false);
   }, []);
 
-  const refreshAllDataFromApi = async () => {
-    const user = getActiveUser();
-    if (!user || !user.token) return;
+  useEffect(() => {
+    initializeAppData();
+  }, [initializeAppData]);
 
-    const p = await fetchPatientsApi();
-    if (p && p.length >= 0) setPatients(p);
-
-    const q = await fetchQuotationsApi();
-    if (q && q.length >= 0) setQuotations(q);
-
-    const c = await fetchCatalogApi();
-    if (c && c.length > 0) setCatalog(c);
-
-    await fetchUsersApi();
-  };
-
-  const handleLoginSuccess = (user: User) => {
+  const handleLoginSuccess = async (user: User) => {
     setCurrentUser(user);
+    setIsLoginModalOpen(false);
     if (user.role === 'Call Center') {
       setActiveTab('appointments');
     } else if (user.role === 'Doctor') {
       setActiveTab('quotation');
     }
-    refreshAllDataFromApi();
+    await initializeAppData();
   };
 
   const handleLogout = () => {
@@ -97,7 +84,6 @@ export default function App() {
     setIsLoginModalOpen(true);
   };
 
-  // Handlers
   const handleSelectPatientForQuotation = (patient: Patient) => {
     setSelectedPatientForQuotation(patient);
     setActiveTab('quotation');
@@ -122,7 +108,9 @@ export default function App() {
   const handleSaveQuotation = async (quotation: InvoiceQuotation) => {
     const updated = await saveQuotationApi(quotation);
     setQuotations(updated);
-    refreshAllDataFromApi();
+    // Refresh patient list locally so patient status updates to "Quotation Created" without trigger loops
+    const updatedPatients = getPatientsLocal();
+    setPatients(updatedPatients);
   };
 
   const handlePreviewPrint = (quotation: InvoiceQuotation) => {
@@ -182,7 +170,7 @@ export default function App() {
             {activeTab === 'appointments' && (
               <AppointmentImporter
                 patients={patients}
-                onRefreshPatients={refreshAllDataFromApi}
+                onRefreshPatients={initializeAppData}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
                 onOpenAddPatient={() => setIsAddPatientOpen(true)}
               />
@@ -194,6 +182,7 @@ export default function App() {
                 patients={patients}
                 quotations={quotations}
                 catalog={catalog}
+                currentUser={currentUser}
                 onSaveQuotation={handleSaveQuotation}
                 onPreviewPrint={handlePreviewPrint}
               />
@@ -215,10 +204,6 @@ export default function App() {
 
             {activeTab === 'users' && (
               <UserManagement currentUser={currentUser} />
-            )}
-
-            {activeTab === 'vps_guide' && (
-              <VpsGuideModal />
             )}
           </>
         )}

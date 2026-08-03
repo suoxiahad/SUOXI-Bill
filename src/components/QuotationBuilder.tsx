@@ -18,7 +18,8 @@ import {
   OutdoorPackage, 
   IndoorService, 
   InvoiceQuotation, 
-  CatalogItem 
+  CatalogItem,
+  User 
 } from '../types';
 
 interface TreatmentListItem {
@@ -69,6 +70,7 @@ interface QuotationBuilderProps {
   patients: Patient[];
   quotations?: InvoiceQuotation[];
   catalog: CatalogItem[];
+  currentUser?: User | null;
   onSaveQuotation: (quotation: InvoiceQuotation) => void;
   onPreviewPrint: (quotation: InvoiceQuotation) => void;
 }
@@ -78,6 +80,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   patients,
   quotations = [],
   catalog,
+  currentUser,
   onSaveQuotation,
   onPreviewPrint
 }) => {
@@ -85,13 +88,26 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [phoneSearch, setPhoneSearch] = useState('');
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(initialPatient || null);
 
-  // Sync if initialPatient changes from outside props
+  // Consulting / Billing Doctor Name
+  const [billingDoctor, setBillingDoctor] = useState(
+    currentUser?.name || initialPatient?.doctorName || 'Prof. Dr. SM Shahidullah'
+  );
+
+  // Sync if initialPatient or currentUser changes
   useEffect(() => {
     if (initialPatient) {
       setSelectedPatient(initialPatient);
       setPhoneSearch(initialPatient.phone);
     }
   }, [initialPatient]);
+
+  useEffect(() => {
+    if (currentUser?.name) {
+      setBillingDoctor(currentUser.name);
+    } else if (selectedPatient?.doctorName) {
+      setBillingDoctor(selectedPatient.doctorName);
+    }
+  }, [currentUser, selectedPatient]);
 
   // Handle Phone Search
   const handlePhoneSearchSubmit = (e: React.FormEvent) => {
@@ -108,8 +124,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   // Section 1: Treatment List with Checkboxes
   const [treatmentSearch, setTreatmentSearch] = useState('');
   const [treatmentList, setTreatmentList] = useState<TreatmentListItem[]>([]);
-
-  const catalogKey = JSON.stringify(catalog);
 
   // Initialize treatment list from catalog setup (Admin entry)
   useEffect(() => {
@@ -182,7 +196,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalogKey]);
+  }, [catalog]);
 
   const toggleTreatmentSelection = (id: string) => {
     setTreatmentList(prev => prev.map(item => {
@@ -308,7 +322,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalogKey]);
+  }, [catalog]);
 
   const toggleOutdoorPackageSelection = (id: string) => {
     setOutdoorPackageList(prev => prev.map(item => {
@@ -424,7 +438,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalogKey]);
+  }, [catalog]);
 
   const toggleIndoorServiceSelection = (id: string) => {
     setIndoorServiceList(prev => prev.map(item => {
@@ -568,7 +582,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       patientPhone: pPhone,
       patientAge: selectedPatient?.age,
       patientGender: selectedPatient?.gender,
-      doctorName: selectedPatient?.doctorName || 'Prof. Dr. SM Shahidullah',
+      doctorName: billingDoctor.trim() || currentUser?.name || selectedPatient?.doctorName || 'Senior Consultant',
       createdDate: dateStr,
       validUntil: validUntilDate.toISOString().split('T')[0],
       visitNumber: nextVisitNumber,
@@ -596,7 +610,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
       paymentStatus,
       notes,
-      createdBy: 'Billing Counter Staff'
+      createdBy: currentUser?.name ? `${currentUser.name} (${currentUser.role})` : 'Billing Counter Staff'
     };
   };
 
@@ -672,15 +686,21 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   </span>
                 )}
               </h3>
-              <p className="text-xs text-slate-300 flex items-center gap-3">
+              <p className="text-xs text-slate-300 flex flex-wrap items-center gap-3">
                 <span className="font-bold text-emerald-300">Mobile: {selectedPatient.phone}</span>
                 {selectedPatient.age && <span>• Age: {selectedPatient.age} Yrs</span>}
-                {selectedPatient.doctorName && (
-                  <span className="flex items-center gap-1 text-slate-300">
-                    <Stethoscope className="w-3.5 h-3.5 text-emerald-400" /> {selectedPatient.doctorName}
-                  </span>
-                )}
               </p>
+              <div className="flex items-center gap-2 pt-1">
+                <Stethoscope className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="text-xs text-slate-300 font-medium">Consulting Doctor:</span>
+                <input
+                  type="text"
+                  value={billingDoctor}
+                  onChange={(e) => setBillingDoctor(e.target.value)}
+                  placeholder="Doctor Name..."
+                  className="bg-slate-950 text-emerald-300 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-emerald-400 w-56 sm:w-64"
+                />
+              </div>
             </div>
 
             <div className="flex items-center gap-2">

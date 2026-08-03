@@ -56,7 +56,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 transition-all duration-200 ease-out">
+      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
         
         {/* Header */}
         <div className="bg-slate-900 text-white p-5 flex items-center justify-between">

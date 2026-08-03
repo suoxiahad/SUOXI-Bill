@@ -51,6 +51,9 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
             <div className="flex flex-col sm:flex-row items-center sm:items-center gap-4 text-center sm:text-left">
               <SuoxiLogo size="lg" />
               <div className="sm:border-l sm:border-slate-300 sm:pl-4 pt-1 sm:pt-0 space-y-1">
+                <p className="text-xs font-extrabold text-emerald-900 flex items-center justify-center sm:justify-start gap-1.5">
+                  <span>Chief Consultant: Dr. S.M. Shahidul Islam PhD.</span>
+                </p>
                 <p className="text-xs text-slate-700 font-bold flex items-center justify-center sm:justify-start gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
                   <span>Shaan Tower, 24/1, Chamelibagh, Shantinagar, Dhaka 1217</span>
@@ -98,7 +101,9 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
           </div>
 
           <div>
-            <p className="text-slate-500 text-xs font-semibold uppercase">Consulting Doctor</p>
+            <p className="text-slate-500 text-xs font-semibold uppercase">Chief Consultant</p>
+            <p className="font-bold text-emerald-900">Dr. S.M. Shahidul Islam PhD.</p>
+            <p className="text-slate-500 text-[11px] font-semibold uppercase mt-1">Consulting Doctor</p>
             <p className="font-bold text-slate-900">{quotation.doctorName || 'Senior Consultant'}</p>
           </div>
 

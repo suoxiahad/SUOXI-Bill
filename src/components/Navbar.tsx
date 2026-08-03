@@ -19,8 +19,8 @@ import { User } from '../types';
 import { SuoxiLogo } from './SuoxiLogo';
 
 interface NavbarProps {
-  activeTab: 'appointments' | 'quotation' | 'history' | 'catalog' | 'vps_guide' | 'users';
-  setActiveTab: (tab: 'appointments' | 'quotation' | 'history' | 'catalog' | 'vps_guide' | 'users') => void;
+  activeTab: 'appointments' | 'quotation' | 'history' | 'catalog' | 'users';
+  setActiveTab: (tab: 'appointments' | 'quotation' | 'history' | 'catalog' | 'users') => void;
   onOpenAddPatient: () => void;
   onSearchPhone: (phone: string) => void;
   patientCount: number;
@@ -57,7 +57,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor';
   const canAccessCatalog = userRole === 'System Admin' || userRole === 'Doctor';
   const canAccessUsers = userRole === 'System Admin';
-  const canAccessVpsGuide = userRole === 'System Admin';
 
   const getRoleBadge = () => {
     if (!currentUser) {
@@ -193,7 +192,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span>Appointments & Sheet Import</span>
+              <span>Appointments & PDF Import</span>
               {patientCount > 0 && (
                 <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'appointments' ? 'bg-slate-900 text-emerald-300' : 'bg-slate-800 text-emerald-400'}`}>
                   {patientCount}
@@ -260,20 +259,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Users className="w-4 h-4" />
               <span>User Accounts</span>
-            </button>
-          )}
-
-          {canAccessVpsGuide && (
-            <button
-              onClick={() => setActiveTab('vps_guide')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                activeTab === 'vps_guide'
-                  ? 'bg-amber-400 text-slate-950 font-bold shadow'
-                  : 'text-amber-300 hover:bg-slate-800 hover:text-amber-200'
-              }`}
-            >
-              <Server className="w-4 h-4" />
-              <span>Database Status</span>
             </button>
           )}
 

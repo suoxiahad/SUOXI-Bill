@@ -399,7 +399,16 @@ function requireRole(...roles: string[]) {
 
 // API Routes
 
-// 1. System Status Endpoint
+// 1. System Status & Init Endpoints
+app.get('/api/logo', (req, res) => {
+  const logoPath = path.join(process.cwd(), 'src', 'assets', 'logo.png');
+  if (fs.existsSync(logoPath)) {
+    res.setHeader('Content-Type', 'image/png');
+    return res.sendFile(logoPath);
+  }
+  res.status(404).send('Logo not found');
+});
+
 app.get('/api/system/status', (req, res) => {
   res.json({
     status: 'online',
@@ -409,6 +418,59 @@ app.get('/api/system/status', (req, res) => {
     userCount: localData.users.length,
     patientCount: localData.patients.length,
     quotationCount: localData.quotations.length
+  });
+});
+
+app.get('/api/init', authenticateToken, async (req: any, res) => {
+  const user = req.user;
+  let patients: any[] = [];
+  let quotations: any[] = [];
+  let catalog: any[] = localData.catalog;
+  let users: any[] = [];
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      if (['System Admin', 'Doctor', 'Call Center'].includes(user.role)) {
+        const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY created_at DESC');
+        patients = pRows;
+      }
+      if (['System Admin', 'Doctor'].includes(user.role)) {
+        const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
+        quotations = qRows.map((r: any) => ({
+          ...r,
+          items: typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])
+        }));
+      }
+      const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
+      if (cRows.length > 0) catalog = cRows;
+
+      if (user.role === 'System Admin') {
+        const [uRows]: any = await mysqlPool.execute('SELECT id, username, name, role, phone, is_active FROM users ORDER BY created_at ASC');
+        users = uRows;
+      }
+    } catch (err) {
+      console.error('MySQL init fetch error:', err);
+    }
+  } else {
+    if (['System Admin', 'Doctor', 'Call Center'].includes(user.role)) {
+      patients = localData.patients;
+    }
+    if (['System Admin', 'Doctor'].includes(user.role)) {
+      quotations = localData.quotations;
+    }
+    catalog = localData.catalog;
+    if (user.role === 'System Admin') {
+      users = localData.users.map(({ password_hash, ...u }) => u);
+    }
+  }
+
+  res.json({
+    user,
+    patients,
+    quotations,
+    catalog,
+    users,
+    dbMode: isMySqlActive ? 'MySQL Central Database' : 'Local File Persistence'
   });
 });
 

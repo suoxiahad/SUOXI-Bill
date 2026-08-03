@@ -418,7 +418,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
       {/* FULL PATIENT HISTORY DETAIL MODAL */}
       {selectedPatientModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-200 overflow-hidden my-8 transition-all duration-200 ease-out">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in duration-200">
             
             {/* Modal Header */}
             <div className="bg-slate-900 text-white p-6 flex items-center justify-between">
