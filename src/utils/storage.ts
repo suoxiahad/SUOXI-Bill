@@ -204,9 +204,18 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
       const data = await res.json();
       savePatientsLocal(data.patients);
       return { added: data.added, updated: data.updated, list: data.patients };
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      const errorMsg = errData.error || `Server import failed (Status ${res.status})`;
+      console.error('Excel import error from server:', res.status, errorMsg);
+      throw new Error(errorMsg);
     }
-  } catch (err) {
-    console.warn('Backend Excel import error, performing client-side fallback:', err);
+  } catch (err: any) {
+    console.warn('Backend Excel import error:', err?.message || err);
+    // If backend threw an error response, rethrow to inform UI
+    if (err?.message && !err.message.includes('fetch')) {
+      throw err;
+    }
   }
 
   // Fallback client-side logic
@@ -216,14 +225,17 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
   const todayStr = new Date().toISOString().split('T')[0];
 
   newPatients.forEach((p, idx) => {
-    if (!p.name || !p.phone) return;
-    const cleanPhone = String(p.phone).trim();
-    const existingIdx = current.findIndex(x => x.phone === cleanPhone);
+    if (!p.name && !p.phone) return;
+    const rawPhone = p.phone ? String(p.phone).trim() : '';
+    const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
+    const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
+
+    const existingIdx = current.findIndex(x => x.phone === cleanPhone && cleanPhone !== '01700000000');
 
     const formattedPatient: Patient = {
       id: existingIdx >= 0 ? current[existingIdx].id : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`),
       serialNo: p.serialNo || '',
-      name: String(p.name).trim(),
+      name: cleanName,
       phone: cleanPhone,
       age: p.age || '',
       gender: p.gender || 'Other',

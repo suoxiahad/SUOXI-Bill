@@ -390,8 +390,20 @@ function authenticateToken(req: any, res: any, next: any) {
 // Middleware: Role-Based Access Control (RBAC)
 function requireRole(...roles: string[]) {
   return (req: any, res: any, next: any) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'Forbidden: Insufficient role privileges' });
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const userRole = String(req.user.role || '').toLowerCase().trim();
+    const isAllowed = roles.some(r => {
+      const target = r.toLowerCase().trim();
+      if (target === userRole) return true;
+      if ((target === 'system admin' || target === 'admin') && (userRole === 'system admin' || userRole === 'admin')) return true;
+      if ((target === 'call center' || target === 'callcenter') && (userRole === 'call center' || userRole === 'callcenter')) return true;
+      return false;
+    });
+
+    if (!isAllowed) {
+      return res.status(403).json({ error: `Forbidden: Access restricted to ${roles.join(', ')}` });
     }
     next();
   };
@@ -874,18 +886,18 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
     let headerRowIdx = -1;
     let maxScore = 0;
 
-    for (let r = 0; r < Math.min(matrix.length, 20); r++) {
+    for (let r = 0; r < Math.min(matrix.length, 25); r++) {
       const row = matrix[r];
       if (!Array.isArray(row)) continue;
       let score = 0;
 
       row.forEach((cell) => {
         const str = String(cell || '').trim().toLowerCase();
-        if (/(patient\s*name|patient|রোগীর\s*নাম|রোগী)/i.test(str) && !/doctor|agent|user|disease/i.test(str)) score += 3;
-        if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন|num)/i.test(str)) score += 3;
-        if (/(age|yrs|years|y\.o|বয়স)/i.test(str)) score += 1;
-        if (/(gender|sex|লিঙ্গ)/i.test(str)) score += 1;
-        if (/(disease|remark|condition|problem|note|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য)/i.test(str)) score += 2;
+        if (/(patient\s*name|patient|customer|client|full\s*name|rogir?\s*nam|রোগীর\s*নাম|রোগী|^name$|^নাম$)/i.test(str) && !/doctor|agent|user|disease/i.test(str)) score += 3;
+        if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন|যোগাযোগ|নাম্বার|number|num)/i.test(str)) score += 3;
+        if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str)) score += 1;
+        if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str)) score += 1;
+        if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str)) score += 2;
       });
 
       if (score > maxScore && score >= 2) {
@@ -907,19 +919,17 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
         const str = String(cell || '').trim().toLowerCase();
         if (!str) return;
 
-        if (/(serial\s*no|serial|sl\s*no|sl\.?\s*no|sl|ক্রমিক\s*নং|ক্রমিক|s\/n|sl\.)/i.test(str) && serialCol === -1) {
+        if (/(serial\s*no|serial|sl\s*no|sl\.?\s*no|sl|ক্রমিক\s*নং|ক্রমিক|s\/n|sl\.|s\/l)/i.test(str) && serialCol === -1) {
           serialCol = idx;
-        } else if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন)/i.test(str) && phoneCol === -1) {
+        } else if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন|যোগাযোগ|নাম্বার|number)/i.test(str) && phoneCol === -1) {
           phoneCol = idx;
-        } else if (/(patient\s*name|patient|রোগীর\s*নাম|রোগী)/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
+        } else if (/(patient\s*name|patient|customer|client|full\s*name|rogir?\s*nam|রোগীর\s*নাম|রোগী|^name$|^নাম$)/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
           nameCol = idx;
-        } else if (/^\s*(name|নাম)\s*$/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
-          nameCol = idx;
-        } else if (/(disease|remark|condition|problem|note|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য)/i.test(str) && remarkCol === -1) {
+        } else if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str) && remarkCol === -1) {
           remarkCol = idx;
-        } else if (/(age|yrs|years|y\.o|বয়স)/i.test(str) && ageCol === -1) {
+        } else if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str) && ageCol === -1) {
           ageCol = idx;
-        } else if (/(gender|sex|লিঙ্গ)/i.test(str) && genderCol === -1) {
+        } else if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str) && genderCol === -1) {
           genderCol = idx;
         }
       });
@@ -943,7 +953,8 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
         const val = String(cell || '').trim();
         if (!val) return;
 
-        const pMatch = val.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/);
+        const cleanedCellStr = val.replace(/[\s\-\(\)\.]/g, '');
+        const pMatch = val.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/) || cleanedCellStr.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/);
         if (pMatch && !phone) {
           phone = pMatch[0];
         }
@@ -967,23 +978,22 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           }
         }
 
-        if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol) {
-          if (
-            val.length >= 2 &&
-            !/^\d+$/.test(val) &&
-            !/01[3-9]\d{8}/.test(val) &&
-            !/male|female|new patient|followup|robin|alamin|rakibul|completed|pending/i.test(val) &&
-            !/pain|stroke|sciatica|ibs|paralysis|fever|knee|back|neck/i.test(val)
-          ) {
+        if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol && cIdx !== genderCol && cIdx !== serialCol) {
+          const isNumeric = /^\d+$/.test(val);
+          const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
+          const isKeywords = /male|female|new patient|followup|robin|alamin|rakibul|completed|pending|cancel/i.test(val);
+          if (val.length >= 2 && !isNumeric && !isPhone && !isKeywords) {
             name = val;
           }
         }
 
         if (!remark && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol) {
+          const isNumeric = /^\d+$/.test(val);
+          const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
           if (
             val.length >= 3 &&
-            !/^\d+$/.test(val) &&
-            !/01[3-9]\d{8}/.test(val) &&
+            !isNumeric &&
+            !isPhone &&
             !/male|female|new patient|completed|robin|alamin|pending|cancel/i.test(val)
           ) {
             remark = val;
@@ -1026,20 +1036,23 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
         age = ageMatch ? ageMatch[1] : age;
       }
 
-      if (name && phone) {
+      if (name || phone) {
+        const finalName = name || (phone ? `Patient ${phone}` : `Patient #${extractedPatients.length + 1}`);
+        const finalPhone = phone || '01700000000';
+
         extractedPatients.push({
           serialNo: rawSerial || String(extractedPatients.length + 1),
-          name,
+          name: finalName,
           gender: gender || 'Male',
           age: age || '',
-          phone,
+          phone: finalPhone,
           remark: remark || 'General Assessment',
         });
       }
     }
 
     if (extractedPatients.length === 0) {
-      return res.status(400).json({ error: 'No valid patient rows with Name & Phone Number found in the Excel file.' });
+      return res.status(400).json({ error: 'No valid patient rows found in the uploaded Excel file.' });
     }
 
     res.json({
@@ -1065,13 +1078,17 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
 
   for (let idx = 0; idx < patients.length; idx++) {
     const p = patients[idx];
-    if (!p.name || !p.phone) continue;
-    const cleanPhone = String(p.phone).trim();
-    const existingIdx = localData.patients.findIndex(x => x.phone === cleanPhone);
+    if (!p.name && !p.phone) continue;
+
+    const rawPhone = p.phone ? String(p.phone).trim() : '';
+    const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
+    const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
+
+    const existingIdx = localData.patients.findIndex(x => x.phone === cleanPhone && cleanPhone !== '01700000000');
 
     const formattedPatient = {
       id: existingIdx >= 0 ? localData.patients[existingIdx].id : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`),
-      name: String(p.name).trim(),
+      name: cleanName,
       phone: cleanPhone,
       age: p.age || '',
       gender: p.gender || 'Other',

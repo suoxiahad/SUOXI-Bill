@@ -78,19 +78,19 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
   let headerRowIdx = -1;
   let maxScore = 0;
 
-  // Scan the top 20 rows to detect the Header Row dynamically
-  for (let r = 0; r < Math.min(matrix.length, 20); r++) {
+  // Scan the top 25 rows to detect the Header Row dynamically
+  for (let r = 0; r < Math.min(matrix.length, 25); r++) {
     const row = matrix[r];
     if (!Array.isArray(row)) continue;
     let score = 0;
 
     row.forEach((cell) => {
       const str = String(cell || '').trim().toLowerCase();
-      if (/(patient\s*name|patient|রোগীর\s*নাম|রোগী)/i.test(str) && !/doctor|agent|user|disease/i.test(str)) score += 3;
-      if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন|num)/i.test(str)) score += 3;
-      if (/(age|yrs|years|y\.o|বয়স)/i.test(str)) score += 1;
-      if (/(gender|sex|লিঙ্গ)/i.test(str)) score += 1;
-      if (/(disease|remark|condition|problem|note|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য)/i.test(str)) score += 2;
+      if (/(patient\s*name|patient|customer|client|full\s*name|rogir?\s*nam|রোগীর\s*নাম|রোগী|^name$|^নাম$)/i.test(str) && !/doctor|agent|user|disease/i.test(str)) score += 3;
+      if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন|যোগাযোগ|নাম্বার|number|num)/i.test(str)) score += 3;
+      if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str)) score += 1;
+      if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str)) score += 1;
+      if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str)) score += 2;
     });
 
     if (score > maxScore && score >= 2) {
@@ -112,19 +112,17 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       const str = String(cell || '').trim().toLowerCase();
       if (!str) return;
 
-      if (/(serial\s*no|serial|sl\s*no|sl\.?\s*no|sl|ক্রমিক\s*নং|ক্রমিক|s\/n|sl\.)/i.test(str) && serialCol === -1) {
+      if (/(serial\s*no|serial|sl\s*no|sl\.?\s*no|sl|ক্রমিক\s*নং|ক্রমিক|s\/n|sl\.|s\/l)/i.test(str) && serialCol === -1) {
         serialCol = idx;
-      } else if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন)/i.test(str) && phoneCol === -1) {
+      } else if (/(contact|phone|mobile|cell|কন্টাক্ট|মোবাইল|ফোন|যোগাযোগ|নাম্বার|number)/i.test(str) && phoneCol === -1) {
         phoneCol = idx;
-      } else if (/(patient\s*name|patient|রোগীর\s*নাম|রোগী)/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
+      } else if (/(patient\s*name|patient|customer|client|full\s*name|rogir?\s*nam|রোগীর\s*নাম|রোগী|^name$|^নাম$)/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
         nameCol = idx;
-      } else if (/^\s*(name|নাম)\s*$/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
-        nameCol = idx;
-      } else if (/(disease|remark|condition|problem|note|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য)/i.test(str) && remarkCol === -1) {
+      } else if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str) && remarkCol === -1) {
         remarkCol = idx;
-      } else if (/(age|yrs|years|y\.o|বয়স)/i.test(str) && ageCol === -1) {
+      } else if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str) && ageCol === -1) {
         ageCol = idx;
-      } else if (/(gender|sex|লিঙ্গ)/i.test(str) && genderCol === -1) {
+      } else if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str) && genderCol === -1) {
         genderCol = idx;
       }
     });
@@ -152,7 +150,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       if (!val) return;
 
       // Detect Phone Number
-      const cleanedCellStr = val.replace(/[\s\-\(\)]/g, '');
+      const cleanedCellStr = val.replace(/[\s\-\(\)\.]/g, '');
       const pMatch = val.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/) || cleanedCellStr.match(/(?:\+?880|880|0)?1[3-9]\d{8}\b/);
       if (pMatch && !phone) {
         phone = pMatch[0];
@@ -180,24 +178,23 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       }
 
       // Detect Patient Name fallback
-      if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol) {
-        if (
-          val.length >= 2 &&
-          !/^\d+$/.test(val) &&
-          !/01[3-9]\d{8}/.test(val) &&
-          !/male|female|new patient|followup|robin|alamin|rakibul|completed|pending/i.test(val) &&
-          !/pain|stroke|sciatica|ibs|paralysis|fever|knee|back|neck/i.test(val)
-        ) {
+      if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol && cIdx !== genderCol && cIdx !== serialCol) {
+        const isNumeric = /^\d+$/.test(val);
+        const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
+        const isKeywords = /male|female|new patient|followup|robin|alamin|rakibul|completed|pending|cancel/i.test(val);
+        if (val.length >= 2 && !isNumeric && !isPhone && !isKeywords) {
           name = val;
         }
       }
 
       // Detect Disease / Remark fallback
       if (!remark && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol) {
+        const isNumeric = /^\d+$/.test(val);
+        const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
         if (
           val.length >= 3 &&
-          !/^\d+$/.test(val) &&
-          !/01[3-9]\d{8}/.test(val) &&
+          !isNumeric &&
+          !isPhone &&
           !/male|female|new patient|completed|robin|alamin|pending|cancel/i.test(val)
         ) {
           remark = val;
@@ -244,13 +241,16 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       age = aMatch ? aMatch[1] : age;
     }
 
-    if (name && phone) {
+    if (name || phone) {
+      const finalName = name || (phone ? `Patient ${phone}` : `Patient #${extracted.length + 1}`);
+      const finalPhone = phone || '01700000000';
+
       extracted.push({
         serialNo: rawSerial || String(extracted.length + 1),
-        name,
+        name: finalName,
         gender: gender || 'Male',
         age: age || '',
-        phone,
+        phone: finalPhone,
         remark: remark || 'General Assessment',
         doctorName: doctorName || 'Senior Counseling Doctor',
         appointmentDate: appointmentDate || new Date().toISOString().split('T')[0],
