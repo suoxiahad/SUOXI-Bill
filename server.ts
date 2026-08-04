@@ -1242,7 +1242,7 @@ app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor',
   res.json(localData.catalog);
 });
 
-app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
+app.post('/api/catalog', authenticateToken, requireRole('System Admin'), async (req, res) => {
   const { catalog } = req.body;
   if (Array.isArray(catalog)) {
     localData.catalog = catalog;
