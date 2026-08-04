@@ -432,44 +432,31 @@ app.get('/api/system/status', (req, res) => {
 
 app.get('/api/init', authenticateToken, async (req: any, res) => {
   const user = req.user;
-  let patients: any[] = [];
-  let quotations: any[] = [];
+  let patients: any[] = localData.patients;
+  let quotations: any[] = localData.quotations;
   let catalog: any[] = localData.catalog;
-  let users: any[] = [];
+  let users: any[] = localData.users.map(({ password_hash, ...u }) => u);
 
   if (isMySqlActive && mysqlPool) {
     try {
-      if (['System Admin', 'Doctor', 'Call Center'].includes(user.role)) {
-        const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY created_at DESC');
-        patients = pRows;
-      }
-      if (['System Admin', 'Doctor'].includes(user.role)) {
-        const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
+      const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY created_at DESC');
+      if (Array.isArray(pRows)) patients = pRows;
+
+      const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
+      if (Array.isArray(qRows)) {
         quotations = qRows.map((r: any) => ({
           ...r,
           items: typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])
         }));
       }
-      const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
-      if (cRows.length > 0) catalog = cRows;
 
-      if (user.role === 'System Admin') {
-        const [uRows]: any = await mysqlPool.execute('SELECT id, username, name, role, phone, is_active FROM users ORDER BY created_at ASC');
-        users = uRows;
-      }
+      const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
+      if (Array.isArray(cRows) && cRows.length > 0) catalog = cRows;
+
+      const [uRows]: any = await mysqlPool.execute('SELECT id, username, name, role, phone, is_active FROM users ORDER BY created_at ASC');
+      if (Array.isArray(uRows) && uRows.length > 0) users = uRows;
     } catch (err) {
       console.error('MySQL init fetch error:', err);
-    }
-  } else {
-    if (['System Admin', 'Doctor', 'Call Center'].includes(user.role)) {
-      patients = localData.patients;
-    }
-    if (['System Admin', 'Doctor'].includes(user.role)) {
-      quotations = localData.quotations;
-    }
-    catalog = localData.catalog;
-    if (user.role === 'System Admin') {
-      users = localData.users.map(({ password_hash, ...u }) => u);
     }
   }
 

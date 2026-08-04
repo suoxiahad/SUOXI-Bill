@@ -73,6 +73,52 @@ export const setActiveUser = (user: User | null): void => {
   }
 };
 
+// Helper to merge patient lists without losing local updates
+function mergePatientsList(serverPatients: Patient[], localPatients: Patient[]): Patient[] {
+  const map = new Map<string, Patient>();
+
+  // Insert server patients first
+  for (const p of serverPatients) {
+    if (p && (p.id || p.phone)) {
+      const key = p.id || p.phone;
+      map.set(key, p);
+    }
+  }
+
+  // Overlay local patients so local records are preserved
+  for (const p of localPatients) {
+    if (p && (p.id || p.phone)) {
+      const key = p.id || p.phone;
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, p);
+      } else {
+        map.set(key, { ...existing, ...p });
+      }
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function mergeQuotationsList(serverQuotations: InvoiceQuotation[], localQuotations: InvoiceQuotation[]): InvoiceQuotation[] {
+  const map = new Map<string, InvoiceQuotation>();
+
+  for (const q of serverQuotations) {
+    if (q && q.id) {
+      map.set(q.id, q);
+    }
+  }
+
+  for (const q of localQuotations) {
+    if (q && q.id) {
+      map.set(q.id, q);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 export interface InitDataResponse {
   patients: Patient[];
   quotations: InvoiceQuotation[];
@@ -83,23 +129,52 @@ export interface InitDataResponse {
 
 export const fetchInitApi = async (): Promise<InitDataResponse | null> => {
   const user = getActiveUser();
+  const localPatients = getPatientsLocal();
+  const localQuotations = getQuotationsLocal();
+  const localCatalog = getCatalogLocal();
+  const localUsers = getUsersLocal();
+
   if (!user || !user.token) {
-    return null;
+    return {
+      patients: localPatients,
+      quotations: localQuotations,
+      catalog: localCatalog,
+      users: localUsers
+    };
   }
+
   try {
     const res = await fetch('/api/init', { headers: getAuthHeader() });
     if (res.ok) {
       const data = await res.json();
       if (data) {
-        if (Array.isArray(data.patients)) savePatientsLocal(data.patients);
-        if (Array.isArray(data.quotations)) saveQuotationsLocal(data.quotations);
-        if (Array.isArray(data.catalog)) saveCatalogLocal(data.catalog);
-        if (Array.isArray(data.users)) saveUsersLocal(data.users);
+        const serverPatients = Array.isArray(data.patients) ? data.patients : [];
+        const serverQuotations = Array.isArray(data.quotations) ? data.quotations : [];
+        const serverCatalog = Array.isArray(data.catalog) && data.catalog.length > 0 ? data.catalog : localCatalog;
+        const serverUsers = Array.isArray(data.users) && data.users.length > 0 ? data.users : localUsers;
+
+        const mergedPatients = mergePatientsList(serverPatients, localPatients);
+        const mergedQuotations = mergeQuotationsList(serverQuotations, localQuotations);
+
+        savePatientsLocal(mergedPatients);
+        saveQuotationsLocal(mergedQuotations);
+        saveCatalogLocal(serverCatalog);
+        saveUsersLocal(serverUsers);
+
+        // Sync local patients to server if server was missing any
+        if (mergedPatients.length > serverPatients.length) {
+          fetch('/api/patients/import', {
+            method: 'POST',
+            headers: getAuthHeader(),
+            body: JSON.stringify({ patients: mergedPatients })
+          }).catch(() => {});
+        }
+
         return {
-          patients: data.patients || [],
-          quotations: data.quotations || [],
-          catalog: data.catalog || DEFAULT_CATALOG,
-          users: data.users || [],
+          patients: mergedPatients,
+          quotations: mergedQuotations,
+          catalog: serverCatalog,
+          users: serverUsers,
           dbMode: data.dbMode
         };
       }
@@ -107,11 +182,12 @@ export const fetchInitApi = async (): Promise<InitDataResponse | null> => {
   } catch (err) {
     console.warn('Init API fetch failed, using local caches:', err);
   }
+
   return {
-    patients: getPatientsLocal(),
-    quotations: getQuotationsLocal(),
-    catalog: getCatalogLocal(),
-    users: getUsersLocal()
+    patients: localPatients,
+    quotations: localQuotations,
+    catalog: localCatalog,
+    users: localUsers
   };
 };
 

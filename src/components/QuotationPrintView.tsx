@@ -51,9 +51,9 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
             <div className="flex flex-col sm:flex-row items-center sm:items-center gap-4 text-center sm:text-left">
               <SuoxiLogo size="lg" />
               <div className="sm:border-l sm:border-slate-300 sm:pl-4 pt-1 sm:pt-0 space-y-1">
-                <p className="text-xs font-extrabold text-emerald-900 flex items-center justify-center sm:justify-start gap-1.5">
-                  <span>Chief Consultant: Dr. S.M. Shahidul Islam PhD.</span>
-                </p>
+                <h3 className="text-sm font-extrabold text-emerald-950 flex items-center justify-center sm:justify-start">
+                  SUO XI Hospital (Acupuncture)
+                </h3>
                 <p className="text-xs text-slate-700 font-bold flex items-center justify-center sm:justify-start gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
                   <span>Shaan Tower, 24/1, Chamelibagh, Shantinagar, Dhaka 1217</span>
@@ -282,8 +282,9 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
         </div>
 
         {/* Footer Note */}
-        <div className="mt-8 text-center text-[10px] text-slate-400 border-t border-slate-100 pt-3">
-          Computer generated invoice quotation • SUO XI Hospital Acupuncture Billing System
+        <div className="mt-8 text-center text-[10px] text-slate-400 border-t border-slate-100 pt-3 space-y-0.5">
+          <p>Computer generated invoice quotation • SUO XI Hospital Acupuncture Billing System</p>
+          <p className="text-emerald-700 font-bold text-[10px]">Developed & Designed By SUOXI IT Department</p>
         </div>
 
       </div>

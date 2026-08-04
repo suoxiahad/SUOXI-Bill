@@ -56,10 +56,20 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
     if (result.success && result.data.length > 0) {
       setParsedPreview(result.data);
-      setUploadMessage({
-        type: 'success',
-        text: `Extracted ${result.data.length} patient records from ${file.name}. Review the preview below and click "Confirm & Import to Database".`
-      });
+
+      try {
+        const summary = await importPatientsFromExcelApi(result.data);
+        onRefreshPatients();
+        setUploadMessage({
+          type: 'success',
+          text: `Successfully imported ${summary.added} new patients and updated ${summary.updated} existing records into the database permanently!`
+        });
+      } catch (saveErr) {
+        setUploadMessage({
+          type: 'success',
+          text: `Extracted ${result.data.length} patient records from ${file.name}. Review the preview below and click "Confirm & Import to Database".`
+        });
+      }
     } else {
       setParsedPreview([]);
       setUploadMessage({
