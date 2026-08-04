@@ -10,10 +10,7 @@ import rateLimit from 'express-rate-limit';
 import * as XLSX from 'xlsx';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-const pdfParseModule = require('pdf-parse');
+import { PDFParse } from 'pdf-parse';
 
 dotenv.config();
 
@@ -93,7 +90,7 @@ const upload = multer({
   }
 });
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'suoxi_hospital_secure_jwt_secret_key_2026_default_32char_long';
 
 // Interface definitions
@@ -624,7 +621,7 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Doctor'
   res.json(localData.patients);
 });
 
-app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center'), async (req, res) => {
+app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
   const p = req.body;
   if (!p.name || !p.phone) {
     return res.status(400).json({ error: 'Patient Name and Phone Number are required' });
@@ -675,7 +672,7 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
 });
 
 // PDF Upload Endpoint to parse Patient Name, Gender, Age, Phone Number, Remark (Disease)
-app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admin', 'Call Center'), upload.single('pdfFile'), async (req: any, res: any) => {
+app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), upload.single('pdfFile'), async (req: any, res: any) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No PDF file uploaded' });
   }
@@ -685,26 +682,11 @@ app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admi
     let text = '';
 
     try {
-      const PDFParseClass = (pdfParseModule as any).PDFParse || (pdfParseModule as any).default?.PDFParse;
-      if (typeof PDFParseClass === 'function') {
-        const uint8Data = new Uint8Array(dataBuffer);
-        const parser = new PDFParseClass({ data: uint8Data });
-        const textResult = await parser.getText();
-        if (textResult?.text) {
-          text = textResult.text;
-        } else if (Array.isArray(textResult?.pages)) {
-          text = textResult.pages.map((p: any) => p.text || '').join('\n');
-        }
-        if (typeof parser.destroy === 'function') {
-          await parser.destroy().catch(() => {});
-        }
-      } else if (typeof pdfParseModule === 'function') {
-        const pdfData = await (pdfParseModule as any)(dataBuffer);
-        text = pdfData?.text || '';
-      } else if (typeof (pdfParseModule as any).default === 'function') {
-        const pdfData = await (pdfParseModule as any).default(dataBuffer);
-        text = pdfData?.text || '';
-      }
+      const uint8Data = new Uint8Array(dataBuffer);
+      const parser = new PDFParse({ data: uint8Data });
+      const textResult = await parser.getText();
+      text = textResult?.text || (Array.isArray(textResult?.pages) ? textResult.pages.map((p: any) => p.text || '').join('\n') : '');
+      await parser.destroy().catch(() => {});
     } catch (parseErr) {
       console.error('PDF parsing error:', parseErr);
       return res.status(500).json({ error: 'Failed to parse PDF document structure.' });
@@ -865,7 +847,7 @@ app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admi
 });
 
 // Upload and parse Excel Appointment File (.xlsx, .xls, .csv)
-app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Admin', 'Call Center'), upload.single('excelFile'), (req: any, res: any) => {
+app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), upload.single('excelFile'), (req: any, res: any) => {
   try {
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ error: 'No Excel file provided for upload.' });
@@ -1066,7 +1048,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
   }
 });
 
-app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Call Center'), async (req, res) => {
+app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
   const { patients } = req.body;
   if (!Array.isArray(patients)) {
     return res.status(400).json({ error: 'Invalid patient list' });
@@ -1088,6 +1070,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
 
     const formattedPatient = {
       id: existingIdx >= 0 ? localData.patients[existingIdx].id : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`),
+      serialNo: p.serialNo || '',
       name: cleanName,
       phone: cleanPhone,
       age: p.age || '',
@@ -1114,11 +1097,11 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     if (isMySqlActive && mysqlPool) {
       try {
         await mysqlPool.execute(
-          `INSERT INTO patients (id, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
-          [formattedPatient.id, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark, formattedPatient.createdAt,
-           formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark]
+          `INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE serialNo=?, name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
+          [formattedPatient.id, formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark, formattedPatient.createdAt,
+           formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark]
         );
       } catch (err) {
         console.error('MySQL patient import save error:', err);

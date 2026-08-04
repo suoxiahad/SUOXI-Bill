@@ -102,17 +102,31 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     if (parsedPreview.length === 0) return;
 
     setIsProcessing(true);
-    const summary = await importPatientsFromExcelApi(parsedPreview);
-    onRefreshPatients();
-
     setUploadMessage({
-      type: 'success',
-      text: `Successfully imported ${summary.added} new patients and updated ${summary.updated} existing records into the database.`
+      type: 'info',
+      text: `Importing ${parsedPreview.length} patients into database... Please wait.`
     });
 
-    setParsedPreview([]);
-    setSelectedFile(null);
-    setIsProcessing(false);
+    try {
+      const summary = await importPatientsFromExcelApi(parsedPreview);
+      onRefreshPatients();
+
+      setUploadMessage({
+        type: 'success',
+        text: `Successfully imported ${summary.added} new patients and updated ${summary.updated} existing records into the database.`
+      });
+
+      setParsedPreview([]);
+      setSelectedFile(null);
+    } catch (err: any) {
+      console.error('Import error:', err);
+      setUploadMessage({
+        type: 'error',
+        text: err?.message || 'Failed to import records to database. Please try again.'
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const filteredPatients = patients.filter(p => 
@@ -224,9 +238,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
               <button
                 onClick={handleSaveParsedRecords}
                 disabled={isProcessing}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
               >
-                Confirm & Import to Database
+                {isProcessing ? 'Importing to Database...' : 'Confirm & Import to Database'}
               </button>
             </div>
 

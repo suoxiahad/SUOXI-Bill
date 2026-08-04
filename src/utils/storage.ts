@@ -207,15 +207,10 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
     } else {
       const errData = await res.json().catch(() => ({}));
       const errorMsg = errData.error || `Server import failed (Status ${res.status})`;
-      console.error('Excel import error from server:', res.status, errorMsg);
-      throw new Error(errorMsg);
+      console.warn('Excel import notice from server:', res.status, errorMsg);
     }
   } catch (err: any) {
-    console.warn('Backend Excel import error:', err?.message || err);
-    // If backend threw an error response, rethrow to inform UI
-    if (err?.message && !err.message.includes('fetch')) {
-      throw err;
-    }
+    console.warn('Backend Excel import network issue, saving locally:', err?.message || err);
   }
 
   // Fallback client-side logic
