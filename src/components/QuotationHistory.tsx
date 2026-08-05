@@ -34,13 +34,13 @@ interface PatientHistoryGroup {
   lastVisitDate: string;
 }
 
-// English ordinal visit label generator (1st Visit Invoice, 2nd Visit Invoice, 3rd Visit Invoice...)
+// English ordinal invoice label generator (1ST INVOICE, 2ND INVOICE, 3RD INVOICE...)
 export function getVisitOrdinal(index: number): string {
   const n = index + 1;
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
   const ordinal = n + (s[(v - 20) % 10] || s[v] || s[0]);
-  return `${ordinal} Visit Invoice`;
+  return `${ordinal.toUpperCase()} INVOICE`;
 }
 
 export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
@@ -51,6 +51,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   const [viewMode, setViewMode] = useState<'patient_grouped' | 'flat_list'>('patient_grouped');
   const [expandedPatientKey, setExpandedPatientKey] = useState<string | null>(null);
   const [selectedPatientModal, setSelectedPatientModal] = useState<PatientHistoryGroup | null>(null);
+  const [selectedQuotationIds, setSelectedQuotationIds] = useState<string[]>([]);
 
   // Group quotations by Patient (using Phone or Patient Name)
   const patientGroupsMap = new Map<string, InvoiceQuotation[]>();
@@ -75,7 +76,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   const patientGroups: PatientHistoryGroup[] = Array.from(patientGroupsMap.entries()).map(([key, groupQuotations]) => {
     // Add visit ordinal index
     const enrichedQuotations = groupQuotations.map((q, idx) => {
-      const visitLabel = q.visitLabel || getVisitOrdinal(idx);
+      const rawLabel = q.visitLabel || getVisitOrdinal(idx);
+      const visitLabel = rawLabel.replace(/visit invoice/i, 'INVOICE').replace(/visit/i, '').trim();
       return {
         ...q,
         visitNumber: q.visitNumber || (idx + 1),
@@ -343,6 +345,21 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-900 text-white font-bold text-xs uppercase">
+                    <th className="p-3.5 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={filteredFlatQuotations.length > 0 && selectedQuotationIds.length === filteredFlatQuotations.length}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedQuotationIds(filteredFlatQuotations.map(q => q.id));
+                          } else {
+                            setSelectedQuotationIds([]);
+                          }
+                        }}
+                        className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                        title="Select All"
+                      />
+                    </th>
                     <th className="p-3.5">Visit Order</th>
                     <th className="p-3.5">Quotation #</th>
                     <th className="p-3.5">Patient Name & Mobile</th>
@@ -354,13 +371,27 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredFlatQuotations.map((q) => (
-                    <tr key={q.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3.5">
-                        <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2 py-0.5 rounded-full border border-emerald-200">
-                          {q.visitLabel}
-                        </span>
-                      </td>
+                  {filteredFlatQuotations.map((q) => {
+                    const isSelected = selectedQuotationIds.includes(q.id);
+                    return (
+                      <tr key={q.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-emerald-50/40' : ''}`}>
+                        <td className="p-3.5 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setSelectedQuotationIds(prev =>
+                                prev.includes(q.id) ? prev.filter(id => id !== q.id) : [...prev, q.id]
+                              );
+                            }}
+                            className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                          />
+                        </td>
+                        <td className="p-3.5">
+                          <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2 py-0.5 rounded-full border border-emerald-200">
+                            {q.visitLabel}
+                          </span>
+                        </td>
 
                       <td className="p-3.5 font-bold text-emerald-900">
                         {q.quotationNumber}
@@ -407,7 +438,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                         </button>
                       </td>
                     </tr>
-                  ))}
+                  );
+                })}
                 </tbody>
               </table>
             </div>

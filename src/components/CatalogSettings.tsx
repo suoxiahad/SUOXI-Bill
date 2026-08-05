@@ -136,6 +136,33 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                       placeholder="Rate Subtext / Note (under Rate)..."
                     />
                   </div>
+
+                  {item.category === 'treatment' && (
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
+                      <div className="flex items-center gap-1.5 bg-emerald-50/70 px-2.5 py-1 rounded-lg border border-emerald-100">
+                        <span className="text-[11px] font-bold text-emerald-800 shrink-0">Outdoor Session:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={item.outdoorSessions ?? ''}
+                          onChange={(e) => updateItem(idx, { outdoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-emerald-900 text-center focus:ring-1 focus:ring-emerald-500"
+                          placeholder="e.g. 10"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-indigo-50/70 px-2.5 py-1 rounded-lg border border-indigo-100">
+                        <span className="text-[11px] font-bold text-indigo-800 shrink-0">Indoor Session:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={item.indoorSessions ?? ''}
+                          onChange={(e) => updateItem(idx, { indoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-indigo-900 text-center focus:ring-1 focus:ring-indigo-500"
+                          placeholder="e.g. 15"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

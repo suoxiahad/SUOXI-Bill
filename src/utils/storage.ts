@@ -269,6 +269,32 @@ export const addOrUpdatePatientApi = async (patient: Patient): Promise<Patient[]
   return current;
 };
 
+export const deletePatientsApi = async (ids: string[]): Promise<Patient[]> => {
+  const current = getPatientsLocal();
+  const idSet = new Set(ids);
+  const updated = current.filter(p => !idSet.has(p.id));
+  savePatientsLocal(updated);
+
+  try {
+    const res = await fetch('/api/patients/delete', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ ids })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.patients) {
+        savePatientsLocal(data.patients);
+        return data.patients;
+      }
+    }
+  } catch (err) {
+    console.warn('Error deleting patients on backend:', err);
+  }
+
+  return updated;
+};
+
 export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]): Promise<{ added: number; updated: number; list: Patient[] }> => {
   try {
     const res = await fetch('/api/patients/import', {
@@ -294,6 +320,7 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
   let added = 0;
   let updated = 0;
   const todayStr = new Date().toISOString().split('T')[0];
+  const newPatientsBatch: Patient[] = [];
 
   newPatients.forEach((p, idx) => {
     if (!p.name && !p.phone) return;
@@ -303,9 +330,18 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
 
     const existingIdx = current.findIndex(x => x.phone === cleanPhone && cleanPhone !== '01700000000');
 
+    let cleanSerial = '';
+    if (p.serialNo) {
+      const match = String(p.serialNo).match(/\b\d+\b/);
+      if (match) cleanSerial = match[0];
+    }
+    if (!cleanSerial) {
+      cleanSerial = String(idx + 1);
+    }
+
     const formattedPatient: Patient = {
       id: existingIdx >= 0 ? current[existingIdx].id : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`),
-      serialNo: p.serialNo || '',
+      serialNo: cleanSerial,
       name: cleanName,
       phone: cleanPhone,
       age: p.age || '',
@@ -325,13 +361,14 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
       current[existingIdx] = { ...current[existingIdx], ...formattedPatient };
       updated++;
     } else {
-      current.unshift(formattedPatient);
+      newPatientsBatch.push(formattedPatient);
       added++;
     }
   });
 
-  savePatientsLocal(current);
-  return { added, updated, list: current };
+  const updatedCurrent = [...newPatientsBatch, ...current];
+  savePatientsLocal(updatedCurrent);
+  return { added, updated, list: updatedCurrent };
 };
 
 // Quotation APIs

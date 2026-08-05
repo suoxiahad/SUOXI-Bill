@@ -59,6 +59,7 @@ export interface InvoiceQuotation {
   validUntil: string;
   visitNumber?: number;
   visitLabel?: string;
+  patientTreatmentMode?: 'outdoor' | 'indoor' | 'individual';
   
   // Section 1: Individual Treatments
   treatments: IndividualTreatment[];
@@ -98,6 +99,8 @@ export interface CatalogItem {
   defaultDiscountPercent?: number;
   description?: string;
   rateNote?: string;
+  outdoorSessions?: number;
+  indoorSessions?: number;
 }
 
 export type UserRole = 'System Admin' | 'Doctor' | 'Call Center';

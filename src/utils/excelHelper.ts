@@ -245,8 +245,17 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       const finalName = name || (phone ? `Patient ${phone}` : `Patient #${extracted.length + 1}`);
       const finalPhone = phone || '01700000000';
 
+      let cleanSerial = '';
+      if (rawSerial) {
+        const match = rawSerial.match(/\b\d+\b/);
+        if (match) cleanSerial = match[0];
+      }
+      if (!cleanSerial) {
+        cleanSerial = String(extracted.length + 1);
+      }
+
       extracted.push({
-        serialNo: rawSerial || String(extracted.length + 1),
+        serialNo: cleanSerial,
         name: finalName,
         gender: gender || 'Male',
         age: age || '',

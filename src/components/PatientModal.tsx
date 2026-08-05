@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, UserPlus, Phone, User, Stethoscope, FileText } from 'lucide-react';
+import { X, UserPlus, Phone, User, Stethoscope, FileText, Calendar } from 'lucide-react';
 import { Patient } from '../types';
 
 interface PatientModalProps {
@@ -13,11 +13,13 @@ export const PatientModal: React.FC<PatientModalProps> = ({
   onClose,
   onSave
 }) => {
+  const todayStr = new Date().toISOString().split('T')[0];
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<'Male' | 'Female' | 'Other'>('Male');
   const [doctorName, setDoctorName] = useState('Prof. Dr. SM Shahidullah');
+  const [appointmentDate, setAppointmentDate] = useState(todayStr);
   const [notes, setNotes] = useState('');
 
   if (!isOpen) return null;
@@ -36,7 +38,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
       age: age ? Number(age) : '',
       gender,
       doctorName,
-      appointmentDate: new Date().toISOString().split('T')[0],
+      appointmentDate: appointmentDate || todayStr,
       appointmentTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'Pending Counseling',
       createdAt: new Date().toISOString(),
@@ -95,11 +97,11 @@ export const PatientModal: React.FC<PatientModalProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1 flex items-center gap-1.5">
                 <Phone className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Phone Number (Mobile) *</span>
+                <span>Phone *</span>
               </label>
               <input
                 type="text"
@@ -107,25 +109,23 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                 placeholder="e.g. 01711223344"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-emerald-900"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-emerald-900"
               />
             </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                <span>Age (Years)</span>
+                <span>Age (Yrs)</span>
               </label>
               <input
                 type="number"
                 placeholder="e.g. 45"
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               />
             </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
                 <span>Gender</span>
@@ -133,12 +133,28 @@ export const PatientModal: React.FC<PatientModalProps> = ({
               <select
                 value={gender}
                 onChange={(e) => setGender(e.target.value as any)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               >
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
                 <option value="Other">Other</option>
               </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase mb-1 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Appointment Date *</span>
+              </label>
+              <input
+                type="date"
+                required
+                value={appointmentDate}
+                onChange={(e) => setAppointmentDate(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-slate-900"
+              />
             </div>
 
             <div>

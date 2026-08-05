@@ -8,7 +8,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1000,
     defaultDiscountPercent: 0,
-    description: 'Neurological scalp acupuncture therapy'
+    description: 'Neurological scalp acupuncture therapy',
+    outdoorSessions: 10,
+    indoorSessions: 15
   },
   {
     id: 'tr-tongue',
@@ -16,7 +18,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1000,
     defaultDiscountPercent: 0,
-    description: 'Specialized tongue acupuncture session'
+    description: 'Specialized tongue acupuncture session',
+    outdoorSessions: 10,
+    indoorSessions: 15
   },
   {
     id: 'tr-ear',
@@ -24,7 +28,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1000,
     defaultDiscountPercent: 0,
-    description: 'Auricular acupuncture therapy'
+    description: 'Auricular acupuncture therapy',
+    outdoorSessions: 10,
+    indoorSessions: 15
   },
   {
     id: 'tr-1',
@@ -32,7 +38,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1200,
     defaultDiscountPercent: 0,
-    description: 'Acupuncture session with sterile needles'
+    description: 'Acupuncture session with sterile needles',
+    outdoorSessions: 10,
+    indoorSessions: 20
   },
   {
     id: 'tr-2',
@@ -40,7 +48,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1500,
     defaultDiscountPercent: 0,
-    description: 'Targeted nerve stimulation with micro-current'
+    description: 'Targeted nerve stimulation with micro-current',
+    outdoorSessions: 10,
+    indoorSessions: 15
   },
   {
     id: 'tr-3',
@@ -48,7 +58,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1000,
     defaultDiscountPercent: 0,
-    description: 'Dry/Wet cupping for blood circulation and detoxification'
+    description: 'Dry/Wet cupping for blood circulation and detoxification',
+    outdoorSessions: 3,
+    indoorSessions: 5
   },
   {
     id: 'tr-4',
@@ -56,7 +68,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 800,
     defaultDiscountPercent: 0,
-    description: 'Heat therapy using moxa wool'
+    description: 'Heat therapy using moxa wool',
+    outdoorSessions: 10,
+    indoorSessions: 15
   },
   {
     id: 'tr-5',
@@ -64,7 +78,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1000,
     defaultDiscountPercent: 0,
-    description: 'Manual rehabilitation and joint mobilization'
+    description: 'Manual rehabilitation and joint mobilization',
+    outdoorSessions: 10,
+    indoorSessions: 15
   },
   {
     id: 'tr-6',
@@ -72,7 +88,9 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 1800,
     defaultDiscountPercent: 0,
-    description: 'Non-invasive laser stimulation'
+    description: 'Non-invasive laser stimulation',
+    outdoorSessions: 10,
+    indoorSessions: 15
   },
   {
     id: 'tr-7',

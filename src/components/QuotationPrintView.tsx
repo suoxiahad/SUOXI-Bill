@@ -13,6 +13,32 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
     window.print();
   };
 
+  // Calculate breakdown items for the Billing Summary
+  const treatmentsGrossSubtotal = (quotation.treatments && quotation.treatments.length > 0)
+    ? quotation.treatments.reduce((sum, tr) => sum + ((tr.unitCost || 0) * (tr.sessions || 1)), 0)
+    : (quotation.outdoorPackages || []).reduce((sum, pkg) => sum + (pkg.totalBaseCost || 0), 0);
+
+  const treatmentsTotalDiscount = (quotation.treatments && quotation.treatments.length > 0)
+    ? quotation.treatments.reduce((sum, tr) => sum + (tr.discountAmount || 0), 0)
+    : (quotation.outdoorPackages || []).reduce((sum, pkg) => sum + (pkg.discountAmount || 0), 0);
+
+  const treatmentsSubtotal = quotation.treatmentsSubtotal || (treatmentsGrossSubtotal - treatmentsTotalDiscount);
+
+  const indoorRoomOnlySubtotal = (quotation.indoorServices || [])
+    .filter(s => s.id !== 'food-charge-3x' && s.roomType !== 'Food Charge 3 Times')
+    .reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+
+  const foodChargeTotal = (quotation.indoorServices || [])
+    .filter(s => s.id === 'food-charge-3x' || s.roomType === 'Food Charge 3 Times')
+    .reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+
+  const actualAdmissionFee = quotation.admissionFee ?? quotation.consultationFee ?? 0;
+  const overallDiscountAmount = quotation.overallDiscountAmount || 0;
+
+  const mode = quotation.patientTreatmentMode || 
+    (quotation.outdoorPackages && quotation.outdoorPackages.length > 0 ? 'outdoor' : 
+     quotation.indoorServices && quotation.indoorServices.some(s => s.id !== 'food-charge-3x' && s.roomType !== 'Food Charge 3 Times') ? 'indoor' : 'individual');
+
   return (
     <div className="space-y-6">
       
@@ -228,41 +254,87 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
             </div>
           </div>
 
-          {/* Totals Table */}
-          <div className="w-full sm:w-80 bg-slate-900 text-white p-4 rounded-xl shadow border border-slate-800 text-xs space-y-2">
-            {((quotation.admissionFee ?? quotation.consultationFee ?? 0) > 0) && (
-              <div className="flex justify-between text-emerald-300">
-                <span>Admission Fee (One Time):</span>
-                <span className="font-semibold">BDT {((quotation.admissionFee ?? quotation.consultationFee ?? 0)).toLocaleString()}</span>
+          {/* Billing Summary Box */}
+          <div className="w-full sm:w-80 bg-slate-900 text-white p-4 rounded-xl shadow border border-slate-800 text-xs space-y-3">
+            
+            {/* Treatments Subtotal Section */}
+            <div className="bg-slate-800/90 p-3 rounded-xl border border-slate-700/80 space-y-2">
+              <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider border-b border-slate-700 pb-1.5 flex items-center justify-between">
+                <span>
+                  {mode === 'outdoor' 
+                    ? 'Treatments Subtotal - Outdoor Packages' 
+                    : mode === 'indoor'
+                    ? 'Treatments Subtotal - Indoor'
+                    : 'Treatments Subtotal'}
+                </span>
+              </div>
+
+              <div className="space-y-1 text-slate-300 text-[11px]">
+                <div className="flex justify-between">
+                  <span>Total Bill:</span>
+                  <span className="font-bold text-white">BDT {treatmentsGrossSubtotal.toLocaleString()}</span>
+                </div>
+
+                <div className="flex justify-between text-rose-300">
+                  <span>Discount Amount:</span>
+                  <span className="font-bold">-BDT {treatmentsTotalDiscount.toLocaleString()}</span>
+                </div>
+
+                <div className="flex justify-between pt-1 border-t border-slate-700/70 font-bold text-emerald-300">
+                  <span>After Discount Gross Total Bill:</span>
+                  <span className="font-extrabold text-emerald-400">BDT {treatmentsSubtotal.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Additional Services */}
+            <div className="space-y-1.5 pt-1 border-t border-slate-800 text-[11px]">
+              <div className="flex justify-between items-center text-slate-300">
+                <span>Indoor Accommodation:</span>
+                <span className="font-bold text-white">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between items-center text-slate-300">
+                <span>Food Charge:</span>
+                <span className="font-bold text-white">BDT {foodChargeTotal.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between items-center text-slate-300">
+                <span>Admission Fee:</span>
+                <span className="font-bold text-white">BDT {actualAdmissionFee.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Additional Special Discount */}
+            {overallDiscountAmount > 0 && (
+              <div className="pt-1.5 border-t border-slate-800 flex justify-between items-center text-[11px] text-amber-300 font-medium">
+                <span>Additional Special Discount ({quotation.overallDiscountPercent || 0}%):</span>
+                <span>-BDT {overallDiscountAmount.toLocaleString()}</span>
               </div>
             )}
 
-            <div className="flex justify-between text-slate-300">
-              <span>Gross Total:</span>
-              <span className="font-bold text-white">BDT {quotation.grossTotal.toLocaleString()}</span>
-            </div>
-
-            {quotation.overallDiscountAmount > 0 && (
-              <div className="flex justify-between text-amber-300">
-                <span>Overall Discount ({quotation.overallDiscountPercent}%):</span>
-                <span>-BDT {quotation.overallDiscountAmount.toLocaleString()}</span>
+            {/* Grand Total */}
+            <div className="pt-2 border-t border-slate-800">
+              <div className="flex justify-between items-end font-extrabold">
+                <span className="text-[11px] text-slate-300 uppercase tracking-wider">Grand Total Bill:</span>
+                <span className="text-xl text-emerald-400">
+                  BDT {quotation.grandTotal.toLocaleString()}
+                </span>
               </div>
-            )}
-
-            <div className="pt-2 border-t border-slate-800 flex justify-between font-black text-sm text-white">
-              <span>Grand Total:</span>
-              <span className="text-emerald-400 text-base">BDT {quotation.grandTotal.toLocaleString()}</span>
             </div>
 
-            <div className="flex justify-between text-emerald-300">
-              <span>Advance Paid:</span>
-              <span>BDT {quotation.advancePaid.toLocaleString()}</span>
+            {/* Advance Paid & Net Due */}
+            <div className="p-2.5 bg-slate-800/80 rounded-xl space-y-1 text-[11px] font-semibold border border-slate-700/50">
+              <div className="flex justify-between text-slate-300">
+                <span>Advance Paid:</span>
+                <span className="font-bold text-white">BDT {(quotation.advancePaid || 0).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-rose-300 font-bold">
+                <span>Net Due Balance:</span>
+                <span className="font-black text-rose-400 text-xs">BDT {(quotation.dueAmount || 0).toLocaleString()}</span>
+              </div>
             </div>
 
-            <div className="pt-2 border-t border-slate-800 flex justify-between font-black text-sm text-rose-300">
-              <span>Due Balance:</span>
-              <span>BDT {quotation.dueAmount.toLocaleString()}</span>
-            </div>
           </div>
 
         </div>

@@ -109,12 +109,12 @@ const LOCAL_DB_FILE = path.join(process.cwd(), 'local_hospital_db.json');
 
 // Default initial catalog data in pure English
 const DEFAULT_CATALOG = [
-  { id: 'cat-1', name: 'Traditional Acupuncture Therapy', category: 'treatment', defaultPrice: 1200, defaultDiscountPercent: 10, description: 'Standard acupuncture needle stimulation session' },
-  { id: 'cat-2', name: 'Electro-Acupuncture Therapy', category: 'treatment', defaultPrice: 1500, defaultDiscountPercent: 10, description: 'Electrical pulse acupuncture therapy' },
-  { id: 'cat-3', name: 'Moxibustion Heat Therapy', category: 'treatment', defaultPrice: 800, defaultDiscountPercent: 0, description: 'Heat therapy using moxa wool' },
-  { id: 'cat-4', name: 'Cupping / Hijama Therapy', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Wet/Dry suction cupping therapy' },
-  { id: 'cat-5', name: 'Physiotherapy & Traction', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 10, description: 'Spine & Joint decompression traction' },
-  { id: 'cat-6', name: 'Laser Acupuncture Therapy', category: 'treatment', defaultPrice: 1800, defaultDiscountPercent: 15, description: 'Non-invasive laser therapy' },
+  { id: 'cat-1', name: 'Traditional Acupuncture Therapy', category: 'treatment', defaultPrice: 1200, defaultDiscountPercent: 10, description: 'Standard acupuncture needle stimulation session', outdoorSessions: 10, indoorSessions: 20 },
+  { id: 'cat-2', name: 'Electro-Acupuncture Therapy', category: 'treatment', defaultPrice: 1500, defaultDiscountPercent: 10, description: 'Electrical pulse acupuncture therapy', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'cat-3', name: 'Moxibustion Heat Therapy', category: 'treatment', defaultPrice: 800, defaultDiscountPercent: 0, description: 'Heat therapy using moxa wool', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'cat-4', name: 'Cupping / Hijama Therapy', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Wet/Dry suction cupping therapy', outdoorSessions: 3, indoorSessions: 5 },
+  { id: 'cat-5', name: 'Physiotherapy & Traction', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 10, description: 'Spine & Joint decompression traction', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'cat-6', name: 'Laser Acupuncture Therapy', category: 'treatment', defaultPrice: 1800, defaultDiscountPercent: 15, description: 'Non-invasive laser therapy', outdoorSessions: 10, indoorSessions: 15 },
   { id: 'cat-7', name: '30-Day Comprehensive Outdoor Package', category: 'outdoor_package', defaultPrice: 35000, defaultDiscountPercent: 15, description: 'Includes 30 sessions acupuncture + moxibustion + physio' },
   { id: 'cat-8', name: '15-Day Intensive Outdoor Package', category: 'outdoor_package', defaultPrice: 20000, defaultDiscountPercent: 10, description: '15 session intensive therapy package' },
   { id: 'cat-9', name: 'Single Premium AC Cabin', category: 'indoor_room', defaultPrice: 3500, defaultDiscountPercent: 0, description: 'Private AC cabin with attached bath' },
@@ -658,6 +658,28 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
   res.json({ message: 'Patient saved successfully', patient: formattedPatient, patients: localData.patients });
 });
 
+app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'No patient IDs provided for deletion' });
+  }
+
+  const idSet = new Set(ids);
+  localData.patients = localData.patients.filter(p => !idSet.has(p.id));
+  saveLocalDb();
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      await mysqlPool.execute(`DELETE FROM patients WHERE id IN (${placeholders})`, ids);
+    } catch (err) {
+      console.error('MySQL patient batch delete error:', err);
+    }
+  }
+
+  res.json({ message: `${ids.length} patient(s) deleted successfully`, deletedCount: ids.length, patients: localData.patients });
+});
+
 // PDF Upload Endpoint to parse Patient Name, Gender, Age, Phone Number, Remark (Disease)
 app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), upload.single('pdfFile'), async (req: any, res: any) => {
   if (!req.file) {
@@ -1009,8 +1031,17 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
         const finalName = name || (phone ? `Patient ${phone}` : `Patient #${extractedPatients.length + 1}`);
         const finalPhone = phone || '01700000000';
 
+        let cleanSerial = '';
+        if (rawSerial) {
+          const match = rawSerial.match(/\b\d+\b/);
+          if (match) cleanSerial = match[0];
+        }
+        if (!cleanSerial) {
+          cleanSerial = String(extractedPatients.length + 1);
+        }
+
         extractedPatients.push({
-          serialNo: rawSerial || String(extractedPatients.length + 1),
+          serialNo: cleanSerial,
           name: finalName,
           gender: gender || 'Male',
           age: age || '',
@@ -1044,6 +1075,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
   let added = 0;
   let updated = 0;
   const todayStr = new Date().toISOString().split('T')[0];
+  const newPatientsBatch: any[] = [];
 
   for (let idx = 0; idx < patients.length; idx++) {
     const p = patients[idx];
@@ -1055,9 +1087,18 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
 
     const existingIdx = localData.patients.findIndex(x => x.phone === cleanPhone && cleanPhone !== '01700000000');
 
+    let cleanSerial = '';
+    if (p.serialNo) {
+      const match = String(p.serialNo).match(/\b\d+\b/);
+      if (match) cleanSerial = match[0];
+    }
+    if (!cleanSerial) {
+      cleanSerial = String(idx + 1);
+    }
+
     const formattedPatient = {
       id: existingIdx >= 0 ? localData.patients[existingIdx].id : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`),
-      serialNo: p.serialNo || '',
+      serialNo: cleanSerial,
       name: cleanName,
       phone: cleanPhone,
       age: p.age || '',
@@ -1077,7 +1118,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       localData.patients[existingIdx] = { ...localData.patients[existingIdx], ...formattedPatient };
       updated++;
     } else {
-      localData.patients.unshift(formattedPatient);
+      newPatientsBatch.push(formattedPatient);
       added++;
     }
 
@@ -1095,6 +1136,9 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       }
     }
   }
+
+  // Prepend newly imported batch in exact top-to-bottom sheet order
+  localData.patients = [...newPatientsBatch, ...localData.patients];
 
   saveLocalDb();
 
