@@ -24,8 +24,10 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
 
   const treatmentsSubtotal = quotation.treatmentsSubtotal || (treatmentsGrossSubtotal - treatmentsTotalDiscount);
 
-  const indoorRoomOnlySubtotal = (quotation.indoorServices || [])
-    .filter(s => s.id !== 'food-charge-3x' && s.roomType !== 'Food Charge 3 Times')
+  const roomServices = (quotation.indoorServices || [])
+    .filter(s => s.id !== 'food-charge-3x' && s.roomType !== 'Food Charge 3 Times');
+
+  const indoorRoomOnlySubtotal = roomServices
     .reduce((sum, s) => sum + (s.totalAmount || 0), 0);
 
   const foodChargeTotal = (quotation.indoorServices || [])
@@ -289,10 +291,27 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
 
             {/* Additional Services */}
             <div className="space-y-1.5 pt-1 border-t border-slate-800 text-[11px]">
-              <div className="flex justify-between items-center text-slate-300">
-                <span>Indoor Accommodation:</span>
-                <span className="font-bold text-white">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
-              </div>
+              {roomServices.length > 0 ? (
+                <div className="space-y-1 bg-slate-800/80 p-2 rounded-xl border border-slate-700/80">
+                  <div className="flex justify-between items-center text-xs font-bold text-indigo-300">
+                    <span>Indoor Rooms ({roomServices.length}):</span>
+                    <span className="text-indigo-200">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
+                  </div>
+                  <div className="space-y-0.5 pt-1 border-t border-slate-700/60">
+                    {roomServices.map((room, rIdx) => (
+                      <div key={room.id || rIdx} className="flex justify-between items-center text-[10px] text-slate-300">
+                        <span className="truncate pr-1 text-slate-300" title={room.roomType}>• {room.roomType} ({room.days}d)</span>
+                        <span className="font-bold text-white shrink-0">BDT {(room.totalAmount || 0).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center text-slate-300">
+                  <span>Indoor Accommodation:</span>
+                  <span className="font-bold text-slate-400">BDT 0</span>
+                </div>
+              )}
 
               <div className="flex justify-between items-center text-slate-300">
                 <span>Food Charge:</span>
@@ -356,7 +375,7 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
         {/* Footer Note */}
         <div className="mt-8 text-center text-[10px] text-slate-400 border-t border-slate-100 pt-3 space-y-0.5">
           <p>Computer generated invoice quotation • SUO XI Hospital Acupuncture Billing System</p>
-          <p className="text-emerald-700 font-bold text-[10px]">Developed & Designed By SUOXI IT Department</p>
+          <p className="text-emerald-700 font-bold text-[10px]">Developed & Designed By SUOXI IT</p>
         </div>
 
       </div>

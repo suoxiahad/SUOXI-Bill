@@ -214,7 +214,7 @@ export default function App() {
       <footer className="bg-slate-900 text-slate-400 py-6 border-t border-slate-800 text-xs text-center print:hidden">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <p>© {new Date().getFullYear()} SUO XI Hospital (Acupuncture) • All Rights Reserved.</p>
-          <p className="text-emerald-400 font-medium">Developed & Designed By SUOXI IT Department</p>
+          <p className="text-emerald-400 font-medium">Developed & Designed By SUOXI IT</p>
           <div className="flex items-center gap-2">
             <span className="text-emerald-400 font-semibold">SUO XI Billing System v2.0</span>
           </div>

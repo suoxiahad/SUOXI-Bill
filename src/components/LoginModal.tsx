@@ -190,7 +190,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, canClose = true,
         {/* Footer */}
         <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 text-center text-[11px] text-slate-500 flex flex-col items-center justify-center gap-0.5">
           <p className="font-medium text-slate-600">SUO XI Hospital Billing System</p>
-          <p className="text-[10px] text-emerald-700 font-semibold">Developed & Designed By SUOXI IT Department</p>
+          <p className="text-[10px] text-emerald-700 font-semibold">Developed & Designed By SUOXI IT</p>
         </div>
       </div>
     </div>

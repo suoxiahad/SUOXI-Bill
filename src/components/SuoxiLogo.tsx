@@ -11,7 +11,7 @@ const ONLINE_URL = 'https://suoxigroup.com/wp-content/uploads/2026/08/AI-Logo.pn
 const FALLBACK_URL = '/api/logo';
 
 export const SuoxiLogo: React.FC<SuoxiLogoProps> = ({ className = '', size = 'md' }) => {
-  const [source, setSource] = useState(logoImg || ONLINE_URL);
+  const [source, setSource] = useState(ONLINE_URL);
   const [fallbackStage, setFallbackStage] = useState(0);
   const [hasError, setHasError] = useState(false);
 
@@ -37,11 +37,12 @@ export const SuoxiLogo: React.FC<SuoxiLogoProps> = ({ className = '', size = 'md
       <img
         src={source}
         alt="SUO XI Hospital (Acupuncture)"
+        referrerPolicy="no-referrer"
         className={`${selectedHeight} w-auto object-contain max-w-full`}
         onError={() => {
           if (fallbackStage === 0) {
             setFallbackStage(1);
-            setSource(ONLINE_URL);
+            setSource(logoImg || FALLBACK_URL);
           } else if (fallbackStage === 1) {
             setFallbackStage(2);
             setSource(FALLBACK_URL);
