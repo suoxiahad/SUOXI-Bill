@@ -1225,7 +1225,7 @@ app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doct
   res.json({ message: 'Quotation saved successfully', quotation, quotations: localData.quotations });
 });
 
-app.delete('/api/quotations/:id', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
+app.delete('/api/quotations/:id', authenticateToken, requireRole('System Admin'), async (req, res) => {
   const { id } = req.params;
   localData.quotations = localData.quotations.filter(q => q.id !== id);
   saveLocalDb();
@@ -1239,6 +1239,28 @@ app.delete('/api/quotations/:id', authenticateToken, requireRole('System Admin',
   }
 
   res.json({ message: 'Quotation deleted successfully', quotations: localData.quotations });
+});
+
+app.post('/api/quotations/delete', authenticateToken, requireRole('System Admin'), async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'No quotation IDs provided for deletion' });
+  }
+
+  const idSet = new Set(ids);
+  localData.quotations = localData.quotations.filter(q => !idSet.has(q.id));
+  saveLocalDb();
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      await mysqlPool.execute(`DELETE FROM quotations WHERE id IN (${placeholders})`, ids);
+    } catch (err) {
+      console.error('MySQL quotation batch delete error:', err);
+    }
+  }
+
+  res.json({ message: `${ids.length} quotation(s) deleted successfully`, deletedCount: ids.length, quotations: localData.quotations });
 });
 
 // 6. Catalog API

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { setActiveUser } from '../utils/storage';
-import { Lock, UserCheck, AlertCircle, X, Shield, Stethoscope, PhoneCall } from 'lucide-react';
+import { Lock, UserCheck, AlertCircle, X } from 'lucide-react';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -55,12 +55,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, canClose = true,
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     performLogin(username, password);
-  };
-
-  const handleDemoLogin = (u: string, p: string) => {
-    setUsername(u);
-    setPassword(p);
-    performLogin(u, p);
   };
 
   return (
@@ -133,58 +127,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, canClose = true,
               {loading ? 'Authenticating...' : 'Sign In'}
             </button>
           </form>
-
-          {/* Developer / Demo Quick Login Presets */}
-          <div className="border-t border-slate-200 pt-4">
-            <div className="flex items-center justify-between mb-2.5">
-              <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-emerald-600" />
-                {import.meta.env.PROD ? 'Default Admin Credential:' : 'Developer / Demo Accounts:'}
-              </span>
-              <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-medium border border-emerald-200">
-                1-Click Auto Login
-              </span>
-            </div>
-
-            <div className={`grid ${import.meta.env.PROD ? 'grid-cols-1' : 'grid-cols-3'} gap-2`}>
-              <button
-                type="button"
-                onClick={() => handleDemoLogin('admin', 'admin123')}
-                disabled={loading}
-                className="p-2.5 rounded-xl border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/80 text-slate-700 flex flex-col items-center gap-1 text-center transition cursor-pointer group"
-              >
-                <Shield className="w-4 h-4 text-emerald-600 group-hover:scale-110 transition-transform" />
-                <span className="font-semibold text-[11px] text-slate-800">System Admin</span>
-                <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">admin</span>
-              </button>
-
-              {!import.meta.env.PROD && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleDemoLogin('doctor', 'doctor123')}
-                    disabled={loading}
-                    className="p-2.5 rounded-xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/80 text-slate-700 flex flex-col items-center gap-1 text-center transition cursor-pointer group"
-                  >
-                    <Stethoscope className="w-4 h-4 text-blue-600 group-hover:scale-110 transition-transform" />
-                    <span className="font-semibold text-[11px] text-slate-800">Doctor</span>
-                    <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">doctor</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleDemoLogin('callcenter', 'cc123')}
-                    disabled={loading}
-                    className="p-2.5 rounded-xl border border-slate-200 hover:border-amber-500 hover:bg-amber-50/80 text-slate-700 flex flex-col items-center gap-1 text-center transition cursor-pointer group"
-                  >
-                    <PhoneCall className="w-4 h-4 text-amber-600 group-hover:scale-110 transition-transform" />
-                    <span className="font-semibold text-[11px] text-slate-800">Call Center</span>
-                    <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">callcenter</span>
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
         </div>
 
         {/* Footer */}

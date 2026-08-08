@@ -218,7 +218,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print:hidden">
       
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-emerald-800 space-y-3">

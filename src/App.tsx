@@ -19,6 +19,7 @@ import {
   addOrUpdatePatientApi,
   getQuotationsLocal,
   saveQuotationApi,
+  deleteQuotationsApi,
   getCatalogLocal,
   saveCatalogApi
 } from './utils/storage';
@@ -113,6 +114,11 @@ export default function App() {
     setPatients(updatedPatients);
   };
 
+  const handleDeleteQuotations = async (ids: string[]) => {
+    const updated = await deleteQuotationsApi(ids);
+    setQuotations(updated);
+  };
+
   const handlePreviewPrint = (quotation: InvoiceQuotation) => {
     setPrintQuotation(quotation);
   };
@@ -191,7 +197,9 @@ export default function App() {
             {activeTab === 'history' && (
               <QuotationHistory
                 quotations={quotations}
+                currentUser={currentUser}
                 onViewPrintQuotation={(q) => setPrintQuotation(q)}
+                onDeleteQuotations={handleDeleteQuotations}
               />
             )}
 

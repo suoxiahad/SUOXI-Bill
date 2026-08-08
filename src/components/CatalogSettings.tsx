@@ -49,7 +49,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print:hidden">
       
       {/* Header */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -160,6 +160,17 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                           className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-indigo-900 text-center focus:ring-1 focus:ring-indigo-500"
                           placeholder="e.g. 15"
                         />
+                      </div>
+                      <div className="col-span-2 pt-1">
+                        <label className="inline-flex items-center gap-2 text-[11px] font-bold text-indigo-900 bg-indigo-50/80 hover:bg-indigo-100/80 px-2.5 py-1 rounded-lg border border-indigo-200/70 cursor-pointer select-none transition">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(item.isIndoorFree)}
+                            onChange={(e) => updateItem(idx, { isIndoorFree: e.target.checked })}
+                            className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                          />
+                          <span>🎁 Free for Indoor Patient</span>
+                        </label>
                       </div>
                     </div>
                   )}

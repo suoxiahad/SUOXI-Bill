@@ -70,7 +70,8 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     defaultDiscountPercent: 0,
     description: 'Heat therapy using moxa wool',
     outdoorSessions: 10,
-    indoorSessions: 15
+    indoorSessions: 15,
+    isIndoorFree: true
   },
   {
     id: 'tr-5',
@@ -98,7 +99,10 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 700,
     defaultDiscountPercent: 0,
-    description: 'Pain management thermal therapy'
+    description: 'Pain management thermal therapy',
+    outdoorSessions: 10,
+    indoorSessions: 15,
+    isIndoorFree: true
   },
 
   // Outdoor Packages

@@ -24,6 +24,7 @@ export interface IndividualTreatment {
   discountPercent: number; // Discount percentage (%)
   discountAmount: number; // Discount amount
   totalCost: number; // Total cost
+  isIndoorFree?: boolean;
 }
 
 export interface OutdoorPackage {
@@ -101,6 +102,7 @@ export interface CatalogItem {
   rateNote?: string;
   outdoorSessions?: number;
   indoorSessions?: number;
+  isIndoorFree?: boolean;
 }
 
 export type UserRole = 'System Admin' | 'Doctor' | 'Call Center';

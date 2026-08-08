@@ -15,7 +15,7 @@ const DEMO_PATIENTS_LIST: Patient[] = [
     age: 52,
     gender: 'Male',
     address: 'Dhanmondi, Dhaka',
-    doctorName: 'Prof. Dr. SM Shahidullah (Acupuncture Expert)',
+    doctorName: 'Dr. S.M. Shahidul Islam PhD',
     appointmentDate: new Date().toISOString().split('T')[0],
     appointmentTime: '10:30 AM',
     department: 'Acupuncture & Spine',
@@ -441,6 +441,32 @@ export const saveQuotationApi = async (quotation: InvoiceQuotation): Promise<Inv
   return current;
 };
 
+export const deleteQuotationsApi = async (ids: string[]): Promise<InvoiceQuotation[]> => {
+  const current = getQuotationsLocal();
+  const idSet = new Set(ids);
+  const updated = current.filter(q => !idSet.has(q.id));
+  saveQuotationsLocal(updated);
+
+  try {
+    const res = await fetch('/api/quotations/delete', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ ids })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.quotations) {
+        saveQuotationsLocal(data.quotations);
+        return data.quotations;
+      }
+    }
+  } catch (err) {
+    console.warn('Error deleting quotations on backend:', err);
+  }
+
+  return updated;
+};
+
 // Catalog APIs
 export const fetchCatalogApi = async (): Promise<CatalogItem[]> => {
   try {
@@ -509,7 +535,7 @@ const ADMIN_ONLY_USER: User[] = [
 
 const ALL_DEV_USERS: User[] = [
   ...ADMIN_ONLY_USER,
-  { id: 'usr-doc1', username: 'doctor', name: 'Prof. Dr. SM Shahidullah', role: 'Doctor', phone: '01711111111' },
+  { id: 'usr-doc1', username: 'doctor', name: 'Dr. S.M. Shahidul Islam PhD', role: 'Doctor', phone: '01711111111' },
   { id: 'usr-cc1', username: 'callcenter', name: 'Call Center Desk', role: 'Call Center', phone: '01722222222' }
 ];
 

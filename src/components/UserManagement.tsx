@@ -136,7 +136,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print:hidden">
       
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-slate-900 to-emerald-950 text-white p-6 rounded-2xl shadow-md border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

@@ -18,7 +18,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
   const [phone, setPhone] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<'Male' | 'Female' | 'Other'>('Male');
-  const [doctorName, setDoctorName] = useState('Prof. Dr. SM Shahidullah');
+  const [doctorName, setDoctorName] = useState('Dr. S.M. Shahidul Islam PhD');
   const [appointmentDate, setAppointmentDate] = useState(todayStr);
   const [notes, setNotes] = useState('');
 
@@ -160,7 +160,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1 flex items-center gap-1.5">
                 <Stethoscope className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Consulting Doctor</span>
+                <span>Doctor</span>
               </label>
               <input
                 type="text"

@@ -10,13 +10,18 @@ import {
   X, 
   Clock, 
   Users,
-  Receipt
+  Receipt,
+  Trash2,
+  AlertTriangle,
+  ShieldAlert
 } from 'lucide-react';
-import { InvoiceQuotation } from '../types';
+import { InvoiceQuotation, User } from '../types';
 
 interface QuotationHistoryProps {
   quotations: InvoiceQuotation[];
+  currentUser?: User | null;
   onViewPrintQuotation: (quotation: InvoiceQuotation) => void;
+  onDeleteQuotations?: (ids: string[]) => void;
 }
 
 interface PatientHistoryGroup {
@@ -45,13 +50,111 @@ export function getVisitOrdinal(index: number): string {
 
 export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   quotations,
-  onViewPrintQuotation
+  currentUser,
+  onViewPrintQuotation,
+  onDeleteQuotations
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'patient_grouped' | 'flat_list'>('patient_grouped');
   const [expandedPatientKey, setExpandedPatientKey] = useState<string | null>(null);
   const [selectedPatientModal, setSelectedPatientModal] = useState<PatientHistoryGroup | null>(null);
   const [selectedQuotationIds, setSelectedQuotationIds] = useState<string[]>([]);
+  const [deleteWarningModal, setDeleteWarningModal] = useState<{
+    type: 'single' | 'group' | 'bulk';
+    title: string;
+    subtitle: string;
+    warningText: string;
+    idsToDelete: string[];
+    singleQuotation?: InvoiceQuotation | null;
+    groupToDelete?: PatientHistoryGroup | null;
+  } | null>(null);
+
+  const isAdmin = currentUser?.role === 'System Admin';
+
+  const handleDeleteSingleQuotation = (q: InvoiceQuotation) => {
+    if (!isAdmin) {
+      alert('Delete permission is restricted to System Admin only.');
+      return;
+    }
+    setDeleteWarningModal({
+      type: 'single',
+      title: 'Delete Quotation Invoice',
+      subtitle: `Invoice #${q.quotationNumber} — ${q.patientName}`,
+      warningText: `Are you sure you want to permanently delete Invoice / Quotation #${q.quotationNumber} for patient ${q.patientName} (${q.patientPhone || 'No Phone'})? This action cannot be undone.`,
+      idsToDelete: [q.id],
+      singleQuotation: q
+    });
+  };
+
+  const handleDeletePatientGroup = (group: PatientHistoryGroup) => {
+    if (!isAdmin) {
+      alert('Delete permission is restricted to System Admin only.');
+      return;
+    }
+    const ids = group.quotations.map(q => q.id);
+    setDeleteWarningModal({
+      type: 'group',
+      title: 'Delete Entire Patient Visit History',
+      subtitle: `${group.patientName} (${group.patientPhone}) — ${group.totalInvoices} Invoice Records`,
+      warningText: `CRITICAL WARNING: You are about to delete ALL ${group.totalInvoices} quotation & visit invoice history records for patient "${group.patientName}" (Total Billed: BDT ${group.totalBilled.toLocaleString()}). This will completely erase their history records from the system and cannot be restored.`,
+      idsToDelete: ids,
+      groupToDelete: group
+    });
+  };
+
+  const handleDeleteSelectedQuotations = () => {
+    if (!isAdmin) {
+      alert('Delete permission is restricted to System Admin only.');
+      return;
+    }
+    if (selectedQuotationIds.length === 0) return;
+    setDeleteWarningModal({
+      type: 'bulk',
+      title: 'Delete Selected Quotation Records',
+      subtitle: `${selectedQuotationIds.length} Selected Quotations`,
+      warningText: `WARNING: You are about to permanently delete ${selectedQuotationIds.length} selected quotation invoice record(s). Are you sure you want to proceed with permanent deletion?`,
+      idsToDelete: [...selectedQuotationIds]
+    });
+  };
+
+  const confirmAndExecuteDeletion = () => {
+    if (!deleteWarningModal) return;
+
+    const { idsToDelete, type, singleQuotation, groupToDelete } = deleteWarningModal;
+
+    onDeleteQuotations?.(idsToDelete);
+
+    if (type === 'single' && singleQuotation) {
+      setSelectedQuotationIds(prev => prev.filter(id => id !== singleQuotation.id));
+      if (selectedPatientModal) {
+        const remaining = selectedPatientModal.quotations.filter(item => item.id !== singleQuotation.id);
+        if (remaining.length === 0) {
+          setSelectedPatientModal(null);
+        } else {
+          const totalBilled = remaining.reduce((sum, item) => sum + (item.grandTotal || 0), 0);
+          const totalPaid = remaining.reduce((sum, item) => sum + (item.advancePaid || 0), 0);
+          const totalDue = remaining.reduce((sum, item) => sum + (item.dueAmount || 0), 0);
+          setSelectedPatientModal({
+            ...selectedPatientModal,
+            quotations: remaining,
+            totalInvoices: remaining.length,
+            totalBilled,
+            totalPaid,
+            totalDue
+          });
+        }
+      }
+    } else if (type === 'group' && groupToDelete) {
+      setSelectedQuotationIds(prev => prev.filter(id => !idsToDelete.includes(id)));
+      if (selectedPatientModal?.patientKey === groupToDelete.patientKey) {
+        setSelectedPatientModal(null);
+      }
+    } else if (type === 'bulk') {
+      setSelectedQuotationIds([]);
+    }
+
+    setDeleteWarningModal(null);
+  };
 
   // Group quotations by Patient (using Phone or Patient Name)
   const patientGroupsMap = new Map<string, InvoiceQuotation[]>();
@@ -131,7 +234,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print:hidden">
       
       {/* Header & Stats Banner */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
@@ -255,6 +358,21 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                           <Eye className="w-3.5 h-3.5 text-slate-600" />
                           <span className="hidden sm:inline">Full Details</span>
                         </button>
+
+                        {isAdmin && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeletePatientGroup(group);
+                            }}
+                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center gap-1 cursor-pointer"
+                            title="Delete Entire Patient History (System Admin Only)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Delete History</span>
+                          </button>
+                        )}
+
                         <button
                           onClick={() => toggleExpand(group.patientKey)}
                           className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl transition border border-emerald-200 cursor-pointer"
@@ -303,8 +421,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                               </p>
                             </div>
 
-                            <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto pt-2 md:pt-0 border-t md:border-t-0 border-slate-200">
-                              <div className="text-right">
+                            <div className="flex items-center justify-between md:justify-end gap-2 w-full md:w-auto pt-2 md:pt-0 border-t md:border-t-0 border-slate-200">
+                              <div className="text-right mr-2">
                                 <p className="font-black text-slate-900 text-sm">BDT {q.grandTotal.toLocaleString()}</p>
                                 <p className="text-[11px] text-emerald-700 font-medium">
                                   Paid: BDT {q.advancePaid.toLocaleString()} | <span className="text-rose-600 font-bold">Due: BDT {q.dueAmount.toLocaleString()}</span>
@@ -318,6 +436,17 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                                 <Printer className="w-3.5 h-3.5" />
                                 <span>Print Invoice</span>
                               </button>
+
+                              {isAdmin && (
+                                <button
+                                  onClick={() => handleDeleteSingleQuotation(q)}
+                                  className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer shrink-0"
+                                  title="Delete Invoice (System Admin Only)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">Delete</span>
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -335,6 +464,21 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
       {/* VIEW 2: FLAT ALL INVOICES LIST */}
       {viewMode === 'flat_list' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          {selectedQuotationIds.length > 0 && isAdmin && (
+            <div className="bg-rose-50 border-b border-rose-200 p-3 px-4 flex items-center justify-between animate-in fade-in duration-150">
+              <span className="text-xs font-extrabold text-rose-900">
+                {selectedQuotationIds.length} quotation invoice record(s) selected
+              </span>
+              <button
+                onClick={handleDeleteSelectedQuotations}
+                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Selected ({selectedQuotationIds.length})</span>
+              </button>
+            </div>
+          )}
+
           {filteredFlatQuotations.length === 0 ? (
             <div className="p-12 text-center text-slate-500 space-y-3">
               <FileText className="w-12 h-12 text-slate-300 mx-auto" />
@@ -429,13 +573,26 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                       </td>
 
                       <td className="p-3.5 text-right">
-                        <button
-                          onClick={() => onViewPrintQuotation(q)}
-                          className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition cursor-pointer"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>Print Invoice</span>
-                        </button>
+                        <div className="inline-flex items-center gap-1.5 justify-end">
+                          <button
+                            onClick={() => onViewPrintQuotation(q)}
+                            className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition cursor-pointer"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>Print Invoice</span>
+                          </button>
+
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDeleteSingleQuotation(q)}
+                              className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs p-1.5 sm:px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                              title="Delete Invoice (System Admin Only)"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Delete</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -572,16 +729,29 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                         <span className="text-rose-600 font-bold">Due: BDT {q.dueAmount.toLocaleString()}</span>
                       </div>
 
-                      <button
-                        onClick={() => {
-                          setSelectedPatientModal(null);
-                          onViewPrintQuotation(q);
-                        }}
-                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>Print This Invoice</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedPatientModal(null);
+                            onViewPrintQuotation(q);
+                          }}
+                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>Print This Invoice</span>
+                        </button>
+
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleDeleteSingleQuotation(q)}
+                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center gap-1 cursor-pointer"
+                            title="Delete Invoice (System Admin Only)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete Invoice</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                   </div>
@@ -591,7 +761,19 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
             </div>
 
             {/* Modal Footer */}
-            <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end">
+            <div className="bg-slate-100 p-4 border-t border-slate-200 flex items-center justify-between">
+              {isAdmin ? (
+                <button
+                  onClick={() => handleDeletePatientGroup(selectedPatientModal)}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete Entire Patient History</span>
+                </button>
+              ) : (
+                <div />
+              )}
+
               <button
                 onClick={() => setSelectedPatientModal(null)}
                 className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition cursor-pointer"
@@ -600,6 +782,64 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION POPUP WARNING MODAL */}
+      {deleteWarningModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-rose-200 animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-rose-600 to-red-700 text-white p-4 px-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-white/20 rounded-xl backdrop-blur-md">
+                  <AlertTriangle className="w-6 h-6 text-amber-200" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black tracking-tight">{deleteWarningModal.title}</h3>
+                  <p className="text-xs text-rose-100 font-medium">{deleteWarningModal.subtitle}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDeleteWarningModal(null)}
+                className="p-1 rounded-lg hover:bg-white/20 transition text-white/80 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <div className="bg-rose-50/80 border border-rose-200 rounded-xl p-3.5 flex items-start gap-3 text-rose-900">
+                <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-extrabold uppercase tracking-wider text-rose-700">Permanent Deletion Warning</p>
+                  <p className="text-rose-800 leading-relaxed font-medium">{deleteWarningModal.warningText}</p>
+                </div>
+              </div>
+
+              <div className="text-xs text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="font-bold text-slate-700">Admin Permission Authorized:</span> <span className="font-semibold text-slate-900">{currentUser?.name || 'System Admin'}</span>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-100 p-4 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                onClick={() => setDeleteWarningModal(null)}
+                className="px-4 py-2 bg-white hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmAndExecuteDeletion}
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-md hover:shadow-lg transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Confirm & Delete Permanently</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

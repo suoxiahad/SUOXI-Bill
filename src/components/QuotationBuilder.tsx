@@ -40,6 +40,7 @@ interface TreatmentListItem {
   description?: string;
   rateNote?: string;
   isCustom?: boolean;
+  isIndoorFree?: boolean;
 }
 
 interface OutdoorPackageListItem {
@@ -95,7 +96,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   // Consulting / Billing Doctor Name
   const [billingDoctor, setBillingDoctor] = useState(
-    currentUser?.name || initialPatient?.doctorName || 'Prof. Dr. SM Shahidullah'
+    currentUser?.name || initialPatient?.doctorName || 'Dr. S.M. Shahidul Islam PhD'
   );
 
   // Sync if initialPatient or currentUser changes
@@ -231,13 +232,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       const unitCost = Number(item.unitCost) || 0;
       const sessionsNum = computedSessions === '' ? 0 : Number(computedSessions);
       const gross = unitCost * sessionsNum;
-      const discountAmount = Math.round((gross * discPct) / 100);
+      const isIndoorFree = targetMode === 'indoor' && Boolean(item.isIndoorFree);
+      const effectiveDiscPct = isIndoorFree ? 100 : discPct;
+      const discountAmount = Math.round((gross * effectiveDiscPct) / 100);
       const totalCost = Math.max(0, gross - discountAmount);
 
       return {
         ...item,
         sessions: computedSessions,
-        discountPercent: newDiscount,
+        discountPercent: isIndoorFree ? 100 : newDiscount,
         discountAmount,
         totalCost
       };
@@ -333,15 +336,16 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           totalCost: 0
         };
       }
+      const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
       const unitCost = Number(item.unitCost) || 0;
       const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
-      const discPct = newVal === '' ? 0 : Number(newVal);
+      const discPct = isIndoorFree ? 100 : (newVal === '' ? 0 : Number(newVal));
       const gross = unitCost * sessions;
       const discountAmount = Math.round((gross * discPct) / 100);
       const totalCost = Math.max(0, gross - discountAmount);
       return {
         ...item,
-        discountPercent: newVal,
+        discountPercent: isIndoorFree ? 100 : newVal,
         discountAmount,
         totalCost
       };
@@ -412,6 +416,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               rateNote: catItem.rateNote || '',
               outdoorSessions: catItem.outdoorSessions,
               indoorSessions: catItem.indoorSessions,
+              isIndoorFree: catItem.isIndoorFree,
               discountAmount,
               totalCost
             };
@@ -434,6 +439,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               rateNote: catItem.rateNote || '',
               outdoorSessions: catItem.outdoorSessions,
               indoorSessions: catItem.indoorSessions,
+              isIndoorFree: catItem.isIndoorFree,
               sessions: '',
               discountPercent: '',
               discountAmount: 0,
@@ -457,6 +463,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           rateNote: catItem.rateNote || '',
           outdoorSessions: catItem.outdoorSessions,
           indoorSessions: catItem.indoorSessions,
+          isIndoorFree: catItem.isIndoorFree,
           sessions: '',
           discountPercent: '',
           discountAmount: 0,
@@ -490,9 +497,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           newDiscountPercent = '';
         }
 
+        const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
         const unitCost = Number(item.unitCost) || 0;
         const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-        const discountPctNum = newDiscountPercent === '' ? 0 : (Number(newDiscountPercent) || 0);
+        const discountPctNum = isIndoorFree ? 100 : (newDiscountPercent === '' ? 0 : (Number(newDiscountPercent) || 0));
         const gross = unitCost * sessionsNum;
         const discountAmount = Math.round((gross * discountPctNum) / 100);
         const totalCost = Math.max(0, gross - discountAmount);
@@ -501,7 +509,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           ...item,
           selected: newSelected,
           sessions: newSessions,
-          discountPercent: newDiscountPercent,
+          discountPercent: isIndoorFree ? 100 : newDiscountPercent,
           discountAmount,
           totalCost
         };
@@ -514,9 +522,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setTreatmentList(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, ...fields };
+        const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(updated.isIndoorFree);
         const unitCost = Number(updated.unitCost) || 0;
         const sessions = updated.sessions === '' ? 0 : (Number(updated.sessions) || 0);
-        const discountPercent = updated.discountPercent === '' ? 0 : (Number(updated.discountPercent) || 0);
+        const discountPercent = isIndoorFree ? 100 : (updated.discountPercent === '' ? 0 : (Number(updated.discountPercent) || 0));
         const gross = unitCost * sessions;
         const discountAmount = Math.round((gross * discountPercent) / 100);
         const totalCost = Math.max(0, gross - discountAmount);
@@ -524,6 +533,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         return {
           ...updated,
           selected,
+          discountPercent: isIndoorFree ? 100 : updated.discountPercent,
           discountAmount,
           totalCost
         };
@@ -1108,7 +1118,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   };
 
   return (
-    <div className="space-y-8">
+    <>
+      <div className="space-y-8 print:hidden">
       
       {/* Patient Selection Header Banner */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
@@ -1461,9 +1472,23 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                                 </button>
                               </div>
                             ) : (
-                              <span className={`text-xs font-bold ${isChecked ? 'text-emerald-950' : 'text-slate-800'}`}>
-                                {item.treatmentName}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`text-xs font-bold ${isChecked ? 'text-emerald-950' : 'text-slate-800'}`}>
+                                  {item.treatmentName}
+                                </span>
+                                {item.isIndoorFree && (
+                                  <span
+                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
+                                      patientTreatmentMode === 'indoor'
+                                        ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}
+                                    title={patientTreatmentMode === 'indoor' ? 'Indoor Patient - 100% Free Treatment' : 'Free for Indoor Patients'}
+                                  >
+                                    🎁 {patientTreatmentMode === 'indoor' ? 'Indoor 100% Free' : 'Free for Indoor'}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                           {item.isCustom ? (
@@ -1529,22 +1554,31 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
                       {/* Discount (%) - Manual Entry */}
                       <td className="p-3 text-center">
-                        <div className="relative">
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            placeholder="0"
-                            value={item.discountPercent === '' ? '' : item.discountPercent}
-                            onChange={(e) => updateTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
-                            className={`w-full pr-5 pl-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                              isChecked
-                                ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-emerald-500'
-                                : 'bg-slate-50 border-slate-200 text-amber-800 focus:ring-2 focus:ring-emerald-500'
-                            }`}
-                          />
-                          <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
-                        </div>
+                        {patientTreatmentMode === 'indoor' && item.isIndoorFree ? (
+                          <div
+                            className="bg-indigo-100/80 border border-indigo-300 text-indigo-900 rounded-lg py-1 px-1 text-[11px] font-black text-center shadow-xs"
+                            title="Indoor patients get this treatment 100% free"
+                          >
+                            100% Free
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              placeholder="0"
+                              value={item.discountPercent === '' ? '' : item.discountPercent}
+                              onChange={(e) => updateTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className={`w-full pr-5 pl-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
+                                isChecked
+                                  ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-emerald-500'
+                                  : 'bg-slate-50 border-slate-200 text-amber-800 focus:ring-2 focus:ring-emerald-500'
+                              }`}
+                            />
+                            <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Discount Amount */}
@@ -2318,6 +2352,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
       </div>
 
+      </div>
+
       {/* Package Comparison Modal */}
       <PackageComparisonModal
         isOpen={isCompareModalOpen}
@@ -2335,7 +2371,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         consultingDoctor={billingDoctor}
         onApplyPackage={handleApplyPackageFromComparison}
       />
-
-    </div>
+    </>
   );
 };

@@ -165,7 +165,9 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
                     <td className="p-2.5 font-semibold text-slate-900">{tr.treatmentName}</td>
                     <td className="p-2.5 text-center">BDT {tr.unitCost.toLocaleString()}</td>
                     <td className="p-2.5 text-center font-bold">{tr.sessions}</td>
-                    <td className="p-2.5 text-center text-amber-700">{tr.discountPercent}%</td>
+                    <td className="p-2.5 text-center font-bold text-amber-800">
+                      {tr.discountPercent === 100 ? '100% (Free)' : `${tr.discountPercent}%`}
+                    </td>
                     <td className="p-2.5 text-center text-rose-600">-BDT {(tr.discountAmount || 0).toLocaleString()}</td>
                     <td className="p-2.5 text-right font-bold text-emerald-900">BDT {(tr.totalCost || 0).toLocaleString()}</td>
                   </tr>
