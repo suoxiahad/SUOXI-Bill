@@ -153,26 +153,14 @@ export const fetchInitApi = async (): Promise<InitDataResponse | null> => {
         const serverCatalog = Array.isArray(data.catalog) && data.catalog.length > 0 ? data.catalog : localCatalog;
         const serverUsers = Array.isArray(data.users) && data.users.length > 0 ? data.users : localUsers;
 
-        const mergedPatients = mergePatientsList(serverPatients, localPatients);
-        const mergedQuotations = mergeQuotationsList(serverQuotations, localQuotations);
-
-        savePatientsLocal(mergedPatients);
-        saveQuotationsLocal(mergedQuotations);
+        savePatientsLocal(serverPatients);
+        saveQuotationsLocal(serverQuotations);
         saveCatalogLocal(serverCatalog);
         saveUsersLocal(serverUsers);
 
-        // Sync local patients to server if server was missing any
-        if (mergedPatients.length > serverPatients.length) {
-          fetch('/api/patients/import', {
-            method: 'POST',
-            headers: getAuthHeader(),
-            body: JSON.stringify({ patients: mergedPatients })
-          }).catch(() => {});
-        }
-
         return {
-          patients: mergedPatients,
-          quotations: mergedQuotations,
+          patients: serverPatients,
+          quotations: serverQuotations,
           catalog: serverCatalog,
           users: serverUsers,
           dbMode: data.dbMode

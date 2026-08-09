@@ -193,8 +193,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       const foodTotal = initialFoodChargeSelected ? ((initialFoodChargePerDay || 500) * sc.days) : 0;
       const admissionTotal = initialIncludeAdmissionFee ? (initialAdmissionFee || 1000) : 0;
 
-      const grandTotal = treatmentNet + roomTotal + foodTotal + admissionTotal;
-      const perDayNet = sc.days > 0 ? Math.round(grandTotal / sc.days) : 0;
+      const recurringTotal = treatmentNet + roomTotal + foodTotal;
+      const grandTotal = recurringTotal + admissionTotal;
+      const perDayNet = sc.days > 0 ? Math.round(recurringTotal / sc.days) : 0;
 
       return {
         treatmentGross,
@@ -477,8 +478,14 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                           </span>
                         </div>
 
-                        {/* Admission Fee */}
-                        <div className="flex justify-between text-slate-600">
+                        {/* Effective Rate / Day (Excluding Admission Fee) */}
+                        <div className="flex justify-between text-slate-700 bg-slate-50 p-1.5 rounded-lg border border-slate-200/80 my-1 font-semibold text-[11px]">
+                          <span>Effective Rate / Day:</span>
+                          <span className="font-extrabold text-slate-900">BDT {details.perDayNet.toLocaleString()} / Day</span>
+                        </div>
+
+                        {/* Admission Fee (1-Time, added below Effective Rate) */}
+                        <div className="flex justify-between text-slate-600 text-[11px] pt-0.5">
                           <span>Admission Fee (1-Time):</span>
                           <span className="font-semibold text-slate-800">
                             {details.admissionTotal > 0 ? `+ BDT ${details.admissionTotal.toLocaleString()}` : '0 BDT'}
@@ -486,13 +493,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                         </div>
 
                         {/* Total Net Payable */}
-                        <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2">
+                        <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2 mt-1">
                           <span>Total Net Estimate:</span>
-                          <span className="text-indigo-700">BDT {details.grandTotal.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-500 text-[11px] pt-0.5">
-                          <span>Effective Rate / Day:</span>
-                          <span className="font-semibold text-slate-700">BDT {details.perDayNet.toLocaleString()} / Day</span>
+                          <span className="text-indigo-700 font-black">BDT {details.grandTotal.toLocaleString()}</span>
                         </div>
                       </div>
                     </div>
@@ -707,7 +710,12 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex justify-between text-slate-600">
+                    <div className="flex justify-between text-slate-700 font-bold border-t border-slate-100 pt-1">
+                      <span>Effective Rate / Day:</span>
+                      <span className="text-slate-900">BDT {details.perDayNet.toLocaleString()}/d</span>
+                    </div>
+
+                    <div className="flex justify-between text-slate-600 pt-0.5">
                       <span>Admission (1-Time):</span>
                       <span className="font-semibold text-slate-800">
                         {details.admissionTotal > 0 ? `+ BDT ${details.admissionTotal.toLocaleString()}` : '0 BDT'}
@@ -715,12 +723,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                     </div>
 
                     <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-200 pt-1">
-                      <span>Net Estimate:</span>
+                      <span>Total Net Estimate:</span>
                       <span className="text-indigo-900">BDT {details.grandTotal.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-500 text-[9px] pt-0.5">
-                      <span>Rate / Day:</span>
-                      <span className="font-bold text-slate-700">BDT {details.perDayNet.toLocaleString()}/d</span>
                     </div>
                   </div>
                 </div>

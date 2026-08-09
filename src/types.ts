@@ -47,6 +47,16 @@ export interface IndoorService {
   remarks?: string;
 }
 
+export interface PaymentPhase {
+  id: string;
+  phaseName: string; // e.g. "1st 10-Days Counseling Payment", "2nd 10-Days Payment", "3rd 10-Days Payment"
+  daysOrSessions?: number;
+  amount: number;
+  percentage?: number;
+  isPaid?: boolean;
+  notes?: string;
+}
+
 export interface InvoiceQuotation {
   id: string;
   quotationNumber: string; // e.g. SXH-2026-0001
@@ -87,6 +97,10 @@ export interface InvoiceQuotation {
   advancePaid: number;
   dueAmount: number;
   
+  // Payment Cycle / Installment Schedule
+  paymentPlanMode?: 'full' | '10_day_cycles' | '15_day_cycles' | 'custom_phases';
+  paymentPhases?: PaymentPhase[];
+
   paymentStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid';
   notes?: string;
   createdBy: string;

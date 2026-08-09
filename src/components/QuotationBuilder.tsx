@@ -12,7 +12,12 @@ import {
   Search,
   CheckSquare,
   Activity,
-  Scale
+  Scale,
+  Eye,
+  EyeOff,
+  Calendar,
+  CreditCard,
+  Clock
 } from 'lucide-react';
 import { PackageComparisonModal } from './PackageComparisonModal';
 import { 
@@ -21,6 +26,7 @@ import {
   OutdoorPackage, 
   IndoorService, 
   InvoiceQuotation, 
+  PaymentPhase,
   CatalogItem,
   User 
 } from '../types';
@@ -134,7 +140,63 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [treatmentPackage, setTreatmentPackage] = useState<'30 Days' | '15 Days' | 'Per Day' | ''>('');
   const [treatmentDays, setTreatmentDays] = useState<number | ''>('');
   const [bulkDiscountPercent, setBulkDiscountPercent] = useState<number | ''>('');
+  const [showFullTreatmentCalculation, setShowFullTreatmentCalculation] = useState<boolean>(false);
+  const [showFullIndoorCalculation, setShowFullIndoorCalculation] = useState<boolean>(false);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+
+  const toggleIndoorCalculationMode = () => {
+    setShowFullIndoorCalculation(prev => !prev);
+  };
+
+  const recalculateTreatmentList = (
+    fullCourseMode: boolean,
+    daysVal: number | '' = treatmentDays,
+    discVal: number | '' = bulkDiscountPercent,
+    modeVal: 'outdoor' | 'indoor' | '' = patientTreatmentMode
+  ) => {
+    const numDays = (daysVal !== '' && Number(daysVal) > 0) ? Number(daysVal) : 0;
+    const discPct = (discVal !== '' && !isNaN(Number(discVal))) ? Number(discVal) : 0;
+    const calcDays = fullCourseMode ? (numDays > 0 ? numDays : 1) : 1;
+
+    setTreatmentList(prev => prev.map(item => {
+      if (!item.selected || modeVal === '') {
+        return {
+          ...item,
+          sessions: '',
+          discountPercent: '',
+          discountAmount: 0,
+          totalCost: 0
+        };
+      }
+
+      const dailySessions = modeVal === 'outdoor'
+        ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
+        : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
+
+      const computedSessions = dailySessions * calcDays;
+      const unitCost = Number(item.unitCost) || 0;
+      const sessionsNum = Number(computedSessions) || 0;
+      const gross = unitCost * sessionsNum;
+      const isIndoorFree = modeVal === 'indoor' && Boolean(item.isIndoorFree);
+      const effectiveDiscPct = isIndoorFree ? 100 : (discVal !== '' ? Number(discVal) : (item.discountPercent !== '' ? Number(item.discountPercent) : 0));
+      const discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      const totalCost = Math.max(0, gross - discountAmount);
+
+      return {
+        ...item,
+        sessions: computedSessions,
+        discountPercent: isIndoorFree ? 100 : (discVal !== '' ? discVal : item.discountPercent),
+        discountAmount,
+        totalCost
+      };
+    }));
+  };
+
+  const toggleTreatmentCalculationMode = () => {
+    const nextMode = !showFullTreatmentCalculation;
+    setShowFullTreatmentCalculation(nextMode);
+    recalculateTreatmentList(nextMode);
+  };
 
   const handleApplyPackageFromComparison = (
     patientType: 'outdoor' | 'indoor',
@@ -213,6 +275,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       setFoodChargeDays(numDays > 0 ? numDays : '');
     }
 
+    const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
+
     setTreatmentList(prev => prev.map(item => {
       if (!item.selected || targetMode === '') {
         return {
@@ -228,9 +292,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
         : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
       
-      const computedSessions = numDays > 0 ? dailySessions * numDays : (newDays !== '' ? dailySessions : '');
+      const computedSessions = dailySessions * calcDays;
       const unitCost = Number(item.unitCost) || 0;
-      const sessionsNum = computedSessions === '' ? 0 : Number(computedSessions);
+      const sessionsNum = Number(computedSessions) || 0;
       const gross = unitCost * sessionsNum;
       const isIndoorFree = targetMode === 'indoor' && Boolean(item.isIndoorFree);
       const effectiveDiscPct = isIndoorFree ? 100 : discPct;
@@ -394,6 +458,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   // Initialize treatment list from catalog setup (Admin entry)
   useEffect(() => {
     const treatmentCatalog = catalog.filter(c => c.category === 'treatment' || c.category === 'consultation');
+    const catalogOrderMap = new Map<string, number>(treatmentCatalog.map((c, i) => [c.id, i]));
     
     setTreatmentList(prev => {
       const catalogMap = new Map<string, CatalogItem>(treatmentCatalog.map(c => [c.id, c]));
@@ -447,7 +512,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             });
           }
         });
-        return [...updatedPrev, ...newItems];
+
+        const combined = [...updatedPrev, ...newItems];
+
+        // Sort standard items based on catalog order
+        return combined.sort((a, b) => {
+          const indexA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
+          const indexB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
+          return indexA - indexB;
+        });
       }
 
       // First time initialization: list all items with empty sessions & discount for manual entry
@@ -481,12 +554,13 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         let newDiscountPercent = item.discountPercent;
 
         if (newSelected) {
-          if ((item.sessions === '' || item.sessions === 0) && treatmentDays !== '' && Number(treatmentDays) > 0) {
-            const numDays = Number(treatmentDays);
+          if (item.sessions === '' || item.sessions === 0) {
+            const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
+            const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
             const dailySessions = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
               ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
               : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-            newSessions = dailySessions * numDays;
+            newSessions = dailySessions * calcDays;
           }
 
           if (item.discountPercent === '' && bulkDiscountPercent !== '') {
@@ -648,6 +722,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   useEffect(() => {
     const roomCatalog = catalog.filter(c => c.category === 'indoor_room');
+    const catalogOrderMap = new Map<string, number>(roomCatalog.map((c, i) => [c.id, i]));
 
     setIndoorServiceList(prev => {
       const catalogMap = new Map<string, CatalogItem>(roomCatalog.map(c => [c.id, c]));
@@ -688,7 +763,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             });
           }
         });
-        return [...updatedPrev, ...newItems];
+
+        const combined = [...updatedPrev, ...newItems];
+
+        // Sort standard items based on catalog order
+        return combined.sort((a, b) => {
+          const indexA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
+          const indexB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
+          return indexA - indexB;
+        });
       }
 
       return roomCatalog.map(catItem => {
@@ -810,6 +893,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [notes, setNotes] = useState<string>('Quotation validity is 7 days from the date of issue.');
   const [isSaved, setIsSaved] = useState<boolean>(false);
 
+  // Payment Cycle / Installment Schedule State
+  const [paymentPlanMode, setPaymentPlanMode] = useState<'full' | '10_day_cycles' | '15_day_cycles' | 'custom_phases'>('10_day_cycles');
+  const [paymentPhases, setPaymentPhases] = useState<PaymentPhase[]>([]);
+
   // Filtered lists for search
   const filteredTreatmentList = treatmentList.filter(item => 
     item.treatmentName.toLowerCase().includes(treatmentSearch.toLowerCase().trim())
@@ -828,12 +915,13 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         let newSessions = item.sessions;
         let newDiscountPercent = item.discountPercent;
 
-        if ((item.sessions === '' || item.sessions === 0) && treatmentDays !== '' && Number(treatmentDays) > 0) {
-          const numDays = Number(treatmentDays);
+        if (item.sessions === '' || item.sessions === 0) {
+          const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
+          const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
           const dailySessions = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
             ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
             : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-          newSessions = dailySessions * numDays;
+          newSessions = dailySessions * calcDays;
         }
 
         if (item.discountPercent === '' && bulkDiscountPercent !== '') {
@@ -919,6 +1007,38 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const treatmentsTotalDiscount = activeTreatments.reduce((sum, item) => sum + (item.discountAmount || 0), 0);
   const treatmentsSubtotal = activeTreatments.reduce((sum, item) => sum + (item.totalCost || 0), 0);
 
+  // Per Day & Full Course Detailed Calculations for Treatments
+  const numTreatmentDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 1;
+
+  const treatmentsPerDayGross = activeTreatments.reduce((sum, item) => {
+    const u = Number(item.unitCost) || 0;
+    const dailyS = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
+      ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
+      : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
+    return sum + (u * dailyS);
+  }, 0);
+
+  const treatmentsPerDayDiscountAmount = activeTreatments.reduce((sum, item) => {
+    const u = Number(item.unitCost) || 0;
+    const dailyS = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
+      ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
+      : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
+    const perDayGross = u * dailyS;
+    const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
+    const discPct = isIndoorFree ? 100 : (item.discountPercent !== '' ? Number(item.discountPercent) : (bulkDiscountPercent !== '' ? Number(bulkDiscountPercent) : 0));
+    return sum + Math.round((perDayGross * discPct) / 100);
+  }, 0);
+
+  const treatmentsPerDaySubtotal = Math.max(0, treatmentsPerDayGross - treatmentsPerDayDiscountAmount);
+
+  const treatmentsFullTotalDiscount = showFullTreatmentCalculation
+    ? treatmentsTotalDiscount
+    : (treatmentsPerDayDiscountAmount * numTreatmentDays);
+
+  const treatmentsFullSubtotal = showFullTreatmentCalculation
+    ? treatmentsSubtotal
+    : (treatmentsPerDaySubtotal * numTreatmentDays);
+
   // Sync outdoor package dynamic row with Individual Treatments
   useEffect(() => {
     const isOutdoorActive = patientTreatmentMode === 'outdoor';
@@ -980,6 +1100,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const indoorRoomOnlySubtotal = activeIndoorServices.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
   const indoorSubtotal = indoorRoomOnlySubtotal + foodChargeTotal;
 
+  const indoorRoomPerDaySubtotal = activeIndoorServices.reduce((sum, item) => sum + (item.dailyRate || 0), 0);
+  const foodChargePerDaySubtotal = foodChargeSelected ? (foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) : 0;
+  const indoorPerDaySubtotal = indoorRoomPerDaySubtotal + foodChargePerDaySubtotal;
+
   const effectiveOutdoorSubtotal = patientTreatmentMode === 'outdoor' ? 0 : outdoorSubtotal;
   const actualAdmissionFee = includeAdmissionFee ? Number(admissionFee || 0) : 0;
   const grossTotal = treatmentsSubtotal + effectiveOutdoorSubtotal + indoorSubtotal + actualAdmissionFee;
@@ -987,6 +1111,212 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const overallDiscountAmount = Math.round((grossTotal * Number(overallDiscountPercent || 0)) / 100);
   const grandTotal = Math.max(0, grossTotal - overallDiscountAmount);
   const dueAmount = Math.max(0, grandTotal - Number(advancePaid || 0));
+
+  // Auto-recalculate Payment Phases when grandTotal, paymentPlanMode, or treatmentDays changes
+  useEffect(() => {
+    if (grandTotal <= 0) {
+      setPaymentPhases([]);
+      return;
+    }
+
+    const totalDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 30;
+
+    if (paymentPlanMode === '10_day_cycles') {
+      const numPhases = Math.max(1, Math.ceil(totalDays / 10));
+      const baseAmount = Math.floor(grandTotal / numPhases);
+      const remainder = grandTotal - (baseAmount * numPhases);
+
+      const phases: PaymentPhase[] = [];
+      for (let i = 0; i < numPhases; i++) {
+        const startDay = (i * 10) + 1;
+        const endDay = Math.min((i + 1) * 10, totalDays);
+        const amt = i === 0 ? (baseAmount + remainder) : baseAmount;
+        const pct = Math.round((amt / grandTotal) * 100);
+
+        phases.push({
+          id: `phase-10d-${i + 1}`,
+          phaseName: i === 0 
+            ? `1st 10-Days Payment (Day ${startDay}–${endDay})` 
+            : `${i + 1}${i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'} 10-Days Payment (Day ${startDay}–${endDay})`,
+          daysOrSessions: endDay - startDay + 1,
+          amount: amt,
+          percentage: pct,
+          notes: i === 0 ? 'Initial course starting installment' : `Cycle ${i + 1} treatment cycle payment`
+        });
+      }
+      setPaymentPhases(phases);
+    } else if (paymentPlanMode === '15_day_cycles') {
+      const numPhases = Math.max(1, Math.ceil(totalDays / 15));
+      const baseAmount = Math.floor(grandTotal / numPhases);
+      const remainder = grandTotal - (baseAmount * numPhases);
+
+      const phases: PaymentPhase[] = [];
+      for (let i = 0; i < numPhases; i++) {
+        const startDay = (i * 15) + 1;
+        const endDay = Math.min((i + 1) * 15, totalDays);
+        const amt = i === 0 ? (baseAmount + remainder) : baseAmount;
+        const pct = Math.round((amt / grandTotal) * 100);
+
+        phases.push({
+          id: `phase-15d-${i + 1}`,
+          phaseName: i === 0 
+            ? `1st 15-Days Payment (Day ${startDay}–${endDay})` 
+            : `${i + 1}${i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'} 15-Days Payment (Day ${startDay}–${endDay})`,
+          daysOrSessions: endDay - startDay + 1,
+          amount: amt,
+          percentage: pct,
+          notes: i === 0 ? '1st half treatment installment' : '2nd half treatment installment'
+        });
+      }
+      setPaymentPhases(phases);
+    } else if (paymentPlanMode === 'full') {
+      setPaymentPhases([{
+        id: 'phase-full-1',
+        phaseName: '1-Time Full Payment',
+        daysOrSessions: totalDays,
+        amount: grandTotal,
+        percentage: 100,
+        notes: 'Full payment upon enrollment'
+      }]);
+    } else if (paymentPlanMode === 'custom_phases' && paymentPhases.length === 0) {
+      const half = Math.floor(grandTotal / 2);
+      setPaymentPhases([
+        {
+          id: `phase-custom-1`,
+          phaseName: '1st Cycle / Advance Payment',
+          daysOrSessions: Math.ceil(totalDays / 2),
+          amount: grandTotal - half,
+          percentage: 50,
+          notes: 'Advance at course start'
+        },
+        {
+          id: `phase-custom-2`,
+          phaseName: '2nd Cycle Payment',
+          daysOrSessions: Math.floor(totalDays / 2),
+          amount: half,
+          percentage: 50,
+          notes: 'Remaining balance midway'
+        }
+      ]);
+    }
+  }, [grandTotal, paymentPlanMode, treatmentDays]);
+
+  const updatePaymentPhase = (id: string, fields: Partial<PaymentPhase>) => {
+    setPaymentPhases(prev => {
+      const targetIdx = prev.findIndex(p => p.id === id);
+      if (targetIdx === -1) return prev;
+
+      if (fields.amount !== undefined) {
+        const newAmt = Math.max(0, fields.amount);
+        const numCycles = prev.length;
+
+        if (numCycles <= 1) {
+          return prev.map(p => p.id === id ? {
+            ...p,
+            ...fields,
+            amount: newAmt,
+            percentage: grandTotal > 0 ? Math.round((newAmt / grandTotal) * 100) : 0
+          } : p);
+        }
+
+        const updated = prev.map((p, idx) => {
+          if (idx === targetIdx) {
+            const pct = grandTotal > 0 ? Math.round((newAmt / grandTotal) * 100) : 0;
+            return { ...p, ...fields, amount: newAmt, percentage: pct };
+          }
+          return { ...p };
+        });
+
+        if (targetIdx < numCycles - 1) {
+          let sumFixed = 0;
+          for (let i = 0; i <= targetIdx; i++) {
+            sumFixed += updated[i].amount || 0;
+          }
+          const remTotal = Math.max(0, grandTotal - sumFixed);
+          const subsequentCount = numCycles - 1 - targetIdx;
+          const base = Math.floor(remTotal / subsequentCount);
+          const rem = remTotal - (base * subsequentCount);
+
+          for (let i = targetIdx + 1; i < numCycles; i++) {
+            const amt = base + (i === targetIdx + 1 ? rem : 0);
+            const pct = grandTotal > 0 ? Math.round((amt / grandTotal) * 100) : 0;
+            updated[i] = {
+              ...updated[i],
+              amount: amt,
+              percentage: pct
+            };
+          }
+        } else {
+          const remTotal = Math.max(0, grandTotal - newAmt);
+          const priorCount = numCycles - 1;
+          const base = Math.floor(remTotal / priorCount);
+          const rem = remTotal - (base * priorCount);
+
+          for (let i = 0; i < targetIdx; i++) {
+            const amt = base + (i === 0 ? rem : 0);
+            const pct = grandTotal > 0 ? Math.round((amt / grandTotal) * 100) : 0;
+            updated[i] = {
+              ...updated[i],
+              amount: amt,
+              percentage: pct
+            };
+          }
+        }
+
+        return updated;
+      } else {
+        return prev.map(p => p.id === id ? { ...p, ...fields } : p);
+      }
+    });
+  };
+
+  const addCustomPhase = () => {
+    setPaymentPhases(prev => {
+      const nextNum = prev.length + 1;
+      const newPhase: PaymentPhase = {
+        id: `phase-custom-${Date.now()}`,
+        phaseName: `${nextNum}${nextNum === 1 ? 'st' : nextNum === 2 ? 'nd' : nextNum === 3 ? 'rd' : 'th'} Payment Cycle`,
+        daysOrSessions: 10,
+        amount: 0,
+        percentage: 0,
+        notes: 'Custom installment cycle'
+      };
+      const newList = [...prev, newPhase];
+      const count = newList.length;
+      const base = Math.floor(grandTotal / count);
+      const rem = grandTotal - (base * count);
+
+      return newList.map((p, idx) => {
+        const amt = base + (idx === 0 ? rem : 0);
+        const pct = grandTotal > 0 ? Math.round((amt / grandTotal) * 100) : 0;
+        return {
+          ...p,
+          amount: amt,
+          percentage: pct
+        };
+      });
+    });
+  };
+
+  const removeCustomPhase = (id: string) => {
+    setPaymentPhases(prev => {
+      const filtered = prev.filter(p => p.id !== id);
+      if (filtered.length === 0) return filtered;
+      const count = filtered.length;
+      const base = Math.floor(grandTotal / count);
+      const rem = grandTotal - (base * count);
+
+      return filtered.map((p, idx) => {
+        const amt = base + (idx === 0 ? rem : 0);
+        const pct = grandTotal > 0 ? Math.round((amt / grandTotal) * 100) : 0;
+        return {
+          ...p,
+          amount: amt,
+          percentage: pct
+        };
+      });
+    });
+  };
 
   // Build Invoice Object
   const generateQuotationData = (): InvoiceQuotation => {
@@ -1089,6 +1419,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       grandTotal,
       advancePaid: Number(advancePaid || 0),
       dueAmount,
+
+      paymentPlanMode,
+      paymentPhases,
 
       paymentStatus,
       notes,
@@ -1243,6 +1576,24 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               />
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
             </div>
+
+            {/* Eye Icon Toggle Button for Full Package vs Per Day Cost mode */}
+            <button
+              type="button"
+              onClick={toggleTreatmentCalculationMode}
+              className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
+                showFullTreatmentCalculation
+                  ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
+                  : 'bg-slate-100 hover:bg-slate-200 text-amber-600 border-slate-300'
+              }`}
+              title={showFullTreatmentCalculation ? 'Toggle Day View' : 'Toggle Full View'}
+            >
+              {showFullTreatmentCalculation ? (
+                <Eye className="w-4 h-4 text-slate-600 shrink-0" />
+              ) : (
+                <EyeOff className="w-4 h-4 text-amber-600 shrink-0" />
+              )}
+            </button>
           </div>
         </div>
 
@@ -1382,14 +1733,31 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </div>
 
           {/* Active Auto-Calculation Notice */}
-          {patientTreatmentMode && treatmentDays !== '' && Number(treatmentDays) > 0 && (
-            <div className="text-[11px] text-emerald-900 font-semibold bg-emerald-100/90 px-3 py-1.5 rounded-lg border border-emerald-300/80 flex items-center justify-between flex-wrap gap-2">
+          {patientTreatmentMode && (
+            <div className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg border flex items-center justify-between flex-wrap gap-2 transition-all ${
+              showFullTreatmentCalculation
+                ? 'bg-emerald-100/90 text-emerald-950 border-emerald-300/80'
+                : 'bg-amber-100/90 text-amber-950 border-amber-300/80'
+            }`}>
               <span>
-                ✨ Sessions auto-calculated for <strong className="uppercase underline text-emerald-950">{patientTreatmentMode}</strong> patient for <strong>{treatmentDays} Days</strong>
-                {treatmentPackage ? ` (Package: ${treatmentPackage}${bulkDiscountPercent !== '' ? ` | Discount: ${bulkDiscountPercent}%` : ''})` : ''}.
+                {showFullTreatmentCalculation ? (
+                  <>
+                    ✨ Sessions auto-calculated for <strong className="uppercase underline text-emerald-950">{patientTreatmentMode}</strong> patient for <strong>{treatmentDays || 1} Days</strong>
+                    {treatmentPackage ? ` (Package: ${treatmentPackage}${bulkDiscountPercent !== '' ? ` | Discount: ${bulkDiscountPercent}%` : ''})` : ''}.
+                  </>
+                ) : (
+                  <>
+                    👁️ <strong>Daily Cost Focus Mode Active:</strong> Displaying <strong>Per Day (1-Day)</strong> sessions & cost for initial patient counseling
+                    {treatmentPackage ? ` (Active Package Context: ${treatmentPackage} | ${patientTreatmentMode.toUpperCase()})` : ''}.
+                  </>
+                )}
               </span>
-              <span className="text-[10px] bg-white text-emerald-800 px-2 py-0.5 rounded-md font-mono font-bold shadow-2xs">
-                Auto Fill Active
+              <span className={`text-[10px] px-2 py-0.5 rounded-md font-mono font-bold shadow-2xs ${
+                showFullTreatmentCalculation
+                  ? 'bg-white text-emerald-800'
+                  : 'bg-amber-500 text-white'
+              }`}>
+                {showFullTreatmentCalculation ? 'Full Course Active' : '1-Day View Active'}
               </span>
             </div>
           )}
@@ -1413,10 +1781,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 </th>
                 <th className="p-3">SL & Treatment Name</th>
                 <th className="p-3 w-32">Unit Price (BDT)</th>
-                <th className="p-3 w-24 text-center">Sessions</th>
+                <th className="p-3 w-36 text-center">{showFullTreatmentCalculation ? 'Total Sessions' : 'Per Day Session'}</th>
                 <th className="p-3 w-24 text-center">Discount (%)</th>
                 <th className="p-3 w-28 text-center">Discount (BDT)</th>
-                <th className="p-3 w-32 text-right">Total Cost</th>
+                <th className="p-3 w-32 text-right">{showFullTreatmentCalculation ? 'Total Cost' : 'Per Day Cost'}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1432,14 +1800,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   return (
                     <tr 
                       key={item.id ? `${item.id}-${idx}` : `tr-${idx}`} 
-                      className={`transition-colors ${
+                      onClick={() => toggleTreatmentSelection(item.id)}
+                      className={`transition-colors cursor-pointer ${
                         isChecked 
                           ? 'bg-emerald-50/80 font-medium' 
                           : 'bg-white hover:bg-slate-50 text-slate-600'
                       }`}
                     >
                       {/* Checkbox */}
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -1456,7 +1825,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               {idx + 1}.
                             </span>
                             {item.isCustom ? (
-                              <div className="flex items-center gap-2 w-full">
+                              <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="text"
                                   value={item.treatmentName}
@@ -1496,6 +1865,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               type="text"
                               placeholder="Treatment details..."
                               value={item.description || ''}
+                              onClick={(e) => e.stopPropagation()}
                               onChange={(e) => updateTreatmentItem(item.id, { description: e.target.value })}
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-emerald-400"
                             />
@@ -1512,7 +1882,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       {/* Unit Price - Read-only from catalog for standard items */}
                       <td className="p-3">
                         {item.isCustom ? (
-                          <div className="relative">
+                          <div className="relative" onClick={(e) => e.stopPropagation()}>
                             <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
                             <input
                               type="number"
@@ -1537,7 +1907,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       </td>
 
                       {/* Sessions - Manual Entry */}
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
                           min={1}
@@ -1553,7 +1923,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       </td>
 
                       {/* Discount (%) - Manual Entry */}
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         {patientTreatmentMode === 'indoor' && item.isIndoorFree ? (
                           <div
                             className="bg-indigo-100/80 border border-indigo-300 text-indigo-900 rounded-lg py-1 px-1 text-[11px] font-black text-center shadow-xs"
@@ -1602,16 +1972,37 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </table>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs">
-          <div className="text-slate-500 font-medium">
-            Selected treatments: <span className="font-bold text-emerald-800">{activeTreatments.length}</span> of {treatmentList.length} items
+        {/* Detailed Breakdown Bar (Per Day Discount, Per Day Subtotal, Total Discount, Treatments Subtotal) */}
+        <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 font-medium pb-2.5 border-b border-slate-200">
+            <div>
+              Selected treatments: <span className="font-bold text-emerald-800">{activeTreatments.length}</span> of {treatmentList.length} items
+            </div>
+            <div className="text-[11px] bg-emerald-100/80 text-emerald-900 font-bold px-2.5 py-0.5 rounded-md border border-emerald-300">
+              Package Duration: {numTreatmentDays} Days ({patientTreatmentMode ? patientTreatmentMode.toUpperCase() : 'NO TYPE'})
+            </div>
           </div>
 
-          <div className="text-right">
-            <span className="text-slate-700 font-bold">Treatments Subtotal: </span>
-            <span className="text-emerald-700 font-black text-base ml-2">
-              BDT {treatmentsSubtotal.toLocaleString()}
-            </span>
+          <div className="flex flex-col sm:flex-row justify-end items-stretch gap-3">
+            {/* 1. Dynamic Discount Card (Highlighted) */}
+            <div className="bg-amber-50 p-3 px-4 rounded-xl border border-amber-200/90 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
+              <div className="text-[10px] text-amber-800 font-bold uppercase tracking-wider">
+                {showFullTreatmentCalculation ? `Total Discount (${numTreatmentDays} Days)` : 'Per Day Discount Amount'}
+              </div>
+              <div className="text-sm sm:text-base font-black text-rose-600 mt-1">
+                -BDT {(showFullTreatmentCalculation ? treatmentsFullTotalDiscount : treatmentsPerDayDiscountAmount).toLocaleString()}
+              </div>
+            </div>
+
+            {/* 2. Dynamic Subtotal Card (White Background) */}
+            <div className="bg-white p-3 px-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                {showFullTreatmentCalculation ? `Treatments Subtotal (${numTreatmentDays} Days)` : 'Per Day Subtotal'}
+              </div>
+              <div className="text-sm sm:text-base font-black text-slate-900 mt-1">
+                BDT {(showFullTreatmentCalculation ? treatmentsFullSubtotal : treatmentsPerDaySubtotal).toLocaleString()}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1679,14 +2070,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   return (
                     <tr 
                       key={item.id ? `${item.id}-${idx}` : `pkg-tr-${idx}`} 
-                      className={`transition-colors ${
+                      onClick={() => toggleOutdoorPackageSelection(item.id)}
+                      className={`transition-colors cursor-pointer ${
                         isChecked 
                           ? 'bg-teal-50/80 font-medium' 
                           : 'bg-white hover:bg-slate-50 text-slate-600'
                       }`}
                     >
                       {/* Checkbox */}
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -1703,7 +2095,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               {idx + 1}.
                             </span>
                             {item.isCustom ? (
-                              <div className="flex items-center gap-2 w-full">
+                              <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="text"
                                   value={item.packageName}
@@ -1729,6 +2121,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               type="text"
                               placeholder="Package details / description..."
                               value={item.description || ''}
+                              onClick={(e) => e.stopPropagation()}
                               onChange={(e) => updateOutdoorPackageItem(item.id, { description: e.target.value })}
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-teal-400"
                             />
@@ -1743,7 +2136,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       </td>
 
                       {/* Base Fee */}
-                      <td className="p-3">
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <div className="space-y-0.5">
                           <div className="relative">
                             <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
@@ -1764,7 +2157,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       </td>
 
                       {/* Discount (%) */}
-                      <td className="p-3">
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <div className="relative">
                           <input
                             type="number"
@@ -1805,7 +2198,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             Selected outdoor packages: <span className="font-bold text-teal-800">{activeOutdoorPackages.length}</span> of {outdoorPackageList.length} items
           </div>
 
-          <div className="text-right">
+          <div className="text-right flex items-center gap-2">
             <span className="text-slate-700 font-bold">Outdoor Packages Subtotal: </span>
             <span className="text-teal-700 font-black text-base ml-2">
               BDT {outdoorSubtotal.toLocaleString()}
@@ -1848,6 +2241,22 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500"
               />
             </div>
+            <button
+              type="button"
+              onClick={toggleIndoorCalculationMode}
+              className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
+                showFullIndoorCalculation
+                  ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
+                  : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-300'
+              }`}
+              title={showFullIndoorCalculation ? 'Toggle Day View' : 'Toggle Full View'}
+            >
+              {showFullIndoorCalculation ? (
+                <Eye className="w-4 h-4 text-slate-600 shrink-0" />
+              ) : (
+                <EyeOff className="w-4 h-4 text-indigo-600 shrink-0" />
+              )}
+            </button>
           </div>
         </div>
 
@@ -1870,7 +2279,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 <th className="p-3">SL & Room / Cabin Type</th>
                 <th className="p-3 w-36">Daily Rate (BDT)</th>
                 <th className="p-3 w-28 text-center">Days Stay</th>
-                <th className="p-3 w-36 text-right">Total Amount (BDT)</th>
+                <th className="p-3 w-36 text-right">
+                  {showFullIndoorCalculation ? 'Total Amount (BDT)' : 'Per Day Amount (BDT)'}
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1886,14 +2297,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   return (
                     <tr 
                       key={item.id ? `${item.id}-${idx}` : `ind-tr-${idx}`} 
-                      className={`transition-colors ${
+                      onClick={() => toggleIndoorServiceSelection(item.id)}
+                      className={`transition-colors cursor-pointer ${
                         isChecked 
                           ? 'bg-indigo-50/80 font-medium' 
                           : 'bg-white hover:bg-slate-50 text-slate-600'
                       }`}
                     >
                       {/* Checkbox */}
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -1910,7 +2322,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               {idx + 1}.
                             </span>
                             {item.isCustom ? (
-                              <div className="flex items-center gap-2 w-full">
+                              <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="text"
                                   value={item.roomType}
@@ -1936,6 +2348,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               type="text"
                               placeholder="Room number / clinical remarks..."
                               value={item.remarks || ''}
+                              onClick={(e) => e.stopPropagation()}
                               onChange={(e) => updateIndoorServiceItem(item.id, { remarks: e.target.value })}
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-indigo-400"
                             />
@@ -1952,7 +2365,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       {/* Daily Rate */}
                       <td className="p-3">
                         {item.isCustom ? (
-                          <div className="relative">
+                          <div className="relative" onClick={(e) => e.stopPropagation()}>
                             <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
                             <input
                               type="number"
@@ -1977,25 +2390,31 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       </td>
 
                       {/* Days Stay */}
-                      <td className="p-3 text-center">
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
                           min={1}
                           placeholder="0"
-                          value={item.days === '' ? '' : item.days}
+                          value={
+                            showFullIndoorCalculation
+                              ? (item.days === '' ? '' : item.days)
+                              : 1
+                          }
                           onChange={(e) => updateIndoorServiceItem(item.id, { days: e.target.value === '' ? '' : Number(e.target.value) })}
                           className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                            isChecked
-                              ? 'bg-white border-slate-300 text-indigo-900 focus:ring-2 focus:ring-indigo-500'
-                              : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-indigo-500'
+                            !showFullIndoorCalculation
+                              ? 'bg-slate-100 border-slate-200 text-indigo-900 font-extrabold'
+                              : isChecked
+                                ? 'bg-white border-slate-300 text-indigo-900 focus:ring-2 focus:ring-indigo-500'
+                                : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-indigo-500'
                           }`}
                         />
                       </td>
 
-                      {/* Total Amount */}
+                      {/* Amount (Per Day vs Total) */}
                       <td className="p-3 text-right">
                         <span className={`text-xs font-black ${isChecked ? 'text-indigo-700 text-sm' : 'text-slate-400'}`}>
-                          BDT {(item.totalAmount || 0).toLocaleString()}
+                          BDT {(showFullIndoorCalculation ? (item.totalAmount || 0) : (item.dailyRate || 0)).toLocaleString()}
                         </span>
                       </td>
                     </tr>
@@ -2015,7 +2434,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 <th className="p-3">SL & SERVICE NAME</th>
                 <th className="p-3 w-36">PER DAY CHARGE (BDT)</th>
                 <th className="p-3 w-28 text-center">DAY STAY</th>
-                <th className="p-3 w-36 text-right">TOTAL AMOUNT (BDT)</th>
+                <th className="p-3 w-36 text-right">
+                  {showFullIndoorCalculation ? 'TOTAL AMOUNT (BDT)' : 'PER DAY AMOUNT (BDT)'}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -2080,7 +2501,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                     type="number"
                     min={1}
                     placeholder="0"
-                    value={foodChargeDays === '' ? '' : foodChargeDays}
+                    value={
+                      showFullIndoorCalculation
+                        ? (foodChargeDays === '' ? '' : foodChargeDays)
+                        : 1
+                    }
                     onChange={(e) => {
                       const val = e.target.value === '' ? '' : Number(e.target.value);
                       setFoodChargeDays(val);
@@ -2091,17 +2516,19 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                       }
                     }}
                     className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                      foodChargeSelected
-                        ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
-                        : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-amber-500'
+                      !showFullIndoorCalculation
+                        ? 'bg-slate-100 border-slate-200 text-amber-900 font-extrabold'
+                        : foodChargeSelected
+                          ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-amber-500'
                     }`}
                   />
                 </td>
 
-                {/* Total Amount */}
+                {/* Amount (Per Day vs Total) */}
                 <td className="p-3 text-right">
                   <span className={`text-xs font-black ${foodChargeSelected ? 'text-amber-700 text-sm' : 'text-slate-400'}`}>
-                    BDT {foodChargeTotal.toLocaleString()}
+                    BDT {(showFullIndoorCalculation ? foodChargeTotal : (foodChargeSelected ? (foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) : 0)).toLocaleString()}
                   </span>
                 </td>
               </tr>
@@ -2109,21 +2536,215 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </table>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs">
+        <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs gap-3">
           <div className="text-slate-500 font-medium">
             Selected room / accommodation: <span className="font-bold text-indigo-800">{activeIndoorServices.length + (foodChargeSelected ? 1 : 0)}</span> of {indoorServiceList.length + 1} items
           </div>
 
-          <div className="text-right">
-            <span className="text-slate-700 font-bold">Indoor Accommodation Subtotal: </span>
-            <span className="text-indigo-700 font-black text-base ml-2">
-              BDT {indoorSubtotal.toLocaleString()}
-            </span>
+          <div className="flex flex-col sm:flex-row justify-end items-stretch gap-3">
+            <div className="bg-white p-3 px-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                {showFullIndoorCalculation ? `Indoor Accommodation Subtotal (${numTreatmentDays} Days)` : 'Per Day Subtotal'}
+              </div>
+              <div className="text-sm sm:text-base font-black text-indigo-900 mt-1">
+                BDT {(showFullIndoorCalculation ? indoorSubtotal : indoorPerDaySubtotal).toLocaleString()}
+              </div>
+            </div>
           </div>
         </div>
 
       </div>
 
+
+      {/* PAYMENT CYCLE & COUNSELING SCHEDULE BREAKDOWN CARD */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-emerald-300 space-y-4">
+        
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-xs shadow-2xs">
+              <CreditCard className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <span>4. Payment Cycle & Counseling Schedule</span>
+                <span className="text-[10px] font-black bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded-full border border-emerald-300 uppercase tracking-wider">
+                  Counseling Tool
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Select an automatic or custom installment schedule to present manageable payment steps during patient counseling.
+              </p>
+            </div>
+          </div>
+
+          {/* Cycle Mode Tabs */}
+          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('10_day_cycles')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === '10_day_cycles'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              10-Day Cycles
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('15_day_cycles')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === '15_day_cycles'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              15-Day Cycles
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('full')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === 'full'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Full Payment
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('custom_phases')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === 'custom_phases'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Custom Installments
+            </button>
+          </div>
+        </div>
+
+        {/* Payment Cycle Breakdown Cards */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 font-medium gap-2">
+            <span className="flex items-center gap-1.5">
+              <span>Total Course Payable Bill:</span>
+              <strong className="text-emerald-800 font-extrabold text-sm">BDT {grandTotal.toLocaleString()}</strong>
+              {treatmentDays !== '' && Number(treatmentDays) > 0 && (
+                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                  {treatmentDays}-Day Course
+                </span>
+              )}
+            </span>
+
+            {paymentPlanMode === 'custom_phases' && (
+              <button
+                type="button"
+                onClick={addCustomPhase}
+                className="flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-bold text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-lg border border-emerald-300 transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Add Installment Cycle</span>
+              </button>
+            )}
+          </div>
+
+          {/* Cycle Cards List */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {paymentPhases.map((phase, idx) => (
+              <div 
+                key={phase.id || idx}
+                className="bg-gradient-to-br from-slate-50 via-white to-emerald-50/40 rounded-xl p-4 border border-emerald-200 shadow-2xs space-y-2.5 relative group"
+              >
+                <div className="flex items-center justify-between gap-2 border-b border-emerald-100 pb-2">
+                  <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Cycle {idx + 1}</span>
+                  </span>
+                  <span className="text-[10px] font-black bg-emerald-100/90 text-emerald-900 px-2 py-0.5 rounded-md border border-emerald-200">
+                    {phase.percentage || (grandTotal > 0 ? Math.round((phase.amount / grandTotal) * 100) : 0)}% of Bill
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {/* Editable Title */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Cycle Title</label>
+                    <input
+                      type="text"
+                      value={phase.phaseName}
+                      onChange={(e) => updatePaymentPhase(phase.id, { phaseName: e.target.value })}
+                      className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {/* Editable Amount */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Payment Amount (BDT)</label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1.5 text-slate-400 font-bold text-xs">BDT</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={phase.amount}
+                        onChange={(e) => {
+                          const newAmt = e.target.value === '' ? 0 : Number(e.target.value);
+                          updatePaymentPhase(phase.id, { amount: newAmt });
+                        }}
+                        className="w-full pl-10 pr-2.5 py-1 bg-white border border-slate-300 rounded-lg text-sm font-black text-emerald-800 focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Counseling Note</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 1st 10 days treatment fee..."
+                      value={phase.notes || ''}
+                      onChange={(e) => updatePaymentPhase(phase.id, { notes: e.target.value })}
+                      className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {paymentPlanMode === 'custom_phases' && paymentPhases.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeCustomPhase(phase.id)}
+                    className="absolute top-2 right-2 text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                    title="Remove this installment cycle"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Phase Sum Verification Bar */}
+          {paymentPhases.length > 0 && (
+            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
+              <span className="font-medium">
+                Total Installments Sum: <strong className="text-emerald-900 font-bold">BDT {paymentPhases.reduce((s, p) => s + (p.amount || 0), 0).toLocaleString()}</strong>
+              </span>
+              {paymentPhases.reduce((s, p) => s + (p.amount || 0), 0) !== grandTotal && (
+                <span className="text-rose-700 font-bold bg-rose-50 px-2.5 py-0.5 rounded-md border border-rose-200 text-[11px]">
+                  ⚠️ Warning: Sum of installments (BDT {paymentPhases.reduce((s, p) => s + (p.amount || 0), 0).toLocaleString()}) does not equal Grand Total (BDT {grandTotal.toLocaleString()})
+                </span>
+              )}
+            </div>
+          )}
+
+        </div>
+
+      </div>
 
       {/* SUMMARY, DISCOUNTS, PAYMENTS & GRAND TOTAL */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -9,6 +9,7 @@ import { CatalogSettings } from './components/CatalogSettings';
 import { UserManagement } from './components/UserManagement';
 import { PatientModal } from './components/PatientModal';
 import { LoginModal } from './components/LoginModal';
+import { FloatingCalculatorDrawer } from './components/FloatingCalculatorDrawer';
 
 import { Patient, InvoiceQuotation, CatalogItem, User } from './types';
 import { 
@@ -242,6 +243,9 @@ export default function App() {
         onClose={() => setIsLoginModalOpen(false)}
         onLoginSuccess={handleLoginSuccess}
       />
+
+      {/* Slide-out Floating Hospital Calculator */}
+      <FloatingCalculatorDrawer />
 
     </div>
   );

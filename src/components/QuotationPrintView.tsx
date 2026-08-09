@@ -360,8 +360,57 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
 
         </div>
 
+        {/* PAYMENT CYCLE & SCHEDULE BREAKDOWN TABLE (FOR PATIENT COUNSELING) */}
+        {quotation.paymentPhases && quotation.paymentPhases.length > 0 && (
+          <div className="mt-6 bg-slate-50 border border-slate-300 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between border-b border-slate-300 pb-2">
+              <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                <span>Payment Schedule & Counseling Breakdown</span>
+              </h4>
+              <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300 uppercase">
+                {quotation.paymentPlanMode === '10_day_cycles' 
+                  ? '10-Day Cycle Plan' 
+                  : quotation.paymentPlanMode === '15_day_cycles'
+                  ? '15-Day Cycle Plan'
+                  : quotation.paymentPlanMode === 'full'
+                  ? '1-Time Full Payment'
+                  : 'Custom Installment Plan'}
+              </span>
+            </div>
+
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-200/80 text-slate-800 text-[10px] uppercase font-bold">
+                  <th className="p-2 border border-slate-300">Cycle / Title</th>
+                  <th className="p-2 border border-slate-300 text-center">% Share</th>
+                  <th className="p-2 border border-slate-300 text-right">Payment Amount</th>
+                  <th className="p-2 border border-slate-300">Counseling Notes / Remark</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quotation.paymentPhases.map((phase, pIdx) => (
+                  <tr key={phase.id || pIdx} className="bg-white hover:bg-slate-50 text-[11px]">
+                    <td className="p-2 border border-slate-300 font-bold text-slate-900">
+                      {phase.phaseName}
+                    </td>
+                    <td className="p-2 border border-slate-300 text-center font-bold text-slate-700">
+                      {phase.percentage || Math.round((phase.amount / (quotation.grandTotal || 1)) * 100)}%
+                    </td>
+                    <td className="p-2 border border-slate-300 text-right font-black text-emerald-800">
+                      BDT {(phase.amount || 0).toLocaleString()}
+                    </td>
+                    <td className="p-2 border border-slate-300 text-slate-600 font-medium">
+                      {phase.notes || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         {/* Signature Area */}
-        <div className="grid grid-cols-2 gap-8 pt-12 mt-12 border-t border-dashed border-slate-300 text-xs text-center font-bold">
+        <div className="grid grid-cols-2 gap-8 pt-12 mt-8 border-t border-dashed border-slate-300 text-xs text-center font-bold">
           <div>
             <div className="w-48 mx-auto border-t border-slate-800 mb-1" />
             <p className="text-slate-800">Patient / Guardian Signature</p>

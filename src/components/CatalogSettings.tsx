@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Save, Trash2, CheckCircle2 } from 'lucide-react';
+import { Settings, Plus, Save, Trash2, CheckCircle2, ArrowUp, ArrowDown, Hash } from 'lucide-react';
 import { CatalogItem } from '../types';
 
 interface CatalogSettingsProps {
@@ -40,6 +40,49 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
 
   const removeItem = (index: number) => {
     setItems(items.filter((_, i) => i !== index));
+  };
+
+  const moveItem = (itemId: string, direction: 'up' | 'down' | number) => {
+    const target = items.find(i => i.id === itemId);
+    if (!target) return;
+
+    const isTreatment = target.category === 'treatment' || target.category === 'consultation';
+    const group = items.filter(i => 
+      isTreatment ? (i.category === 'treatment' || i.category === 'consultation') : i.category === target.category
+    );
+
+    const currentIdx = group.findIndex(i => i.id === itemId);
+    if (currentIdx === -1) return;
+
+    let targetIdx = currentIdx;
+    if (direction === 'up') {
+      targetIdx = Math.max(0, currentIdx - 1);
+    } else if (direction === 'down') {
+      targetIdx = Math.min(group.length - 1, currentIdx + 1);
+    } else if (typeof direction === 'number') {
+      targetIdx = Math.max(0, Math.min(group.length - 1, direction - 1));
+    }
+
+    if (targetIdx === currentIdx) return;
+
+    const reorderedGroup = [...group];
+    const [moved] = reorderedGroup.splice(currentIdx, 1);
+    reorderedGroup.splice(targetIdx, 0, moved);
+
+    let gIdx = 0;
+    const newItems = items.map(item => {
+      const belongs = isTreatment
+        ? (item.category === 'treatment' || item.category === 'consultation')
+        : item.category === target.category;
+      if (belongs) {
+        const replacement = reorderedGroup[gIdx];
+        gIdx++;
+        return replacement;
+      }
+      return item;
+    });
+
+    setItems(newItems);
   };
 
   const handleSave = () => {
@@ -85,7 +128,10 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
         {/* Category 1: Treatments */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <h3 className="font-bold text-slate-900 text-sm">1. Acupuncture & Individual Therapies</h3>
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm">1. Acupuncture & Individual Therapies</h3>
+              <p className="text-[11px] text-slate-500">Use ↑ ↓ buttons or enter position number to re-order items.</p>
+            </div>
             <button
               onClick={() => handleAddItem('treatment')}
               className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg border border-emerald-200 cursor-pointer"
@@ -95,95 +141,151 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
           </div>
 
           <div className="space-y-3">
-            {items.map((item, idx) => {
-              if (item.category !== 'treatment' && item.category !== 'consultation') return null;
-              return (
-                <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => updateItem(idx, { name: e.target.value })}
-                      className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold"
-                      placeholder="Treatment name..."
-                    />
-                    <div className="w-28 relative">
-                      <span className="absolute left-2 top-1.5 text-slate-400 text-xs font-bold">BDT</span>
-                      <input
-                        type="number"
-                        value={item.defaultPrice}
-                        onChange={(e) => updateItem(idx, { defaultPrice: Number(e.target.value) })}
-                        className="w-full pl-9 pr-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-emerald-800"
-                      />
-                    </div>
-                    <button onClick={() => removeItem(idx)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={item.description || ''}
-                      onChange={(e) => updateItem(idx, { description: e.target.value })}
-                      className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-emerald-500"
-                      placeholder="Description / Details..."
-                    />
-                    <input
-                      type="text"
-                      value={item.rateNote || ''}
-                      onChange={(e) => updateItem(idx, { rateNote: e.target.value })}
-                      className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-emerald-500"
-                      placeholder="Rate Subtext / Note (under Rate)..."
-                    />
-                  </div>
+            {(() => {
+              const treatmentGroup = items.filter(i => i.category === 'treatment' || i.category === 'consultation');
+              return treatmentGroup.map((item, catIdx) => {
+                const itemIdxInAll = items.findIndex(i => i.id === item.id);
+                return (
+                  <div key={item.id} className="bg-slate-50 rounded-xl border border-slate-200 space-y-2 overflow-hidden shadow-xs">
+                    {/* Item Order Top Bar */}
+                    <div className="flex items-center justify-between bg-slate-200/70 px-3 py-1 border-b border-slate-300/80 text-xs font-bold text-slate-700">
+                      <div className="flex items-center gap-1.5">
+                        <span className="bg-emerald-700 text-white text-[10px] font-black px-1.5 py-0.5 rounded font-mono">
+                          #{catIdx + 1}
+                        </span>
+                        <span className="text-[11px] text-slate-600 font-semibold">Listing Serial</span>
+                      </div>
 
-                  {item.category === 'treatment' && (
-                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
-                      <div className="flex items-center gap-1.5 bg-emerald-50/70 px-2.5 py-1 rounded-lg border border-emerald-100">
-                        <span className="text-[11px] font-bold text-emerald-800 shrink-0">Outdoor Session:</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={item.outdoorSessions ?? ''}
-                          onChange={(e) => updateItem(idx, { outdoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
-                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-emerald-900 text-center focus:ring-1 focus:ring-emerald-500"
-                          placeholder="e.g. 10"
-                        />
-                      </div>
-                      <div className="flex items-center gap-1.5 bg-indigo-50/70 px-2.5 py-1 rounded-lg border border-indigo-100">
-                        <span className="text-[11px] font-bold text-indigo-800 shrink-0">Indoor Session:</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={item.indoorSessions ?? ''}
-                          onChange={(e) => updateItem(idx, { indoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
-                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-indigo-900 text-center focus:ring-1 focus:ring-indigo-500"
-                          placeholder="e.g. 15"
-                        />
-                      </div>
-                      <div className="col-span-2 pt-1">
-                        <label className="inline-flex items-center gap-2 text-[11px] font-bold text-indigo-900 bg-indigo-50/80 hover:bg-indigo-100/80 px-2.5 py-1 rounded-lg border border-indigo-200/70 cursor-pointer select-none transition">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={catIdx === 0}
+                          onClick={() => moveItem(item.id, 'up')}
+                          className="p-1 text-slate-700 hover:text-emerald-800 hover:bg-emerald-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
+                          title="Move Up"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={catIdx === treatmentGroup.length - 1}
+                          onClick={() => moveItem(item.id, 'down')}
+                          className="p-1 text-slate-700 hover:text-emerald-800 hover:bg-emerald-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
+                          title="Move Down"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+
+                        <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-slate-300">
+                          <span className="text-[10px] text-slate-500 font-medium">Position:</span>
                           <input
-                            type="checkbox"
-                            checked={Boolean(item.isIndoorFree)}
-                            onChange={(e) => updateItem(idx, { isIndoorFree: e.target.checked })}
-                            className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                            type="number"
+                            min={1}
+                            max={treatmentGroup.length}
+                            value={catIdx + 1}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (!isNaN(val) && val >= 1 && val <= treatmentGroup.length) {
+                                moveItem(item.id, val);
+                              }
+                            }}
+                            className="w-11 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-emerald-500"
                           />
-                          <span>🎁 Free for Indoor Patient</span>
-                        </label>
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+
+                    <div className="p-3 space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={item.name}
+                          onChange={(e) => updateItem(itemIdxInAll, { name: e.target.value })}
+                          className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold"
+                          placeholder="Treatment name..."
+                        />
+                        <div className="w-28 relative">
+                          <span className="absolute left-2 top-1.5 text-slate-400 text-xs font-bold">BDT</span>
+                          <input
+                            type="number"
+                            value={item.defaultPrice}
+                            onChange={(e) => updateItem(itemIdxInAll, { defaultPrice: Number(e.target.value) })}
+                            className="w-full pl-9 pr-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-emerald-800"
+                          />
+                        </div>
+                        <button onClick={() => removeItem(itemIdxInAll)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={item.description || ''}
+                          onChange={(e) => updateItem(itemIdxInAll, { description: e.target.value })}
+                          className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-emerald-500"
+                          placeholder="Description / Details..."
+                        />
+                        <input
+                          type="text"
+                          value={item.rateNote || ''}
+                          onChange={(e) => updateItem(itemIdxInAll, { rateNote: e.target.value })}
+                          className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-emerald-500"
+                          placeholder="Rate Subtext / Note (under Rate)..."
+                        />
+                      </div>
+
+                      {item.category === 'treatment' && (
+                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
+                          <div className="flex items-center gap-1.5 bg-emerald-50/70 px-2.5 py-1 rounded-lg border border-emerald-100">
+                            <span className="text-[11px] font-bold text-emerald-800 shrink-0">Outdoor Session:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.outdoorSessions ?? ''}
+                              onChange={(e) => updateItem(itemIdxInAll, { outdoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
+                              className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-emerald-900 text-center focus:ring-1 focus:ring-emerald-500"
+                              placeholder="e.g. 10"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1.5 bg-indigo-50/70 px-2.5 py-1 rounded-lg border border-indigo-100">
+                            <span className="text-[11px] font-bold text-indigo-800 shrink-0">Indoor Session:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.indoorSessions ?? ''}
+                              onChange={(e) => updateItem(itemIdxInAll, { indoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
+                              className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-indigo-900 text-center focus:ring-1 focus:ring-indigo-500"
+                              placeholder="e.g. 15"
+                            />
+                          </div>
+                          <div className="col-span-2 pt-1">
+                            <label className="inline-flex items-center gap-2 text-[11px] font-bold text-indigo-900 bg-indigo-50/80 hover:bg-indigo-100/80 px-2.5 py-1 rounded-lg border border-indigo-200/70 cursor-pointer select-none transition">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.isIndoorFree)}
+                                onChange={(e) => updateItem(itemIdxInAll, { isIndoorFree: e.target.checked })}
+                                className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                              />
+                              <span>🎁 Free for Indoor Patient</span>
+                            </label>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
 
         {/* Category 2: Outdoor Packages */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <h3 className="font-bold text-slate-900 text-sm">2. Outdoor Treatment Packages</h3>
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm">2. Outdoor Treatment Packages</h3>
+              <p className="text-[11px] text-slate-500">Use ↑ ↓ buttons or enter position number to re-order packages.</p>
+            </div>
             <button
               onClick={() => handleAddItem('outdoor_package')}
               className="text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 px-3 py-1.5 rounded-lg border border-teal-200 cursor-pointer"
@@ -193,57 +295,113 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
           </div>
 
           <div className="space-y-3">
-            {items.map((item, idx) => {
-              if (item.category !== 'outdoor_package') return null;
-              return (
-                <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => updateItem(idx, { name: e.target.value })}
-                      className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold"
-                      placeholder="Package name..."
-                    />
-                    <div className="w-28 relative">
-                      <span className="absolute left-2 top-1.5 text-slate-400 text-xs font-bold">BDT</span>
-                      <input
-                        type="number"
-                        value={item.defaultPrice}
-                        onChange={(e) => updateItem(idx, { defaultPrice: Number(e.target.value) })}
-                        className="w-full pl-9 pr-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-teal-800"
-                      />
+            {(() => {
+              const packageGroup = items.filter(i => i.category === 'outdoor_package');
+              return packageGroup.map((item, catIdx) => {
+                const itemIdxInAll = items.findIndex(i => i.id === item.id);
+                return (
+                  <div key={item.id} className="bg-slate-50 rounded-xl border border-slate-200 space-y-2 overflow-hidden shadow-xs">
+                    {/* Item Order Top Bar */}
+                    <div className="flex items-center justify-between bg-slate-200/70 px-3 py-1 border-b border-slate-300/80 text-xs font-bold text-slate-700">
+                      <div className="flex items-center gap-1.5">
+                        <span className="bg-teal-700 text-white text-[10px] font-black px-1.5 py-0.5 rounded font-mono">
+                          #{catIdx + 1}
+                        </span>
+                        <span className="text-[11px] text-slate-600 font-semibold">Listing Serial</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={catIdx === 0}
+                          onClick={() => moveItem(item.id, 'up')}
+                          className="p-1 text-slate-700 hover:text-teal-800 hover:bg-teal-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
+                          title="Move Up"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={catIdx === packageGroup.length - 1}
+                          onClick={() => moveItem(item.id, 'down')}
+                          className="p-1 text-slate-700 hover:text-teal-800 hover:bg-teal-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
+                          title="Move Down"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+
+                        <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-slate-300">
+                          <span className="text-[10px] text-slate-500 font-medium">Position:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={packageGroup.length}
+                            value={catIdx + 1}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (!isNaN(val) && val >= 1 && val <= packageGroup.length) {
+                                moveItem(item.id, val);
+                              }
+                            }}
+                            className="w-11 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-teal-500"
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <button onClick={() => removeItem(idx)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    <div className="p-3 space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={item.name}
+                          onChange={(e) => updateItem(itemIdxInAll, { name: e.target.value })}
+                          className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold"
+                          placeholder="Package name..."
+                        />
+                        <div className="w-28 relative">
+                          <span className="absolute left-2 top-1.5 text-slate-400 text-xs font-bold">BDT</span>
+                          <input
+                            type="number"
+                            value={item.defaultPrice}
+                            onChange={(e) => updateItem(itemIdxInAll, { defaultPrice: Number(e.target.value) })}
+                            className="w-full pl-9 pr-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-teal-800"
+                          />
+                        </div>
+                        <button onClick={() => removeItem(itemIdxInAll)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={item.description || ''}
+                          onChange={(e) => updateItem(itemIdxInAll, { description: e.target.value })}
+                          className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-teal-500"
+                          placeholder="Package details / description..."
+                        />
+                        <input
+                          type="text"
+                          value={item.rateNote || ''}
+                          onChange={(e) => updateItem(itemIdxInAll, { rateNote: e.target.value })}
+                          className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-teal-500"
+                          placeholder="Rate Subtext / Note (under Rate)..."
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={item.description || ''}
-                      onChange={(e) => updateItem(idx, { description: e.target.value })}
-                      className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-teal-500"
-                      placeholder="Package details / description..."
-                    />
-                    <input
-                      type="text"
-                      value={item.rateNote || ''}
-                      onChange={(e) => updateItem(idx, { rateNote: e.target.value })}
-                      className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-teal-500"
-                      placeholder="Rate Subtext / Note (under Rate)..."
-                    />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
         </div>
 
         {/* Category 3: Indoor Rooms */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4 col-span-full md:col-span-1">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <h3 className="font-bold text-slate-900 text-sm">3. Indoor Rooms & Cabins</h3>
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm">3. Indoor Rooms & Cabins</h3>
+              <p className="text-[11px] text-slate-500">Use ↑ ↓ buttons or enter position number to re-order rooms.</p>
+            </div>
             <button
               onClick={() => handleAddItem('indoor_room')}
               className="text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-200 cursor-pointer"
@@ -253,50 +411,103 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
           </div>
 
           <div className="space-y-3">
-            {items.map((item, idx) => {
-              if (item.category !== 'indoor_room') return null;
-              return (
-                <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => updateItem(idx, { name: e.target.value })}
-                      className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold"
-                      placeholder="Room / Cabin name..."
-                    />
-                    <div className="w-28 relative">
-                      <span className="absolute left-2 top-1.5 text-slate-400 text-xs font-bold">BDT</span>
-                      <input
-                        type="number"
-                        value={item.defaultPrice}
-                        onChange={(e) => updateItem(idx, { defaultPrice: Number(e.target.value) })}
-                        className="w-full pl-9 pr-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-indigo-800"
-                      />
+            {(() => {
+              const roomGroup = items.filter(i => i.category === 'indoor_room');
+              return roomGroup.map((item, catIdx) => {
+                const itemIdxInAll = items.findIndex(i => i.id === item.id);
+                return (
+                  <div key={item.id} className="bg-slate-50 rounded-xl border border-slate-200 space-y-2 overflow-hidden shadow-xs">
+                    {/* Item Order Top Bar */}
+                    <div className="flex items-center justify-between bg-slate-200/70 px-3 py-1 border-b border-slate-300/80 text-xs font-bold text-slate-700">
+                      <div className="flex items-center gap-1.5">
+                        <span className="bg-indigo-700 text-white text-[10px] font-black px-1.5 py-0.5 rounded font-mono">
+                          #{catIdx + 1}
+                        </span>
+                        <span className="text-[11px] text-slate-600 font-semibold">Listing Serial</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={catIdx === 0}
+                          onClick={() => moveItem(item.id, 'up')}
+                          className="p-1 text-slate-700 hover:text-indigo-800 hover:bg-indigo-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
+                          title="Move Up"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={catIdx === roomGroup.length - 1}
+                          onClick={() => moveItem(item.id, 'down')}
+                          className="p-1 text-slate-700 hover:text-indigo-800 hover:bg-indigo-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
+                          title="Move Down"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+
+                        <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-slate-300">
+                          <span className="text-[10px] text-slate-500 font-medium">Position:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={roomGroup.length}
+                            value={catIdx + 1}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (!isNaN(val) && val >= 1 && val <= roomGroup.length) {
+                                moveItem(item.id, val);
+                              }
+                            }}
+                            className="w-11 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <button onClick={() => removeItem(idx)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    <div className="p-3 space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={item.name}
+                          onChange={(e) => updateItem(itemIdxInAll, { name: e.target.value })}
+                          className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold"
+                          placeholder="Room / Cabin name..."
+                        />
+                        <div className="w-28 relative">
+                          <span className="absolute left-2 top-1.5 text-slate-400 text-xs font-bold">BDT</span>
+                          <input
+                            type="number"
+                            value={item.defaultPrice}
+                            onChange={(e) => updateItem(itemIdxInAll, { defaultPrice: Number(e.target.value) })}
+                            className="w-full pl-9 pr-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-indigo-800"
+                          />
+                        </div>
+                        <button onClick={() => removeItem(itemIdxInAll)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={item.description || ''}
+                          onChange={(e) => updateItem(itemIdxInAll, { description: e.target.value })}
+                          className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-indigo-500"
+                          placeholder="Cabin / Ward details..."
+                        />
+                        <input
+                          type="text"
+                          value={item.rateNote || ''}
+                          onChange={(e) => updateItem(itemIdxInAll, { rateNote: e.target.value })}
+                          className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-indigo-500"
+                          placeholder="Rate Subtext / Note (under Rate)..."
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={item.description || ''}
-                      onChange={(e) => updateItem(idx, { description: e.target.value })}
-                      className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-indigo-500"
-                      placeholder="Cabin / Ward details..."
-                    />
-                    <input
-                      type="text"
-                      value={item.rateNote || ''}
-                      onChange={(e) => updateItem(idx, { rateNote: e.target.value })}
-                      className="w-full px-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:border-indigo-500"
-                      placeholder="Rate Subtext / Note (under Rate)..."
-                    />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
         </div>
 
