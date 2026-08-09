@@ -1703,11 +1703,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                     max={100}
                     disabled={!patientTreatmentMode}
                     placeholder="0"
-                    value={bulkDiscountPercent}
+                    value={bulkDiscountPercent === 0 || bulkDiscountPercent === '' ? '' : bulkDiscountPercent}
                     onChange={(e) => {
                       const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
                       handleBulkDiscountChange(val);
                     }}
+                    onFocus={(e) => e.target.select()}
                     className={`w-full pl-3 pr-6 py-1.5 border rounded-xl text-xs font-bold text-center shadow-2xs transition-colors ${
                       patientTreatmentMode
                         ? 'bg-white border-amber-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
@@ -1886,8 +1887,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                             <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
                             <input
                               type="number"
-                              value={item.unitCost}
+                              value={item.unitCost === 0 || item.unitCost === '' ? '' : item.unitCost}
                               onChange={(e) => updateTreatmentItem(item.id, { unitCost: Number(e.target.value) })}
+                              onFocus={(e) => e.target.select()}
+                              placeholder="0"
                               className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
                             />
                           </div>
@@ -1912,8 +1915,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                           type="number"
                           min={1}
                           placeholder="0"
-                          value={item.sessions === '' ? '' : item.sessions}
+                          value={item.sessions === 0 || item.sessions === '' ? '' : item.sessions}
                           onChange={(e) => updateTreatmentItem(item.id, { sessions: e.target.value === '' ? '' : Number(e.target.value) })}
+                          onFocus={(e) => e.target.select()}
                           className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
                             isChecked
                               ? 'bg-white border-slate-300 text-slate-900 focus:ring-2 focus:ring-emerald-500'
@@ -1938,8 +1942,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               min={0}
                               max={100}
                               placeholder="0"
-                              value={item.discountPercent === '' ? '' : item.discountPercent}
+                              value={item.discountPercent === 0 || item.discountPercent === '' ? '' : item.discountPercent}
                               onChange={(e) => updateTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
+                              onFocus={(e) => e.target.select()}
                               className={`w-full pr-5 pl-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
                                 isChecked
                                   ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-emerald-500'
@@ -2819,8 +2824,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">BDT</span>
                 <input
                   type="number"
-                  value={advancePaid}
-                  onChange={(e) => setAdvancePaid(Number(e.target.value))}
+                  value={advancePaid === 0 || advancePaid === '' ? '' : advancePaid}
+                  onChange={(e) => setAdvancePaid(e.target.value === '' ? '' : Number(e.target.value))}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="0"
                   className="w-full pl-10 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>

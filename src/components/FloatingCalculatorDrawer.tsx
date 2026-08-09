@@ -116,48 +116,63 @@ export const FloatingCalculatorDrawer: React.FC = () => {
   // ----------------------------------------------------
   // 2. PACKAGE & DAILY RATE CALCULATOR STATE
   // ----------------------------------------------------
-  const [pkgTreatmentCost, setPkgTreatmentCost] = useState<number>(1200);
-  const [pkgDays, setPkgDays] = useState<number>(30);
-  const [pkgDiscountPct, setPkgDiscountPct] = useState<number>(30);
-  const [pkgRoomRate, setPkgRoomRate] = useState<number>(2000);
-  const [pkgFoodRate, setPkgFoodRate] = useState<number>(500);
-  const [pkgAdmissionFee, setPkgAdmissionFee] = useState<number>(1000);
+  const [pkgTreatmentCost, setPkgTreatmentCost] = useState<number | ''>('');
+  const [pkgDays, setPkgDays] = useState<number | ''>('');
+  const [pkgDiscountPct, setPkgDiscountPct] = useState<number | ''>('');
+  const [pkgRoomRate, setPkgRoomRate] = useState<number | ''>('');
+  const [pkgFoodRate, setPkgFoodRate] = useState<number | ''>('');
+  const [pkgAdmissionFee, setPkgAdmissionFee] = useState<number | ''>('');
 
   // Calculations for Package Mode
-  const pkgGrossTreatment = (pkgTreatmentCost || 0) * (pkgDays || 0);
-  const pkgDiscAmount = Math.round(pkgGrossTreatment * ((pkgDiscountPct || 0) / 100));
+  const pkgGrossTreatment = (Number(pkgTreatmentCost) || 0) * (Number(pkgDays) || 0);
+  const pkgDiscAmount = Math.round(pkgGrossTreatment * ((Number(pkgDiscountPct) || 0) / 100));
   const pkgNetTreatment = pkgGrossTreatment - pkgDiscAmount;
-  const pkgTotalRoom = (pkgRoomRate || 0) * (pkgDays || 0);
-  const pkgTotalFood = (pkgFoodRate || 0) * (pkgDays || 0);
-  const pkgAdmission = pkgAdmissionFee || 0;
+  const pkgTotalRoom = (Number(pkgRoomRate) || 0) * (Number(pkgDays) || 0);
+  const pkgTotalFood = (Number(pkgFoodRate) || 0) * (Number(pkgDays) || 0);
+  const pkgAdmission = Number(pkgAdmissionFee) || 0;
 
   const pkgRecurringTotal = pkgNetTreatment + pkgTotalRoom + pkgTotalFood;
   const pkgGrandTotal = pkgRecurringTotal + pkgAdmission;
-  const pkgEffectiveRatePerDay = (pkgDays || 0) > 0 ? Math.round(pkgRecurringTotal / pkgDays) : 0;
+  const pkgEffectiveRatePerDay = (Number(pkgDays) || 0) > 0 ? Math.round(pkgRecurringTotal / (Number(pkgDays) || 1)) : 0;
 
   // ----------------------------------------------------
   // 3. INSTALLMENT SPLITTER STATE
   // ----------------------------------------------------
-  const [instTotalBill, setInstTotalBill] = useState<number>(35000);
+  const [instTotalBill, setInstTotalBill] = useState<number | ''>('');
+  const [instDiscountPct, setInstDiscountPct] = useState<number | ''>('');
+  const [instDays, setInstDays] = useState<number | ''>('');
   const [instCyclesCount, setInstCyclesCount] = useState<number>(3);
-  const [instDays, setInstDays] = useState<number>(30);
+
+  const instGross = Number(instTotalBill) || 0;
+  const instDiscAmount = Math.round(instGross * ((Number(instDiscountPct) || 0) / 100));
+  const instNet = instGross - instDiscAmount;
 
   const calculateInstallments = () => {
-    const total = instTotalBill || 0;
+    const total = instNet;
+    const grossTotal = instGross;
     const count = Math.max(1, instCyclesCount || 1);
-    const base = Math.floor(total / count);
-    const rem = total - (base * count);
-    const daysPerCycle = Math.ceil((instDays || 30) / count);
+
+    const netBase = Math.floor(total / count);
+    const netRem = total - (netBase * count);
+
+    const grossBase = Math.floor(grossTotal / count);
+    const grossRem = grossTotal - (grossBase * count);
+
+    const daysPerCycle = Math.ceil((Number(instDays) || 30) / count);
 
     const list = [];
     for (let i = 0; i < count; i++) {
-      const amt = base + (i === 0 ? rem : 0);
+      const amt = netBase + (i === 0 ? netRem : 0);
+      const grossAmt = grossBase + (i === 0 ? grossRem : 0);
+      const discAmt = grossAmt - amt;
       const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
       list.push({
         cycle: i + 1,
         title: `${i + 1}${i === 0 ? 'st' : i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'} Payment Cycle`,
         days: daysPerCycle,
         amount: amt,
+        grossAmount: grossAmt,
+        discountAmount: discAmt,
         percentage: pct
       });
     }
@@ -169,11 +184,11 @@ export const FloatingCalculatorDrawer: React.FC = () => {
   // ----------------------------------------------------
   // 4. QUICK DISCOUNT CALCULATOR STATE
   // ----------------------------------------------------
-  const [discPrice, setDiscPrice] = useState<number>(5000);
-  const [discPct, setDiscPct] = useState<number>(20);
+  const [discPrice, setDiscPrice] = useState<number | ''>('');
+  const [discPct, setDiscPct] = useState<number | ''>('');
 
-  const discAmt = Math.round((discPrice || 0) * ((discPct || 0) / 100));
-  const discNetPayable = (discPrice || 0) - discAmt;
+  const discAmt = Math.round((Number(discPrice) || 0) * ((Number(discPct) || 0) / 100));
+  const discNetPayable = (Number(discPrice) || 0) - discAmt;
 
   // Copy Helper
   const copyToClipboard = (text: string) => {
@@ -474,8 +489,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Treatment Per Day (BDT)</label>
                         <input
                           type="number"
-                          value={pkgTreatmentCost}
-                          onChange={(e) => setPkgTreatmentCost(Number(e.target.value))}
+                          value={pkgTreatmentCost === 0 || pkgTreatmentCost === '' ? '' : pkgTreatmentCost}
+                          onChange={(e) => setPkgTreatmentCost(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -484,8 +501,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Duration (Days)</label>
                         <input
                           type="number"
-                          value={pkgDays}
-                          onChange={(e) => setPkgDays(Number(e.target.value))}
+                          value={pkgDays === 0 || pkgDays === '' ? '' : pkgDays}
+                          onChange={(e) => setPkgDays(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -494,8 +513,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Discount (%)</label>
                         <input
                           type="number"
-                          value={pkgDiscountPct}
-                          onChange={(e) => setPkgDiscountPct(Number(e.target.value))}
+                          value={pkgDiscountPct === 0 || pkgDiscountPct === '' ? '' : pkgDiscountPct}
+                          onChange={(e) => setPkgDiscountPct(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0%"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -504,8 +525,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Room Rent / Day (BDT)</label>
                         <input
                           type="number"
-                          value={pkgRoomRate}
-                          onChange={(e) => setPkgRoomRate(Number(e.target.value))}
+                          value={pkgRoomRate === 0 || pkgRoomRate === '' ? '' : pkgRoomRate}
+                          onChange={(e) => setPkgRoomRate(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -514,8 +537,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Food Charge / Day (BDT)</label>
                         <input
                           type="number"
-                          value={pkgFoodRate}
-                          onChange={(e) => setPkgFoodRate(Number(e.target.value))}
+                          value={pkgFoodRate === 0 || pkgFoodRate === '' ? '' : pkgFoodRate}
+                          onChange={(e) => setPkgFoodRate(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -524,8 +549,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Admission Fee (1-Time BDT)</label>
                         <input
                           type="number"
-                          value={pkgAdmissionFee}
-                          onChange={(e) => setPkgAdmissionFee(Number(e.target.value))}
+                          value={pkgAdmissionFee === 0 || pkgAdmissionFee === '' ? '' : pkgAdmissionFee}
+                          onChange={(e) => setPkgAdmissionFee(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -591,13 +618,16 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="col-span-2">
+                    {/* Inputs Grid */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Total Bill Amount (BDT)</label>
                         <input
                           type="number"
-                          value={instTotalBill}
-                          onChange={(e) => setInstTotalBill(Number(e.target.value))}
+                          value={instTotalBill === 0 || instTotalBill === '' ? '' : instTotalBill}
+                          onChange={(e) => setInstTotalBill(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-emerald-900 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -609,11 +639,81 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                           onChange={(e) => setInstCyclesCount(Number(e.target.value))}
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         >
-                          <option value={2}>2 Cycle (50/50)</option>
-                          <option value={3}>3 Cycle (10-Day)</option>
-                          <option value={4}>4 Cycle</option>
-                          <option value={5}>5 Cycle</option>
+                          <option value={2}>2 Cycles (50/50)</option>
+                          <option value={3}>3 Cycles</option>
+                          <option value={4}>4 Cycles</option>
+                          <option value={5}>5 Cycles</option>
                         </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Total Duration (Days)</label>
+                        <input
+                          type="number"
+                          value={instDays === 0 || instDays === '' ? '' : instDays}
+                          onChange={(e) => setInstDays(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="30"
+                          className="w-full p-2 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Discount (%)</label>
+                        <input
+                          type="number"
+                          value={instDiscountPct === 0 || instDiscountPct === '' ? '' : instDiscountPct}
+                          onChange={(e) => setInstDiscountPct(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0%"
+                          className="w-full p-2 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Quick Preset Days selector */}
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      <span className="text-[10px] font-bold text-slate-500">Preset Days:</span>
+                      {[10, 15, 30, 45, 60].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setInstDays(d)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                            instDays === d
+                              ? 'bg-emerald-600 text-white shadow-sm'
+                              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {d} Days
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Bill Breakdown Summary Card */}
+                    <div className="bg-white rounded-xl p-2.5 border border-slate-200 shadow-sm space-y-1 text-[11px]">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Gross Bill Amount:</span>
+                        <span className="font-bold text-slate-800">BDT {instGross.toLocaleString()}</span>
+                      </div>
+
+                      {instDiscountPct > 0 && (
+                        <div className="flex justify-between text-rose-600 font-bold">
+                          <span>Discount ({instDiscountPct}%):</span>
+                          <span>- BDT {instDiscAmount.toLocaleString()}</span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-100 pt-1">
+                        <span>Net Payable Bill:</span>
+                        <span className="text-emerald-700">BDT {instNet.toLocaleString()}</span>
+                      </div>
+
+                      <div className="flex justify-between text-slate-500 text-[10px] pt-0.5">
+                        <span>Duration & Split:</span>
+                        <span className="font-semibold text-slate-700">
+                          {instDays} Days • {instCyclesCount} Cycles (~{Math.ceil((instDays || 30) / Math.max(1, instCyclesCount))} days/cycle)
+                        </span>
                       </div>
                     </div>
 
@@ -626,6 +726,11 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                             <span className="font-black text-slate-800 text-xs">{item.title}</span>
                             <span className="text-[10px] text-slate-500 block">
                               Approx {item.days} days duration
+                              {item.discountAmount > 0 && (
+                                <span className="text-emerald-600 font-medium ml-1">
+                                  (Saved BDT {item.discountAmount.toLocaleString()})
+                                </span>
+                              )}
                             </span>
                           </div>
                           <div className="text-right">
@@ -642,13 +747,13 @@ export const FloatingCalculatorDrawer: React.FC = () => {
 
                     <button
                       onClick={() => {
-                        const summary = installmentsList.map(i => `${i.title}: BDT ${i.amount.toLocaleString()} (${i.percentage}%)`).join('\n');
-                        copyToClipboard(`Installment Breakup (Total BDT ${instTotalBill.toLocaleString()}):\n${summary}`);
+                        const summary = installmentsList.map(i => `${i.title}: BDT ${i.amount.toLocaleString()} (~${i.days} days, ${i.percentage}%)`).join('\n');
+                        copyToClipboard(`Installment Plan (${instDays} Days, ${instCyclesCount} Cycles):\nGross Total: BDT ${instGross.toLocaleString()}\nDiscount: ${instDiscountPct}% (-BDT ${instDiscAmount.toLocaleString()})\nNet Payable: BDT ${instNet.toLocaleString()}\n\nBreakup:\n${summary}`);
                       }}
                       className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-xs shadow-sm"
                     >
-                      {copiedText?.includes('Installment Breakup') ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                      <span>{copiedText?.includes('Installment Breakup') ? 'Copied Breakup' : 'Copy Installment Plan'}</span>
+                      {copiedText?.includes('Installment Plan') ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      <span>{copiedText?.includes('Installment Plan') ? 'Copied Plan' : 'Copy Installment Plan'}</span>
                     </button>
                   </div>
                 )}
@@ -668,8 +773,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Original Price (BDT)</label>
                         <input
                           type="number"
-                          value={discPrice}
-                          onChange={(e) => setDiscPrice(Number(e.target.value))}
+                          value={discPrice === 0 || discPrice === '' ? '' : discPrice}
+                          onChange={(e) => setDiscPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -678,8 +785,10 @@ export const FloatingCalculatorDrawer: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-600 mb-0.5">Discount (%)</label>
                         <input
                           type="number"
-                          value={discPct}
-                          onChange={(e) => setDiscPct(Number(e.target.value))}
+                          value={discPct === 0 || discPct === '' ? '' : discPct}
+                          onChange={(e) => setDiscPct(e.target.value === '' ? '' : Number(e.target.value))}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0%"
                           className="w-full p-2 bg-white border border-slate-300 rounded-lg font-black text-slate-800 focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
