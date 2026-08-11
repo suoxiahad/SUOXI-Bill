@@ -1,5 +1,5 @@
-import React from 'react';
-import { Printer, ArrowLeft, Building2, Phone, Mail, Globe, MapPin } from 'lucide-react';
+import React, { useState } from 'react';
+import { Printer, ArrowLeft, Building2, Phone, Mail, Globe, MapPin, Copy, Check } from 'lucide-react';
 import { InvoiceQuotation } from '../types';
 import { SuoxiLogo } from './SuoxiLogo';
 
@@ -9,6 +9,35 @@ interface QuotationPrintViewProps {
 }
 
 export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotation, onBack }) => {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopyText = (text: string, key: string) => {
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {
+        fallbackCopyText(text);
+      });
+    } else {
+      fallbackCopyText(text);
+    }
+    setCopiedKey(key);
+    setTimeout(() => {
+      setCopiedKey(null);
+    }, 1800);
+  };
+
+  const fallbackCopyText = (text: string) => {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    } catch (e) {
+      console.error('Fallback copy failed', e);
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -162,7 +191,26 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
               <tbody className="divide-y divide-slate-200 border-b border-slate-200">
                 {quotation.treatments.map((tr, i) => (
                   <tr key={i} className="even:bg-slate-50">
-                    <td className="p-2.5 font-semibold text-slate-900">{tr.treatmentName}</td>
+                    <td className="p-2.5 font-semibold text-slate-900">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{tr.treatmentName}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyText(tr.treatmentName, `tr-${i}`)}
+                          title="Copy treatment name"
+                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
+                        >
+                          {copiedKey === `tr-${i}` ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                              <Check className="w-3 h-3 text-emerald-700" />
+                              <span>Copied</span>
+                            </span>
+                          ) : (
+                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-emerald-700" />
+                          )}
+                        </button>
+                      </div>
+                    </td>
                     <td className="p-2.5 text-center">BDT {tr.unitCost.toLocaleString()}</td>
                     <td className="p-2.5 text-center font-bold">{tr.sessions}</td>
                     <td className="p-2.5 text-center font-bold text-amber-800">
@@ -197,8 +245,27 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
                 {quotation.outdoorPackages.map((pkg, i) => (
                   <tr key={i} className="even:bg-slate-50">
                     <td className="p-2.5 font-semibold text-slate-900">
-                      <div>{pkg.packageName}</div>
-                      {pkg.description && <div className="text-[11px] text-slate-500 font-normal">{pkg.description}</div>}
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div>{pkg.packageName}</div>
+                          {pkg.description && <div className="text-[11px] text-slate-500 font-normal">{pkg.description}</div>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyText(pkg.packageName, `pkg-${i}`)}
+                          title="Copy package name"
+                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-teal-700 hover:bg-teal-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
+                        >
+                          {copiedKey === `pkg-${i}` ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded">
+                              <Check className="w-3 h-3 text-teal-700" />
+                              <span>Copied</span>
+                            </span>
+                          ) : (
+                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-teal-700" />
+                          )}
+                        </button>
+                      </div>
                     </td>
                     <td className="p-2.5 text-center">BDT {pkg.totalBaseCost.toLocaleString()}</td>
                     <td className="p-2.5 text-center text-amber-700 font-bold">{pkg.discountPercent}%</td>
@@ -230,12 +297,86 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
                 {quotation.indoorServices.map((ind, i) => (
                   <tr key={i} className="even:bg-slate-50">
                     <td className="p-2.5 font-semibold text-slate-900">
-                      <div>{ind.roomType}</div>
-                      {ind.remarks && <div className="text-[11px] text-slate-500 font-normal">{ind.remarks}</div>}
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div>{ind.roomType}</div>
+                          {ind.remarks && <div className="text-[11px] text-slate-500 font-normal">{ind.remarks}</div>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyText(ind.roomType, `ind-${i}`)}
+                          title="Copy room name"
+                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-indigo-700 hover:bg-indigo-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
+                        >
+                          {copiedKey === `ind-${i}` ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">
+                              <Check className="w-3 h-3 text-indigo-700" />
+                              <span>Copied</span>
+                            </span>
+                          ) : (
+                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-indigo-700" />
+                          )}
+                        </button>
+                      </div>
                     </td>
                     <td className="p-2.5 text-center">BDT {ind.dailyRate.toLocaleString()}</td>
                     <td className="p-2.5 text-center font-bold">{ind.days} Days</td>
                     <td className="p-2.5 text-right font-bold text-indigo-900">BDT {(ind.totalAmount || 0).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* TABLE 4: Additional Treatments */}
+        {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
+          <div className="mb-6 space-y-2">
+            <h3 className="text-xs font-extrabold text-sky-900 uppercase tracking-wider border-b border-sky-800 pb-1">
+              4. Additional Treatments
+            </h3>
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-sky-900 text-white font-bold">
+                  <th className="p-2.5">Treatment / Therapy Name</th>
+                  <th className="p-2.5 text-center">Unit Cost</th>
+                  <th className="p-2.5 text-center">Sessions</th>
+                  <th className="p-2.5 text-center">Discount (%)</th>
+                  <th className="p-2.5 text-center">Discount (BDT)</th>
+                  <th className="p-2.5 text-right">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 border-b border-slate-200">
+                {quotation.additionalTreatments.map((tr, i) => (
+                  <tr key={i} className="even:bg-slate-50">
+                    <td className="p-2.5 font-semibold text-slate-900">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div>{tr.treatmentName}</div>
+                          {tr.description && <div className="text-[11px] text-slate-500 font-normal">{tr.description}</div>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyText(tr.treatmentName, `add-${i}`)}
+                          title="Copy treatment name"
+                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-sky-700 hover:bg-sky-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
+                        >
+                          {copiedKey === `add-${i}` ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded">
+                              <Check className="w-3 h-3 text-sky-700" />
+                              <span>Copied</span>
+                            </span>
+                          ) : (
+                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-sky-700" />
+                          )}
+                        </button>
+                      </div>
+                    </td>
+                    <td className="p-2.5 text-center">BDT {tr.unitCost.toLocaleString()}</td>
+                    <td className="p-2.5 text-center font-bold">{tr.sessions}</td>
+                    <td className="p-2.5 text-center font-bold text-amber-800">{tr.discountPercent}%</td>
+                    <td className="p-2.5 text-center text-rose-600">-BDT {(tr.discountAmount || 0).toLocaleString()}</td>
+                    <td className="p-2.5 text-right font-bold text-sky-900">BDT {(tr.totalCost || 0).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -312,6 +453,13 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
                 <div className="flex justify-between items-center text-slate-300">
                   <span>Indoor Accommodation:</span>
                   <span className="font-bold text-slate-400">BDT 0</span>
+                </div>
+              )}
+
+              {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
+                <div className="flex justify-between items-center text-slate-300">
+                  <span>Additional Treatments:</span>
+                  <span className="font-bold text-white">BDT {(quotation.additionalTreatmentsSubtotal || 0).toLocaleString()}</span>
                 </div>
               )}
 

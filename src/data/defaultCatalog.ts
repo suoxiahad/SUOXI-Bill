@@ -70,8 +70,7 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     defaultDiscountPercent: 0,
     description: 'Heat therapy using moxa wool',
     outdoorSessions: 10,
-    indoorSessions: 15,
-    isIndoorFree: true
+    indoorSessions: 15
   },
   {
     id: 'tr-5',
@@ -101,8 +100,7 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     defaultDiscountPercent: 0,
     description: 'Pain management thermal therapy',
     outdoorSessions: 10,
-    indoorSessions: 15,
-    isIndoorFree: true
+    indoorSessions: 15
   },
 
   // Outdoor Packages
@@ -168,5 +166,29 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'consultation',
     defaultPrice: 1000,
     description: 'Senior acupuncture doctor consultation'
+  },
+
+  // Additional Treatments
+  {
+    id: 'add-ozon',
+    name: 'Ozon Therapy',
+    category: 'additional_treatment',
+    defaultPrice: 1500,
+    defaultDiscountPercent: 0,
+    description: 'Medical ozone oxygen therapy session',
+    isIndoorFree: true,
+    isRatioBased: true,
+    sessionsPer10Days: 3
+  },
+  {
+    id: 'add-ed',
+    name: 'Erectile Dysfunction (ED) Therapy',
+    category: 'additional_treatment',
+    defaultPrice: 2000,
+    defaultDiscountPercent: 0,
+    description: 'Specialized shockwave & ED therapy session',
+    isIndoorFree: true,
+    isRatioBased: true,
+    sessionsPer10Days: 3
   }
 ];

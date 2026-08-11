@@ -174,16 +174,16 @@ export default function App() {
           />
         ) : (
           <>
-            {activeTab === 'appointments' && (
+            <div className={activeTab === 'appointments' ? 'block' : 'hidden'}>
               <AppointmentImporter
                 patients={patients}
                 onRefreshPatients={initializeAppData}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
                 onOpenAddPatient={() => setIsAddPatientOpen(true)}
               />
-            )}
+            </div>
 
-            {activeTab === 'quotation' && (
+            <div className={activeTab === 'quotation' ? 'block' : 'hidden'}>
               <QuotationBuilder
                 initialPatient={selectedPatientForQuotation}
                 patients={patients}
@@ -193,27 +193,29 @@ export default function App() {
                 onSaveQuotation={handleSaveQuotation}
                 onPreviewPrint={handlePreviewPrint}
               />
-            )}
+            </div>
 
-            {activeTab === 'history' && (
+            <div className={activeTab === 'history' ? 'block' : 'hidden'}>
               <QuotationHistory
                 quotations={quotations}
+                patients={patients}
                 currentUser={currentUser}
                 onViewPrintQuotation={(q) => setPrintQuotation(q)}
                 onDeleteQuotations={handleDeleteQuotations}
+                onSelectPatientForQuotation={handleSelectPatientForQuotation}
               />
-            )}
+            </div>
 
-            {activeTab === 'catalog' && (
+            <div className={activeTab === 'catalog' ? 'block' : 'hidden'}>
               <CatalogSettings
                 catalog={catalog}
                 onSaveCatalog={handleSaveCatalog}
               />
-            )}
+            </div>
 
-            {activeTab === 'users' && (
+            <div className={activeTab === 'users' ? 'block' : 'hidden'}>
               <UserManagement currentUser={currentUser} />
-            )}
+            </div>
           </>
         )}
 

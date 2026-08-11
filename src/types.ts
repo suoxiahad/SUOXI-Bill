@@ -27,6 +27,20 @@ export interface IndividualTreatment {
   isIndoorFree?: boolean;
 }
 
+export interface AdditionalTreatment {
+  id: string;
+  treatmentName: string;
+  unitCost: number; // Cost per session
+  sessions: number; // Number of sessions
+  discountPercent: number; // Discount percentage (%)
+  discountAmount: number; // Discount amount
+  totalCost: number; // Total cost
+  isRatioBased?: boolean; // If true, auto-calculates sessions based on treatmentDays ratio (e.g. 3 sessions per 10 days)
+  sessionsPer10Days?: number; // e.g. 3
+  description?: string;
+  rateNote?: string;
+}
+
 export interface OutdoorPackage {
   id: string;
   packageType: '30_day' | '15_day' | 'daily' | 'custom' | string;
@@ -84,6 +98,10 @@ export interface InvoiceQuotation {
   indoorServices: IndoorService[];
   indoorSubtotal: number;
 
+  // Section 4: Additional Treatments & Therapies
+  additionalTreatments?: AdditionalTreatment[];
+  additionalTreatmentsSubtotal?: number;
+
   // Additional Fees & Discounts
   admissionFee?: number;
   consultationFee?: number;
@@ -109,7 +127,7 @@ export interface InvoiceQuotation {
 export interface CatalogItem {
   id: string;
   name: string;
-  category: 'treatment' | 'outdoor_package' | 'indoor_room' | 'consultation';
+  category: 'treatment' | 'outdoor_package' | 'indoor_room' | 'consultation' | 'additional_treatment';
   defaultPrice: number;
   defaultDiscountPercent?: number;
   description?: string;
@@ -117,6 +135,8 @@ export interface CatalogItem {
   outdoorSessions?: number;
   indoorSessions?: number;
   isIndoorFree?: boolean;
+  isRatioBased?: boolean;
+  sessionsPer10Days?: number;
 }
 
 export type UserRole = 'System Admin' | 'Doctor' | 'Call Center';

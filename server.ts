@@ -109,18 +109,26 @@ const LOCAL_DB_FILE = path.join(process.cwd(), 'local_hospital_db.json');
 
 // Default initial catalog data in pure English
 const DEFAULT_CATALOG = [
-  { id: 'cat-1', name: 'Traditional Acupuncture Therapy', category: 'treatment', defaultPrice: 1200, defaultDiscountPercent: 10, description: 'Standard acupuncture needle stimulation session', outdoorSessions: 10, indoorSessions: 20 },
-  { id: 'cat-2', name: 'Electro-Acupuncture Therapy', category: 'treatment', defaultPrice: 1500, defaultDiscountPercent: 10, description: 'Electrical pulse acupuncture therapy', outdoorSessions: 10, indoorSessions: 15 },
-  { id: 'cat-3', name: 'Moxibustion Heat Therapy', category: 'treatment', defaultPrice: 800, defaultDiscountPercent: 0, description: 'Heat therapy using moxa wool', outdoorSessions: 10, indoorSessions: 15 },
-  { id: 'cat-4', name: 'Cupping / Hijama Therapy', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Wet/Dry suction cupping therapy', outdoorSessions: 3, indoorSessions: 5 },
-  { id: 'cat-5', name: 'Physiotherapy & Traction', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 10, description: 'Spine & Joint decompression traction', outdoorSessions: 10, indoorSessions: 15 },
-  { id: 'cat-6', name: 'Laser Acupuncture Therapy', category: 'treatment', defaultPrice: 1800, defaultDiscountPercent: 15, description: 'Non-invasive laser therapy', outdoorSessions: 10, indoorSessions: 15 },
-  { id: 'cat-7', name: '30-Day Comprehensive Outdoor Package', category: 'outdoor_package', defaultPrice: 35000, defaultDiscountPercent: 15, description: 'Includes 30 sessions acupuncture + moxibustion + physio' },
-  { id: 'cat-8', name: '15-Day Intensive Outdoor Package', category: 'outdoor_package', defaultPrice: 20000, defaultDiscountPercent: 10, description: '15 session intensive therapy package' },
-  { id: 'cat-9', name: 'Single Premium AC Cabin', category: 'indoor_room', defaultPrice: 3500, defaultDiscountPercent: 0, description: 'Private AC cabin with attached bath' },
-  { id: 'cat-10', name: 'Sharing Deluxe AC Cabin', category: 'indoor_room', defaultPrice: 2000, defaultDiscountPercent: 0, description: 'Double occupancy AC room' },
-  { id: 'cat-11', name: 'General AC Ward Bed', category: 'indoor_room', defaultPrice: 1200, defaultDiscountPercent: 0, description: 'Air conditioned general ward bed' },
-  { id: 'cat-12', name: 'Doctor Assessment & Counseling Fee', category: 'consultation', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Doctor first visit counseling fee' }
+  { id: 'tr-scalp', name: 'Scalp Acupuncture', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Neurological scalp acupuncture therapy', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'tr-tongue', name: 'Tongue Acupuncture', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Specialized tongue acupuncture session', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'tr-ear', name: 'Ear Acupuncture', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Auricular acupuncture therapy', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'tr-1', name: 'Traditional Body Acupuncture', category: 'treatment', defaultPrice: 1200, defaultDiscountPercent: 0, description: 'Acupuncture session with sterile needles', outdoorSessions: 10, indoorSessions: 20 },
+  { id: 'tr-2', name: 'Electro-Acupuncture Therapy', category: 'treatment', defaultPrice: 1500, defaultDiscountPercent: 0, description: 'Targeted nerve stimulation with micro-current', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'tr-3', name: 'Cupping / Hijama Therapy', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Dry/Wet cupping for blood circulation and detoxification', outdoorSessions: 3, indoorSessions: 5 },
+  { id: 'tr-4', name: 'Moxibustion Heat Therapy', category: 'treatment', defaultPrice: 800, defaultDiscountPercent: 0, description: 'Heat therapy using moxa wool', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'tr-5', name: 'Physiotherapy & Rehabilitation', category: 'treatment', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Manual rehabilitation and joint mobilization', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'tr-6', name: 'Laser Acupuncture Therapy', category: 'treatment', defaultPrice: 1800, defaultDiscountPercent: 0, description: 'Non-invasive laser stimulation', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'tr-7', name: 'Infrared & TENS Pain Therapy', category: 'treatment', defaultPrice: 700, defaultDiscountPercent: 0, description: 'Pain management thermal therapy', outdoorSessions: 10, indoorSessions: 15 },
+  { id: 'pkg-30', name: '30-Day Comprehensive Outdoor Package', category: 'outdoor_package', defaultPrice: 36000, defaultDiscountPercent: 20, description: 'Comprehensive 30 days daily acupuncture & rehab sessions' },
+  { id: 'pkg-15', name: '15-Day Intensive Outdoor Package', category: 'outdoor_package', defaultPrice: 18000, defaultDiscountPercent: 15, description: 'Intensive 15 days acupuncture regimen' },
+  { id: 'pkg-1', name: 'Daily Special Combination Package', category: 'outdoor_package', defaultPrice: 2500, defaultDiscountPercent: 10, description: 'Combined multi-therapy day package' },
+  { id: 'room-single', name: 'Single Premium AC Cabin', category: 'indoor_room', defaultPrice: 3500, defaultDiscountPercent: 0, description: 'Attached bath, LED TV, attendant couch, AC' },
+  { id: 'room-sharing', name: 'Sharing Deluxe AC Cabin', category: 'indoor_room', defaultPrice: 2000, defaultDiscountPercent: 0, description: 'Two patient bed sharing cabin' },
+  { id: 'room-ac-ward', name: 'General AC Ward Bed', category: 'indoor_room', defaultPrice: 1200, defaultDiscountPercent: 0, description: 'Air conditioned general ward bed' },
+  { id: 'room-non-ac', name: 'General Non-AC Ward Bed', category: 'indoor_room', defaultPrice: 800, defaultDiscountPercent: 0, description: 'General ward bed with fan' },
+  { id: 'doc-consult', name: 'Doctor Counseling & Assessment Fee', category: 'consultation', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Senior acupuncture doctor consultation' },
+  { id: 'add-ozon', name: 'Ozon Therapy', category: 'additional_treatment', defaultPrice: 1500, defaultDiscountPercent: 0, description: 'Medical ozone oxygen therapy session', isIndoorFree: true, isRatioBased: true, sessionsPer10Days: 3 },
+  { id: 'add-ed', name: 'Erectile Dysfunction (ED) Therapy', category: 'additional_treatment', defaultPrice: 2000, defaultDiscountPercent: 0, description: 'Specialized shockwave & ED therapy session', isIndoorFree: true, isRatioBased: true, sessionsPer10Days: 3 }
 ];
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';

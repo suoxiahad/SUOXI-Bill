@@ -13,15 +13,20 @@ import {
   Receipt,
   Trash2,
   AlertTriangle,
-  ShieldAlert
+  ShieldAlert,
+  Copy,
+  Check,
+  FilePlus
 } from 'lucide-react';
-import { InvoiceQuotation, User } from '../types';
+import { InvoiceQuotation, User, Patient } from '../types';
 
 interface QuotationHistoryProps {
   quotations: InvoiceQuotation[];
+  patients?: Patient[];
   currentUser?: User | null;
   onViewPrintQuotation: (quotation: InvoiceQuotation) => void;
   onDeleteQuotations?: (ids: string[]) => void;
+  onSelectPatientForQuotation?: (patient: Patient) => void;
 }
 
 interface PatientHistoryGroup {
@@ -50,15 +55,66 @@ export function getVisitOrdinal(index: number): string {
 
 export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   quotations,
+  patients,
   currentUser,
   onViewPrintQuotation,
-  onDeleteQuotations
+  onDeleteQuotations,
+  onSelectPatientForQuotation
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+
+  const handleCreateNewQuotationForPatient = (group: PatientHistoryGroup) => {
+    const existingPatient = patients?.find(
+      p => (p.phone && p.phone === group.patientPhone) || (p.name === group.patientName && p.phone === group.patientPhone)
+    );
+
+    const patientToSelect: Patient = existingPatient || {
+      id: `patient-${Date.now()}`,
+      name: group.patientName,
+      phone: group.patientPhone || '',
+      age: group.patientAge,
+      gender: group.patientGender,
+      doctorName: group.doctorName,
+      status: 'Pending Counseling',
+      createdAt: new Date().toISOString()
+    };
+
+    if (onSelectPatientForQuotation) {
+      onSelectPatientForQuotation(patientToSelect);
+    }
+  };
   const [viewMode, setViewMode] = useState<'patient_grouped' | 'flat_list'>('patient_grouped');
   const [expandedPatientKey, setExpandedPatientKey] = useState<string | null>(null);
   const [selectedPatientModal, setSelectedPatientModal] = useState<PatientHistoryGroup | null>(null);
   const [selectedQuotationIds, setSelectedQuotationIds] = useState<string[]>([]);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopyText = (text: string, key: string) => {
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {
+        fallbackCopyText(text);
+      });
+    } else {
+      fallbackCopyText(text);
+    }
+    setCopiedKey(key);
+    setTimeout(() => {
+      setCopiedKey(null);
+    }, 1800);
+  };
+
+  const fallbackCopyText = (text: string) => {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    } catch (e) {
+      console.error('Fallback copy failed', e);
+    }
+  };
   const [deleteWarningModal, setDeleteWarningModal] = useState<{
     type: 'single' | 'group' | 'bulk';
     title: string;
@@ -359,23 +415,35 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                           <span className="hidden sm:inline">Full Details</span>
                         </button>
 
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCreateNewQuotationForPatient(group);
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0"
+                          title="Create New Quotation for this patient"
+                        >
+                          <FilePlus className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">New Quotation</span>
+                        </button>
+
                         {isAdmin && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDeletePatientGroup(group);
                             }}
-                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center gap-1 cursor-pointer"
+                            className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition flex items-center justify-center cursor-pointer shrink-0"
                             title="Delete Entire Patient History (System Admin Only)"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Delete History</span>
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
 
                         <button
                           onClick={() => toggleExpand(group.patientKey)}
                           className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl transition border border-emerald-200 cursor-pointer"
+                          title={isExpanded ? "Collapse Details" : "Expand Details"}
                         >
                           {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                         </button>
@@ -682,7 +750,24 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                         {q.treatments && q.treatments.length > 0 ? (
                           <ul className="space-y-1 text-[11px] text-slate-600">
                             {q.treatments.map((t, idx) => (
-                              <li key={idx}>• {t.treatmentName} ({t.sessions} sessions) - BDT {t.totalCost.toLocaleString()}</li>
+                              <li key={idx} className="flex items-center justify-between gap-1 group">
+                                <span className="truncate">• {t.treatmentName} ({t.sessions} sessions) - BDT {t.totalCost.toLocaleString()}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyText(t.treatmentName, `modal-tr-${q.id}-${idx}`);
+                                  }}
+                                  title="Copy treatment name"
+                                  className="print:hidden text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 p-0.5 rounded transition-colors shrink-0 cursor-pointer"
+                                >
+                                  {copiedKey === `modal-tr-${q.id}-${idx}` ? (
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </li>
                             ))}
                           </ul>
                         ) : (
@@ -696,7 +781,24 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                         {q.outdoorPackages && q.outdoorPackages.length > 0 ? (
                           <ul className="space-y-1 text-[11px] text-slate-600">
                             {q.outdoorPackages.map((pkg, idx) => (
-                              <li key={idx}>• {pkg.packageName} - BDT {pkg.netCost.toLocaleString()}</li>
+                              <li key={idx} className="flex items-center justify-between gap-1 group">
+                                <span className="truncate">• {pkg.packageName} - BDT {pkg.netCost.toLocaleString()}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyText(pkg.packageName, `modal-pkg-${q.id}-${idx}`);
+                                  }}
+                                  title="Copy package name"
+                                  className="print:hidden text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 p-0.5 rounded transition-colors shrink-0 cursor-pointer"
+                                >
+                                  {copiedKey === `modal-pkg-${q.id}-${idx}` ? (
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </li>
                             ))}
                           </ul>
                         ) : (
@@ -710,7 +812,24 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                         {q.indoorServices && q.indoorServices.length > 0 ? (
                           <ul className="space-y-1 text-[11px] text-slate-600">
                             {q.indoorServices.map((room, idx) => (
-                              <li key={idx}>• {room.roomType} ({room.days} days) - BDT {room.totalAmount.toLocaleString()}</li>
+                              <li key={idx} className="flex items-center justify-between gap-1 group">
+                                <span className="truncate">• {room.roomType} ({room.days} days) - BDT {room.totalAmount.toLocaleString()}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyText(room.roomType, `modal-room-${q.id}-${idx}`);
+                                  }}
+                                  title="Copy room name"
+                                  className="print:hidden text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 p-0.5 rounded transition-colors shrink-0 cursor-pointer"
+                                >
+                                  {copiedKey === `modal-room-${q.id}-${idx}` ? (
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </li>
                             ))}
                           </ul>
                         ) : (
@@ -762,17 +881,29 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
 
             {/* Modal Footer */}
             <div className="bg-slate-100 p-4 border-t border-slate-200 flex items-center justify-between">
-              {isAdmin ? (
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <button
+                    onClick={() => handleDeletePatientGroup(selectedPatientModal)}
+                    className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition flex items-center justify-center cursor-pointer"
+                    title="Delete Entire Patient History"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
                 <button
-                  onClick={() => handleDeletePatientGroup(selectedPatientModal)}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => {
+                    const modal = selectedPatientModal;
+                    setSelectedPatientModal(null);
+                    handleCreateNewQuotationForPatient(modal);
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                  title="Create New Quotation for this patient"
                 >
-                  <Trash2 className="w-4 h-4" />
-                  <span>Delete Entire Patient History</span>
+                  <FilePlus className="w-4 h-4" />
+                  <span>New Quotation</span>
                 </button>
-              ) : (
-                <div />
-              )}
+              </div>
 
               <button
                 onClick={() => setSelectedPatientModal(null)}

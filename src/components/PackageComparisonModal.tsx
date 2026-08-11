@@ -180,11 +180,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
         const dailySessions = item.indoorSessions !== undefined ? item.indoorSessions : 1;
         const itemGross = item.unitCost * dailySessions * sc.days;
         treatmentGross += itemGross;
-        if (item.isIndoorFree) {
-          treatmentDiscount += itemGross; // 100% Free for Indoor
-        } else {
-          treatmentDiscount += Math.round((itemGross * sc.discountPercent) / 100);
-        }
+        treatmentDiscount += Math.round((itemGross * sc.discountPercent) / 100);
       });
 
       const treatmentNet = Math.max(0, treatmentGross - treatmentDiscount);
@@ -285,7 +281,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-emerald-100/80">
               {selectedTreatments.map(t => (
                 <span key={t.id} className="bg-white text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md text-[11px] font-medium shadow-2xs">
-                  ✓ {t.treatmentName} ({t.unitCost} BDT) {t.isIndoorFree && <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 rounded ml-1">Indoor Free</span>}
+                  ✓ {t.treatmentName} ({t.unitCost} BDT)
                 </span>
               ))}
               {selectedRooms.map(r => (
