@@ -329,11 +329,11 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
           </div>
         )}
 
-        {/* TABLE 4: Additional Treatments */}
+        {/* TABLE 4: Weekly Treatments */}
         {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
           <div className="mb-6 space-y-2">
             <h3 className="text-xs font-extrabold text-sky-900 uppercase tracking-wider border-b border-sky-800 pb-1">
-              4. Additional Treatments
+              4. Weekly Treatments
             </h3>
             <table className="w-full text-left text-xs border-collapse">
               <thead>
@@ -456,13 +456,6 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
                 </div>
               )}
 
-              {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
-                <div className="flex justify-between items-center text-slate-300">
-                  <span>Additional Treatments:</span>
-                  <span className="font-bold text-white">BDT {(quotation.additionalTreatmentsSubtotal || 0).toLocaleString()}</span>
-                </div>
-              )}
-
               <div className="flex justify-between items-center text-slate-300">
                 <span>Food Charge:</span>
                 <span className="font-bold text-white">BDT {foodChargeTotal.toLocaleString()}</span>
@@ -491,6 +484,27 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
                 </span>
               </div>
             </div>
+
+            {/* Weekly Treatments (Separated Below Grand Total) */}
+            {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
+              <div className="p-2.5 bg-sky-950/70 rounded-xl border border-sky-800/80 space-y-1.5 text-[11px]">
+                <div className="flex justify-between items-center font-bold text-sky-300">
+                  <span>Weekly Treatments ({quotation.additionalTreatments.length}):</span>
+                  <span className="text-sky-200 font-extrabold">BDT {(quotation.additionalTreatmentsSubtotal || 0).toLocaleString()}</span>
+                </div>
+                <div className="space-y-0.5 pt-1 border-t border-sky-800/50">
+                  {quotation.additionalTreatments.map((tr, idx) => (
+                    <div key={tr.id || idx} className="flex justify-between items-center text-[10px] text-slate-300">
+                      <span className="truncate pr-1 text-slate-300">• {tr.treatmentName} ({tr.sessions}s)</span>
+                      <span className="font-bold text-white shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[9px] text-sky-300/80 pt-0.5 border-t border-sky-800/30 italic">
+                  * Billed separately per session/week (Excluded from Grand Total)
+                </div>
+              </div>
+            )}
 
             {/* Advance Paid & Net Due */}
             <div className="p-2.5 bg-slate-800/80 rounded-xl space-y-1 text-[11px] font-semibold border border-slate-700/50">

@@ -99,7 +99,7 @@ interface UserRecord {
   username: string;
   password_hash: string;
   name: string;
-  role: 'System Admin' | 'Doctor' | 'Call Center';
+  role: 'System Admin' | 'Doctor' | 'Call Center' | 'Billing Counter';
   phone?: string;
   is_active: number;
 }
@@ -163,6 +163,15 @@ const DEMO_STAFF_USERS: UserRecord[] = [
     name: 'Call Center Desk',
     role: 'Call Center',
     phone: '01722222222',
+    is_active: 1
+  },
+  {
+    id: 'usr-billing',
+    username: 'billing',
+    password_hash: bcrypt.hashSync('billing123', 10),
+    name: 'Billing Counter Desk',
+    role: 'Billing Counter',
+    phone: '01733333333',
     is_active: 1
   }
 ];
@@ -229,7 +238,7 @@ function loadLocalDb() {
       // In production mode, remove all demo patients and demo staff accounts
       if (IS_PRODUCTION || FORCE_CLEAR_DEMO) {
         patients = patients.filter((p: any) => p.id !== 'pat-101' && p.id !== 'pat-102');
-        users = users.filter((u: any) => u.username === 'admin' || (u.id !== 'usr-doctor' && u.id !== 'usr-callcenter'));
+        users = users.filter((u: any) => u.username === 'admin' || (u.id !== 'usr-doctor' && u.id !== 'usr-callcenter' && u.id !== 'usr-billing'));
         if (!users.some((u: any) => u.username === 'admin')) {
           users.unshift(ADMIN_USER_RECORD);
         }
@@ -1320,7 +1329,7 @@ app.post('/api/admin/clear-demo-data', authenticateToken, requireRole('System Ad
     localData.patients = localData.patients.filter(p => p.id !== 'pat-101' && p.id !== 'pat-102');
 
     // Remove demo staff accounts, retain admin
-    localData.users = localData.users.filter(u => u.username === 'admin' || (u.id !== 'usr-doctor' && u.id !== 'usr-callcenter'));
+    localData.users = localData.users.filter(u => u.username === 'admin' || (u.id !== 'usr-doctor' && u.id !== 'usr-callcenter' && u.id !== 'usr-billing'));
     if (!localData.users.some(u => u.username === 'admin')) {
       localData.users.unshift(ADMIN_USER_RECORD);
     }
@@ -1330,7 +1339,7 @@ app.post('/api/admin/clear-demo-data', authenticateToken, requireRole('System Ad
     if (isMySqlActive && mysqlPool) {
       try {
         await mysqlPool.execute("DELETE FROM patients WHERE id IN ('pat-101', 'pat-102')");
-        await mysqlPool.execute("DELETE FROM users WHERE id IN ('usr-doctor', 'usr-callcenter')");
+        await mysqlPool.execute("DELETE FROM users WHERE id IN ('usr-doctor', 'usr-callcenter', 'usr-billing')");
       } catch (err) {
         console.error('MySQL clear demo error:', err);
       }

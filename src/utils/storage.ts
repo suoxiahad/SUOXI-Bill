@@ -524,7 +524,8 @@ const ADMIN_ONLY_USER: User[] = [
 const ALL_DEV_USERS: User[] = [
   ...ADMIN_ONLY_USER,
   { id: 'usr-doc1', username: 'doctor', name: 'Dr. S.M. Shahidul Islam PhD', role: 'Doctor', phone: '01711111111' },
-  { id: 'usr-cc1', username: 'callcenter', name: 'Call Center Desk', role: 'Call Center', phone: '01722222222' }
+  { id: 'usr-cc1', username: 'callcenter', name: 'Call Center Desk', role: 'Call Center', phone: '01722222222' },
+  { id: 'usr-bc1', username: 'billing', name: 'Billing Counter Desk', role: 'Billing Counter', phone: '01733333333' }
 ];
 
 const DEFAULT_USERS_LIST: User[] = import.meta.env.PROD ? ADMIN_ONLY_USER : ALL_DEV_USERS;

@@ -23,10 +23,13 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
   const handleAddItem = (category: 'treatment' | 'outdoor_package' | 'indoor_room' | 'consultation' | 'additional_treatment') => {
     const newItem: CatalogItem = {
       id: `cat-${Date.now()}`,
-      name: category === 'additional_treatment' ? 'New Additional Therapy' : 'New Service or Treatment Item',
+      name: category === 'additional_treatment' ? 'New Weekly Treatment' : 'New Service or Treatment Item',
       category,
       defaultPrice: 1000,
       defaultDiscountPercent: 0,
+      fixedDiscountAmount: undefined,
+      outdoorDiscountPercent: undefined,
+      outdoorDiscountAmount: undefined,
       description: '',
       isRatioBased: category === 'additional_treatment' ? false : undefined,
       sessionsPer10Days: category === 'additional_treatment' ? 3 : undefined
@@ -237,30 +240,97 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                       </div>
 
                       {item.category === 'treatment' && (
-                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
-                          <div className="flex items-center gap-1.5 bg-emerald-50/70 px-2.5 py-1 rounded-lg border border-emerald-100">
-                            <span className="text-[11px] font-bold text-emerald-800 shrink-0">Outdoor Session:</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={item.outdoorSessions ?? ''}
-                              onChange={(e) => updateItem(itemIdxInAll, { outdoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
-                              className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-emerald-900 text-center focus:ring-1 focus:ring-emerald-500"
-                              placeholder="e.g. 1"
-                            />
+                        <>
+                          <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
+                            <div className="flex items-center gap-1.5 bg-emerald-50/70 px-2.5 py-1 rounded-lg border border-emerald-100">
+                              <span className="text-[11px] font-bold text-emerald-800 shrink-0">Outdoor Session:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.outdoorSessions ?? ''}
+                                onChange={(e) => updateItem(itemIdxInAll, { outdoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-emerald-900 text-center focus:ring-1 focus:ring-emerald-500"
+                                placeholder="e.g. 1"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1.5 bg-indigo-50/70 px-2.5 py-1 rounded-lg border border-indigo-100">
+                              <span className="text-[11px] font-bold text-indigo-800 shrink-0">Indoor Session:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.indoorSessions ?? ''}
+                                onChange={(e) => updateItem(itemIdxInAll, { indoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-indigo-900 text-center focus:ring-1 focus:ring-indigo-500"
+                                placeholder="e.g. 2"
+                              />
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5 bg-indigo-50/70 px-2.5 py-1 rounded-lg border border-indigo-100">
-                            <span className="text-[11px] font-bold text-indigo-800 shrink-0">Indoor Session:</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={item.indoorSessions ?? ''}
-                              onChange={(e) => updateItem(itemIdxInAll, { indoorSessions: e.target.value === '' ? undefined : Number(e.target.value) })}
-                              className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-bold text-indigo-900 text-center focus:ring-1 focus:ring-indigo-500"
-                              placeholder="e.g. 2"
-                            />
+
+                          {/* Discount Settings Block */}
+                          <div className="bg-slate-100/90 p-2 rounded-lg border border-slate-200/80 space-y-1.5">
+                            <span className="text-[11px] font-bold text-slate-700 block">🏷️ Discounts & Rates Rules:</span>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <span className="text-[10px] text-slate-500 block font-medium">Default Discount (%):</span>
+                                <div className="relative">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={item.defaultDiscountPercent ?? ''}
+                                    onChange={(e) => updateItem(itemIdxInAll, { defaultDiscountPercent: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    className="w-full pl-2 pr-5 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-slate-800"
+                                    placeholder="0"
+                                  />
+                                  <span className="absolute right-1.5 top-1 text-slate-400 font-bold text-[11px]">%</span>
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-500 block font-medium">Fixed Discount (BDT):</span>
+                                <div className="relative">
+                                  <span className="absolute left-1.5 top-1 text-slate-400 font-bold text-[10px]">BDT</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={item.fixedDiscountAmount ?? ''}
+                                    onChange={(e) => updateItem(itemIdxInAll, { fixedDiscountAmount: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    className="w-full pl-8 pr-2 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-emerald-800"
+                                    placeholder="0"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-amber-700 block font-medium">Outdoor Discount (%):</span>
+                                <div className="relative">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    value={item.outdoorDiscountPercent ?? ''}
+                                    onChange={(e) => updateItem(itemIdxInAll, { outdoorDiscountPercent: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    className="w-full pl-2 pr-5 py-1 bg-amber-50/50 border border-amber-300 rounded text-xs font-bold text-amber-900"
+                                    placeholder="0"
+                                  />
+                                  <span className="absolute right-1.5 top-1 text-amber-500 font-bold text-[11px]">%</span>
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-amber-700 block font-medium">Outdoor Fixed Disc. (BDT):</span>
+                                <div className="relative">
+                                  <span className="absolute left-1.5 top-1 text-amber-500 font-bold text-[10px]">BDT</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={item.outdoorDiscountAmount ?? ''}
+                                    onChange={(e) => updateItem(itemIdxInAll, { outdoorDiscountAmount: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    className="w-full pl-8 pr-2 py-1 bg-amber-50/50 border border-amber-300 rounded text-xs font-bold text-amber-900"
+                                    placeholder="0"
+                                  />
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                        </div>
+                        </>
                       )}
                     </div>
                   </div>
@@ -502,23 +572,23 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
           </div>
         </div>
 
-        {/* Category 4: Additional Treatments */}
+        {/* Category 4: Weekly Treatments */}
         <div className="bg-white rounded-2xl p-5 border border-sky-200 shadow-sm space-y-4 col-span-1 md:col-span-2">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div>
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <span>4. Additional Treatments</span>
+                <span>4. Weekly Treatments</span>
                 <span className="text-[10px] font-bold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full border border-sky-200">
                   Catalog & Rates
                 </span>
               </h3>
-              <p className="text-[11px] text-slate-500">Configure default rates and 10-day ratio calculation settings for optional additional procedures (Ozon, ED, etc.).</p>
+              <p className="text-[11px] text-slate-500">Configure default rates, fixed discounts, outdoor discounts, and 10-day ratio calculation settings for Weekly Treatments (Ozon, ED, etc.).</p>
             </div>
             <button
               onClick={() => handleAddItem('additional_treatment')}
               className="text-xs font-bold text-sky-700 bg-sky-50 hover:bg-sky-100 px-3 py-1.5 rounded-lg border border-sky-200 cursor-pointer"
             >
-              + Add Additional Treatment
+              + Add Weekly Treatment
             </button>
           </div>
 
@@ -528,7 +598,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
               if (addGroup.length === 0) {
                 return (
                   <div className="col-span-2 text-center py-6 text-slate-400 text-xs font-medium bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                    No additional treatments in catalog yet. Click "+ Add Additional Treatment" above to create one.
+                    No weekly treatments in catalog yet. Click "+ Add Weekly Treatment" above to create one.
                   </div>
                 );
               }
@@ -542,7 +612,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                         <span className="bg-sky-700 text-white text-[10px] font-black px-1.5 py-0.5 rounded font-mono">
                           #{catIdx + 1}
                         </span>
-                        <span className="text-[11px] text-sky-900 font-semibold">Additional Therapy</span>
+                        <span className="text-[11px] text-sky-900 font-semibold">Weekly Treatment</span>
                       </div>
 
                       <div className="flex items-center gap-1.5">
@@ -653,6 +723,71 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                           </div>
                         </div>
 
+                        {/* Discount Settings Block */}
+                        <div className="bg-slate-100/90 p-2 rounded-lg border border-slate-200/80 space-y-1.5">
+                          <span className="text-[11px] font-bold text-slate-700 block">🏷️ Discounts & Rates Rules:</span>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="text-[10px] text-slate-500 block font-medium">Default Discount (%):</span>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={item.defaultDiscountPercent ?? ''}
+                                  onChange={(e) => updateItem(itemIdxInAll, { defaultDiscountPercent: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                  className="w-full pl-2 pr-5 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-slate-800"
+                                  placeholder="0"
+                                />
+                                <span className="absolute right-1.5 top-1 text-slate-400 font-bold text-[11px]">%</span>
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block font-medium">Fixed Discount (BDT):</span>
+                              <div className="relative">
+                                <span className="absolute left-1.5 top-1 text-slate-400 font-bold text-[10px]">BDT</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={item.fixedDiscountAmount ?? ''}
+                                  onChange={(e) => updateItem(itemIdxInAll, { fixedDiscountAmount: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                  className="w-full pl-8 pr-2 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-emerald-800"
+                                  placeholder="0"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-amber-700 block font-medium">Outdoor Discount (%):</span>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={item.outdoorDiscountPercent ?? ''}
+                                  onChange={(e) => updateItem(itemIdxInAll, { outdoorDiscountPercent: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                  className="w-full pl-2 pr-5 py-1 bg-amber-50/50 border border-amber-300 rounded text-xs font-bold text-amber-900"
+                                  placeholder="0"
+                                />
+                                <span className="absolute right-1.5 top-1 text-amber-500 font-bold text-[11px]">%</span>
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-amber-700 block font-medium">Outdoor Fixed Disc. (BDT):</span>
+                              <div className="relative">
+                                <span className="absolute left-1.5 top-1 text-amber-500 font-bold text-[10px]">BDT</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={item.outdoorDiscountAmount ?? ''}
+                                  onChange={(e) => updateItem(itemIdxInAll, { outdoorDiscountAmount: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                  className="w-full pl-8 pr-2 py-1 bg-amber-50/50 border border-amber-300 rounded text-xs font-bold text-amber-900"
+                                  placeholder="0"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
                         {/* Ratio Calculation Options */}
                         <div className="flex flex-wrap items-center justify-between gap-2 p-2 bg-sky-50/60 rounded-lg border border-sky-100 text-xs">
                           <label className="flex items-center gap-2 cursor-pointer font-bold text-sky-900">
@@ -673,7 +808,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                                 min={1}
                                 value={item.sessionsPer10Days || 3}
                                 onChange={(e) => updateItem(itemIdxInAll, { sessionsPer10Days: Number(e.target.value) || 1 })}
-                                className="w-14 px-2 py-0.5 bg-white border border-slate-300 rounded text-center text-xs font-bold text-sky-900 focus:ring-1 focus:ring-sky-500"
+                                className="w-14 px-2 py-0.5 bg-white border border-slate-300 rounded text-center text-xs font-xs font-bold text-sky-900 focus:ring-1 focus:ring-sky-500"
                               />
                             </div>
                           )}

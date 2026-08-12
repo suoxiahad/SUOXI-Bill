@@ -48,6 +48,10 @@ interface TreatmentListItem {
   rateNote?: string;
   isCustom?: boolean;
   isIndoorFree?: boolean;
+  fixedDiscountAmount?: number;
+  outdoorDiscountPercent?: number;
+  outdoorDiscountAmount?: number;
+  defaultDiscountPercent?: number;
 }
 
 interface AdditionalTreatmentListItem {
@@ -68,6 +72,10 @@ interface AdditionalTreatmentListItem {
   isIndoorFree?: boolean;
   isRatioBased?: boolean;
   sessionsPer10Days?: number;
+  fixedDiscountAmount?: number;
+  outdoorDiscountPercent?: number;
+  outdoorDiscountAmount?: number;
+  defaultDiscountPercent?: number;
 }
 
 interface OutdoorPackageListItem {
@@ -316,14 +324,34 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       const unitCost = Number(item.unitCost) || 0;
       const sessionsNum = Number(computedSessions) || 0;
       const gross = unitCost * sessionsNum;
-      const effectiveDiscPct = discPct;
-      const discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+
+      let effectiveDiscPct = discPct;
+      let discountAmount = 0;
+
+      if (targetMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+        effectiveDiscPct = Number(item.outdoorDiscountPercent);
+        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else if (targetMode === 'indoor' && item.isIndoorFree) {
+        effectiveDiscPct = 100;
+        discountAmount = gross;
+      } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && !discPct) {
+        const fixedVal = Number(item.fixedDiscountAmount);
+        discountAmount = Math.min(gross, fixedVal);
+        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && !discPct) {
+        effectiveDiscPct = Number(item.defaultDiscountPercent);
+        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else {
+        const pctNum = Number(effectiveDiscPct) || 0;
+        discountAmount = Math.round((gross * pctNum) / 100);
+      }
+
       const totalCost = Math.max(0, gross - discountAmount);
 
       return {
         ...item,
         sessions: computedSessions,
-        discountPercent: newDiscount,
+        discountPercent: effectiveDiscPct,
         discountAmount,
         totalCost
       };
@@ -503,6 +531,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               outdoorSessions: catItem.outdoorSessions,
               indoorSessions: catItem.indoorSessions,
               isIndoorFree: catItem.isIndoorFree,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent,
               discountAmount,
               totalCost
             };
@@ -526,6 +558,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               outdoorSessions: catItem.outdoorSessions,
               indoorSessions: catItem.indoorSessions,
               isIndoorFree: catItem.isIndoorFree,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent,
               sessions: '',
               discountPercent: '',
               discountAmount: 0,
@@ -558,6 +594,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           outdoorSessions: catItem.outdoorSessions,
           indoorSessions: catItem.indoorSessions,
           isIndoorFree: catItem.isIndoorFree,
+          fixedDiscountAmount: catItem.fixedDiscountAmount,
+          outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+          outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+          defaultDiscountPercent: catItem.defaultDiscountPercent,
           sessions: '',
           discountPercent: '',
           discountAmount: 0,
@@ -584,7 +624,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             newSessions = dailySessions * calcDays;
           }
 
-          if (item.discountPercent === '' && bulkDiscountPercent !== '') {
+          if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+            newDiscountPercent = Number(item.outdoorDiscountPercent);
+          } else if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
+            newDiscountPercent = 100;
+          } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
+            // Handled via fixed calculation
+          } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+            newDiscountPercent = Number(item.defaultDiscountPercent);
+          } else if (item.discountPercent === '' && bulkDiscountPercent !== '') {
             newDiscountPercent = bulkDiscountPercent;
           }
         } else {
@@ -594,16 +642,33 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
         const unitCost = Number(item.unitCost) || 0;
         const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-        const discountPctNum = newDiscountPercent === '' ? 0 : (Number(newDiscountPercent) || 0);
         const gross = unitCost * sessionsNum;
-        const discountAmount = Math.round((gross * discountPctNum) / 100);
+
+        let discountAmount = 0;
+        let discountPctNum: number | '' = newDiscountPercent;
+
+        if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
+          discountPctNum = 100;
+          discountAmount = gross;
+        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+          discountPctNum = Number(item.outdoorDiscountPercent);
+          discountAmount = Math.round((gross * discountPctNum) / 100);
+        } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (newDiscountPercent === '' || newDiscountPercent === 0)) {
+          const fixedVal = Number(item.fixedDiscountAmount);
+          discountAmount = Math.min(gross, fixedVal);
+          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else {
+          const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
+          discountAmount = Math.round((gross * pctNum) / 100);
+        }
+
         const totalCost = Math.max(0, gross - discountAmount);
 
         return {
           ...item,
           selected: newSelected,
           sessions: newSessions,
-          discountPercent: newDiscountPercent,
+          discountPercent: discountPctNum,
           discountAmount,
           totalCost
         };
@@ -618,15 +683,39 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         const updated = { ...item, ...fields };
         const unitCost = Number(updated.unitCost) || 0;
         const sessions = updated.sessions === '' ? 0 : (Number(updated.sessions) || 0);
-        const discountPercent = updated.discountPercent === '' ? 0 : (Number(updated.discountPercent) || 0);
         const gross = unitCost * sessions;
-        const discountAmount = Math.round((gross * discountPercent) / 100);
+
+        let discountPercent = updated.discountPercent;
+        let discountAmount = 0;
+
+        const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(updated.isIndoorFree);
+        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountPercent !== undefined && Number(updated.outdoorDiscountPercent) > 0;
+        const isFixedAmt = updated.fixedDiscountAmount !== undefined && Number(updated.fixedDiscountAmount) > 0;
+
+        if (isIndoorFree) {
+          discountPercent = 100;
+          discountAmount = gross;
+        } else if (isOutdoorDisc && fields.discountPercent === undefined) {
+          discountPercent = Number(updated.outdoorDiscountPercent);
+          discountAmount = Math.round((gross * discountPercent) / 100);
+        } else if (isFixedAmt && fields.discountPercent === undefined) {
+          const fixedVal = Number(updated.fixedDiscountAmount);
+          discountAmount = Math.min(gross, fixedVal);
+          discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else if (updated.defaultDiscountPercent !== undefined && Number(updated.defaultDiscountPercent) > 0 && fields.discountPercent === undefined) {
+          discountPercent = Number(updated.defaultDiscountPercent);
+          discountAmount = Math.round((gross * discountPercent) / 100);
+        } else {
+          const discPctNum = discountPercent === '' ? 0 : Number(discountPercent);
+          discountAmount = Math.round((gross * discPctNum) / 100);
+        }
+
         const totalCost = Math.max(0, gross - discountAmount);
         const selected = fields.sessions !== undefined && Number(fields.sessions) > 0 ? true : updated.selected;
         return {
           ...updated,
           selected,
-          discountPercent: updated.discountPercent,
+          discountPercent,
           discountAmount,
           totalCost
         };
@@ -907,9 +996,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             const unitCost = catItem.defaultPrice || 1000;
             const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
             const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(catItem.isIndoorFree);
-            const discountPercent = isIndoorFree ? 100 : (item.discountPercent === '' ? 0 : (Number(item.discountPercent) || 0));
+            let discountPercent = item.discountPercent;
+            if (!item.selected) {
+              discountPercent = '';
+            } else if (isIndoorFree) {
+              discountPercent = 100;
+            }
             const gross = unitCost * sessions;
-            const discountAmount = Math.round((gross * discountPercent) / 100);
+            const discPctNum = discountPercent === '' ? 0 : Number(discountPercent);
+            const discountAmount = Math.round((gross * discPctNum) / 100);
             const totalCost = Math.max(0, gross - discountAmount);
             return {
               ...item,
@@ -922,6 +1017,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               isIndoorFree: catItem.isIndoorFree,
               isRatioBased: catItem.isRatioBased ?? false,
               sessionsPer10Days: catItem.sessionsPer10Days ?? 3,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent,
               discountAmount,
               totalCost
             };
@@ -947,6 +1046,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               isIndoorFree: catItem.isIndoorFree,
               isRatioBased: catItem.isRatioBased ?? false,
               sessionsPer10Days: catItem.sessionsPer10Days ?? 3,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent,
               sessions: '',
               discountPercent: '',
               discountAmount: 0,
@@ -980,6 +1083,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           isIndoorFree: catItem.isIndoorFree,
           isRatioBased: catItem.isRatioBased ?? false,
           sessionsPer10Days: catItem.sessionsPer10Days ?? 3,
+          fixedDiscountAmount: catItem.fixedDiscountAmount,
+          outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+          outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+          defaultDiscountPercent: catItem.defaultDiscountPercent,
           sessions: '',
           discountPercent: '',
           discountAmount: 0,
@@ -989,19 +1096,57 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     });
   }, [catalog, patientTreatmentMode]);
 
-  // Recalculate indoor free discount for additional treatments when patientTreatmentMode changes
+  // Recalculate indoor free and outdoor discount for additional treatments when patientTreatmentMode changes
   useEffect(() => {
     setAdditionalTreatmentList(prev => prev.map(item => {
       const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
+      const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
+      const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
+      const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
+
       const unitCost = Number(item.unitCost) || 0;
       const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
       const gross = unitCost * sessions;
-      const discPct = isIndoorFree ? 100 : (item.discountPercent === '' ? 0 : (Number(item.discountPercent) || 0));
-      const discountAmount = Math.round((gross * discPct) / 100);
+
+      let discPct: number | '' = item.discountPercent;
+
+      if (isIndoorFree) {
+        discPct = 100;
+      } else if (isOutdoorDisc) {
+        discPct = Number(item.outdoorDiscountPercent);
+      } else if (isFixedAmt && (discPct === '' || discPct === 0)) {
+        const fixedVal = Number(item.fixedDiscountAmount);
+        const tempAmt = Math.min(gross, fixedVal);
+        discPct = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
+      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+        if (discPct === '' || discPct === 0) {
+          discPct = Number(item.defaultDiscountPercent);
+        }
+      }
+
+      let discountAmount = 0;
+      if (isIndoorFree) {
+        discountAmount = gross;
+      } else if (isOutdoorAmt) {
+        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessions);
+        if (gross > 0) discPct = Math.round((discountAmount / gross) * 100);
+      } else if (isOutdoorDisc) {
+        discPct = Number(item.outdoorDiscountPercent);
+        discountAmount = Math.round((gross * discPct) / 100);
+      } else if (isFixedAmt && (item.discountPercent === '' || item.discountPercent === 0 || discPct !== '')) {
+        const fixedVal = Number(item.fixedDiscountAmount);
+        discountAmount = Math.min(gross, fixedVal);
+        discPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+      } else {
+        const pctNum = discPct === '' ? 0 : Number(discPct);
+        discountAmount = Math.round((gross * pctNum) / 100);
+      }
+
       const totalCost = Math.max(0, gross - discountAmount);
 
       return {
         ...item,
+        discountPercent: discPct,
         discountAmount,
         totalCost
       };
@@ -1018,15 +1163,48 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         // Only calculate ratio if a package with valid days > 0 is selected. Otherwise default to 1 session.
         const calcSessions = daysNum > 0 ? Math.round((daysNum / 10) * per10) : 1;
         const unitCost = Number(item.unitCost) || 0;
+
         const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
-        const discountPct = isIndoorFree ? 100 : (item.discountPercent === '' ? 0 : (Number(item.discountPercent) || 0));
+        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
+        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
+        const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
+
         const gross = unitCost * calcSessions;
-        const discountAmount = Math.round((gross * discountPct) / 100);
+
+        let discountPct: number | '' = item.discountPercent;
+        if (isIndoorFree) {
+          discountPct = 100;
+        } else if (isOutdoorDisc) {
+          discountPct = Number(item.outdoorDiscountPercent);
+        } else if (isFixedAmt && (discountPct === '' || discountPct === 0)) {
+          const fixedVal = Number(item.fixedDiscountAmount);
+          const tempAmt = Math.min(gross, fixedVal);
+          discountPct = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
+        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+          if (discountPct === '' || discountPct === 0) discountPct = Number(item.defaultDiscountPercent);
+        }
+
+        let discountAmount = 0;
+        if (isIndoorFree) {
+          discountAmount = gross;
+        } else if (isOutdoorAmt) {
+          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * calcSessions);
+          if (gross > 0) discountPct = Math.round((discountAmount / gross) * 100);
+        } else if (isFixedAmt && (item.discountPercent === '' || item.discountPercent === 0 || discountPct !== '')) {
+          const fixedVal = Number(item.fixedDiscountAmount);
+          discountAmount = Math.min(gross, fixedVal);
+          discountPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else {
+          const discPctNum = discountPct === '' ? 0 : Number(discountPct);
+          discountAmount = Math.round((gross * discPctNum) / 100);
+        }
+
         const totalCost = Math.max(0, gross - discountAmount);
 
         return {
           ...item,
           sessions: calcSessions,
+          discountPercent: discountPct,
           discountAmount,
           totalCost
         };
@@ -1051,24 +1229,61 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           } else if (item.sessions === '' || item.sessions === 0) {
             newSessions = 1;
           }
+
+          if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
+            newDiscountPercent = 100;
+          } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+            newDiscountPercent = Number(item.outdoorDiscountPercent);
+          } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
+            // Handled in calculation
+          } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+            newDiscountPercent = Number(item.defaultDiscountPercent);
+          }
         } else {
           newSessions = '';
           newDiscountPercent = '';
         }
 
         const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
+        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
+        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
+        const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
+
         const unitCost = Number(item.unitCost) || 0;
         const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-        const discountPctNum = isIndoorFree ? 100 : (newDiscountPercent === '' ? 0 : (Number(newDiscountPercent) || 0));
         const gross = unitCost * sessionsNum;
-        const discountAmount = Math.round((gross * discountPctNum) / 100);
+
+        let discountPctNum: number | '' = newDiscountPercent;
+        let discountAmount = 0;
+
+        if (!newSelected) {
+          discountPctNum = '';
+          discountAmount = 0;
+        } else if (isIndoorFree) {
+          discountPctNum = 100;
+          discountAmount = gross;
+        } else if (isOutdoorAmt) {
+          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
+          if (gross > 0) discountPctNum = Math.round((discountAmount / gross) * 100);
+        } else if (isOutdoorDisc) {
+          discountPctNum = Number(item.outdoorDiscountPercent);
+          discountAmount = Math.round((gross * discountPctNum) / 100);
+        } else if (isFixedAmt && (newDiscountPercent === '' || newDiscountPercent === 0)) {
+          const fixedVal = Number(item.fixedDiscountAmount);
+          discountAmount = Math.min(gross, fixedVal);
+          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else {
+          const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
+          discountAmount = Math.round((gross * pctNum) / 100);
+        }
+
         const totalCost = Math.max(0, gross - discountAmount);
 
         return {
           ...item,
           selected: newSelected,
           sessions: newSessions,
-          discountPercent: newDiscountPercent,
+          discountPercent: discountPctNum,
           discountAmount,
           totalCost
         };
@@ -1082,17 +1297,54 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       if (item.id === id) {
         const updated = { ...item, ...fields };
         const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(updated.isIndoorFree);
+        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountPercent !== undefined && Number(updated.outdoorDiscountPercent) > 0;
+        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountAmount !== undefined && Number(updated.outdoorDiscountAmount) > 0;
+        const isFixedAmt = updated.fixedDiscountAmount !== undefined && Number(updated.fixedDiscountAmount) > 0;
+
         const unitCost = Number(updated.unitCost) || 0;
         const sessions = updated.sessions === '' ? 0 : (Number(updated.sessions) || 0);
-        const discountPercent = isIndoorFree ? 100 : (updated.discountPercent === '' ? 0 : (Number(updated.discountPercent) || 0));
         const gross = unitCost * sessions;
-        const discountAmount = Math.round((gross * discountPercent) / 100);
+
+        let discountPercent = updated.discountPercent;
+        if (fields.discountPercent === undefined) {
+          if (isIndoorFree) {
+            discountPercent = 100;
+          } else if (isOutdoorDisc) {
+            discountPercent = Number(updated.outdoorDiscountPercent);
+          } else if (isFixedAmt) {
+            const fixedVal = Number(updated.fixedDiscountAmount);
+            const tempAmt = Math.min(gross, fixedVal);
+            discountPercent = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
+          } else if (updated.defaultDiscountPercent !== undefined && Number(updated.defaultDiscountPercent) > 0 && (discountPercent === '' || discountPercent === 0)) {
+            discountPercent = Number(updated.defaultDiscountPercent);
+          }
+        }
+
+        let discountAmount = 0;
+        if (!updated.selected) {
+          discountPercent = '';
+          discountAmount = 0;
+        } else if (isIndoorFree) {
+          discountAmount = gross;
+        } else if (isOutdoorAmt && fields.discountPercent === undefined) {
+          discountAmount = Math.min(gross, Number(updated.outdoorDiscountAmount) * sessions);
+          if (gross > 0) discountPercent = Math.round((discountAmount / gross) * 100);
+        } else if (isFixedAmt && fields.discountPercent === undefined) {
+          const fixedVal = Number(updated.fixedDiscountAmount);
+          discountAmount = Math.min(gross, fixedVal);
+          discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else {
+          const discPctNum = discountPercent === '' ? 0 : Number(discountPercent);
+          discountAmount = Math.round((gross * discPctNum) / 100);
+        }
+
         const totalCost = Math.max(0, gross - discountAmount);
         const selected = fields.sessions !== undefined && Number(fields.sessions) > 0 ? true : updated.selected;
 
         return {
           ...updated,
           selected,
+          discountPercent,
           discountAmount,
           totalCost
         };
@@ -1155,7 +1407,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [isSaved, setIsSaved] = useState<boolean>(false);
 
   // Payment Cycle / Installment Schedule State
-  const [paymentPlanMode, setPaymentPlanMode] = useState<'full' | '10_day_cycles' | '15_day_cycles' | 'custom_phases'>('10_day_cycles');
+  const [paymentPlanMode, setPaymentPlanMode] = useState<'full' | '4_cycles' | '10_day_cycles' | '15_day_cycles' | 'custom_phases'>('4_cycles');
   const [paymentPhases, setPaymentPhases] = useState<PaymentPhase[]>([]);
   const [isDraftRestored, setIsDraftRestored] = useState<boolean>(false);
 
@@ -1614,18 +1866,46 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         newDiscountPercent = '';
       }
 
+      const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
+      const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
+      const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
+      const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
+
       const unitCost = Number(item.unitCost) || 0;
       const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-      const discountPctNum = newDiscountPercent === '' ? 0 : (Number(newDiscountPercent) || 0);
       const gross = unitCost * sessionsNum;
-      const discountAmount = Math.round((gross * discountPctNum) / 100);
+
+      let discountPctNum: number | '' = newDiscountPercent;
+      let discountAmount = 0;
+
+      if (!shouldSelect) {
+        discountPctNum = '';
+        discountAmount = 0;
+      } else if (isIndoorFree) {
+        discountPctNum = 100;
+        discountAmount = gross;
+      } else if (isOutdoorAmt) {
+        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
+        if (gross > 0) discountPctNum = Math.round((discountAmount / gross) * 100);
+      } else if (isOutdoorDisc) {
+        discountPctNum = Number(item.outdoorDiscountPercent);
+        discountAmount = Math.round((gross * discountPctNum) / 100);
+      } else if (isFixedAmt) {
+        const fixedVal = Number(item.fixedDiscountAmount);
+        discountAmount = Math.min(gross, fixedVal);
+        discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+      } else {
+        const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
+        discountAmount = Math.round((gross * pctNum) / 100);
+      }
+
       const totalCost = Math.max(0, gross - discountAmount);
 
       return {
         ...item,
         selected: shouldSelect,
         sessions: newSessions,
-        discountPercent: newDiscountPercent,
+        discountPercent: discountPctNum,
         discountAmount,
         totalCost
       };
@@ -1638,7 +1918,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   const effectiveOutdoorSubtotal = patientTreatmentMode === 'outdoor' ? 0 : outdoorSubtotal;
   const actualAdmissionFee = includeAdmissionFee ? Number(admissionFee || 0) : 0;
-  const grossTotal = treatmentsSubtotal + effectiveOutdoorSubtotal + indoorSubtotal + additionalTreatmentsSubtotal + actualAdmissionFee;
+  const grossTotal = treatmentsSubtotal + effectiveOutdoorSubtotal + indoorSubtotal + actualAdmissionFee;
 
   const overallDiscountAmount = Math.round((grossTotal * Number(overallDiscountPercent || 0)) / 100);
   const grandTotal = Math.max(0, grossTotal - overallDiscountAmount);
@@ -1690,6 +1970,29 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     });
   };
 
+  const get4CycleDays = (totalDays: number): number[] => {
+    if (totalDays <= 0) return [7, 8, 7, 8];
+    if (totalDays < 4) {
+      const res = [1, 0, 0, 0];
+      for (let i = 0; i < totalDays; i++) res[i] = 1;
+      return res;
+    }
+    const base = Math.floor(totalDays / 4);
+    const rem = totalDays % 4;
+    const cycleDays = [base, base, base, base];
+    if (rem === 1) {
+      cycleDays[3] += 1;
+    } else if (rem === 2) {
+      cycleDays[1] += 1;
+      cycleDays[3] += 1;
+    } else if (rem === 3) {
+      cycleDays[1] += 1;
+      cycleDays[2] += 1;
+      cycleDays[3] += 1;
+    }
+    return cycleDays;
+  };
+
   // Auto-recalculate Payment Phases when grandTotal, paymentPlanMode, or treatmentDays changes
   useEffect(() => {
     if (grandTotal <= 0) {
@@ -1699,7 +2002,29 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
     const totalDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 30;
 
-    if (paymentPlanMode === '10_day_cycles') {
+    if (paymentPlanMode === '4_cycles') {
+      const cycleDaysArr = get4CycleDays(totalDays);
+      const phases: PaymentPhase[] = [];
+      let runningDay = 1;
+
+      for (let i = 0; i < cycleDaysArr.length; i++) {
+        const cDays = cycleDaysArr[i];
+        const startDay = runningDay;
+        const endDay = startDay + Math.max(0, cDays - 1);
+        runningDay = endDay + 1;
+
+        const ordinal = `${i + 1}${i === 0 ? 'st' : i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'}`;
+        phases.push({
+          id: `phase-4c-${i + 1}`,
+          phaseName: `${ordinal} ${cDays}-Days Payment (Day ${startDay}–${endDay})`,
+          daysOrSessions: cDays,
+          amount: 0,
+          percentage: 0,
+          notes: i === 0 ? 'Initial course starting installment' : `Cycle ${i + 1} treatment cycle payment`
+        });
+      }
+      setPaymentPhases(recalculatePhasesByDays(phases, grandTotal));
+    } else if (paymentPlanMode === '10_day_cycles') {
       const numPhases = Math.max(1, Math.ceil(totalDays / 10));
       const phases: PaymentPhase[] = [];
       for (let i = 0; i < numPhases; i++) {
@@ -1780,15 +2105,48 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       const targetIdx = prev.findIndex(p => p.id === id);
       if (targetIdx === -1) return prev;
 
-      // When daysOrSessions is changed, recalculate all amounts proportionally by cycle days ratio
+      // When daysOrSessions is changed, auto-distribute remaining course days among other cycles
       if (fields.daysOrSessions !== undefined) {
-        const newDays = Math.max(0, fields.daysOrSessions);
-        const updatedWithDays = prev.map(p => p.id === id ? { ...p, ...fields, daysOrSessions: newDays } : p);
+        const numCycles = prev.length;
+        const totalCourseDays = (treatmentDays !== '' && Number(treatmentDays) > 0)
+          ? Number(treatmentDays)
+          : (prev.reduce((s, p) => s + (p.daysOrSessions || 0), 0) || 30);
+
+        if (numCycles <= 1) {
+          const updated = prev.map(p => p.id === id ? { ...p, ...fields, daysOrSessions: totalCourseDays } : p);
+          return recalculatePhasesByDays(updated, grandTotal);
+        }
+
+        const newDaysForTarget = Math.max(0, Math.min(totalCourseDays, fields.daysOrSessions));
+        const remainingDays = Math.max(0, totalCourseDays - newDaysForTarget);
+        const otherCyclesCount = numCycles - 1;
+
+        const baseOtherDays = Math.floor(remainingDays / otherCyclesCount);
+        let remOtherDays = remainingDays % otherCyclesCount;
+
+        const updatedWithDays = prev.map((p) => {
+          if (p.id === id) {
+            return { ...p, ...fields, daysOrSessions: newDaysForTarget };
+          } else {
+            let bonus = 0;
+            if (remOtherDays > 0) {
+              bonus = 1;
+              remOtherDays--;
+            }
+            return {
+              ...p,
+              daysOrSessions: baseOtherDays + bonus
+            };
+          }
+        });
+
         return recalculatePhasesByDays(updatedWithDays, grandTotal);
       }
 
       if (fields.amount !== undefined) {
-        const newAmt = Math.max(0, fields.amount);
+        const isCleared = fields.amount === '';
+        const newAmt = isCleared ? '' : Math.max(0, Number(fields.amount));
+        const numericAmt = isCleared ? 0 : Number(newAmt);
         const numCycles = prev.length;
 
         if (numCycles <= 1) {
@@ -1796,13 +2154,13 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             ...p,
             ...fields,
             amount: newAmt,
-            percentage: grandTotal > 0 ? Math.round((newAmt / grandTotal) * 100) : 0
+            percentage: grandTotal > 0 ? Math.round((numericAmt / grandTotal) * 100) : 0
           } : p);
         }
 
         const updated = prev.map((p, idx) => {
           if (idx === targetIdx) {
-            const pct = grandTotal > 0 ? Math.round((newAmt / grandTotal) * 100) : 0;
+            const pct = grandTotal > 0 ? Math.round((numericAmt / grandTotal) * 100) : 0;
             return { ...p, ...fields, amount: newAmt, percentage: pct };
           }
           return { ...p };
@@ -1811,7 +2169,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         if (targetIdx < numCycles - 1) {
           let sumFixed = 0;
           for (let i = 0; i <= targetIdx; i++) {
-            sumFixed += updated[i].amount || 0;
+            const a = updated[i].amount;
+            sumFixed += (a === '' ? 0 : Number(a));
           }
           const remTotal = Math.max(0, grandTotal - sumFixed);
           const subsequentCount = numCycles - 1 - targetIdx;
@@ -1828,7 +2187,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             };
           }
         } else {
-          const remTotal = Math.max(0, grandTotal - newAmt);
+          const remTotal = Math.max(0, grandTotal - numericAmt);
           const priorCount = numCycles - 1;
           const base = Math.floor(remTotal / priorCount);
           const rem = remTotal - (base * priorCount);
@@ -2434,6 +2793,38 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                                 <span className={`text-xs font-bold ${isChecked ? 'text-emerald-950' : 'text-slate-800'}`}>
                                   {item.treatmentName}
                                 </span>
+                                {isChecked && item.isIndoorFree && (
+                                  <span
+                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
+                                      patientTreatmentMode === 'indoor'
+                                        ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}
+                                    title={patientTreatmentMode === 'indoor' ? 'Indoor Patient - 100% Free Treatment' : 'Free for Indoor Patients'}
+                                  >
+                                    🎁 {patientTreatmentMode === 'indoor' ? 'Indoor 100% Free' : 'Free for Indoor'}
+                                  </span>
+                                )}
+                                {isChecked && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0 && (
+                                  <span
+                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
+                                      patientTreatmentMode === 'outdoor'
+                                        ? 'bg-amber-100 text-amber-900 border-amber-300 ring-1 ring-amber-400'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}
+                                    title={`Outdoor Discount: ${item.outdoorDiscountPercent}% Off`}
+                                  >
+                                    🏷️ Outdoor {item.outdoorDiscountPercent}% Off
+                                  </span>
+                                )}
+                                {isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
+                                    title={`Fixed Discount: BDT ${item.fixedDiscountAmount}`}
+                                  >
+                                    🏷️ Fixed BDT {item.fixedDiscountAmount.toLocaleString()} Off
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2504,23 +2895,40 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
                       {/* Discount (%) - Manual Entry */}
                       <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            placeholder="0"
-                            value={item.discountPercent === 0 || item.discountPercent === '' ? '' : item.discountPercent}
-                            onChange={(e) => updateTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
-                            onFocus={(e) => e.target.select()}
-                            className={`w-full pr-5 pl-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                              isChecked
-                                ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-emerald-500'
-                                : 'bg-slate-50 border-slate-200 text-amber-800 focus:ring-2 focus:ring-emerald-500'
-                            }`}
-                          />
-                          <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
-                        </div>
+                        {isChecked && patientTreatmentMode === 'indoor' && item.isIndoorFree ? (
+                          <div
+                            className="bg-indigo-100/80 border border-indigo-300 text-indigo-900 rounded-lg py-1 px-1 text-[11px] font-black text-center shadow-2xs"
+                            title="Indoor patients get this treatment 100% free"
+                          >
+                            100% Free
+                          </div>
+                        ) : isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 ? (
+                          <div
+                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
+                            title={`Fixed Discount Tag: BDT ${Number(item.fixedDiscountAmount).toLocaleString()}`}
+                          >
+                            <span>🏷️</span>
+                            <span>Fixed BDT {Number(item.fixedDiscountAmount).toLocaleString()}</span>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              placeholder="0"
+                              value={item.discountPercent === 0 || item.discountPercent === '' ? '' : item.discountPercent}
+                              onChange={(e) => updateTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
+                              onFocus={(e) => e.target.select()}
+                              className={`w-full pr-5 pl-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
+                                isChecked
+                                  ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-emerald-500'
+                                  : 'bg-slate-50 border-slate-200 text-amber-800 focus:ring-2 focus:ring-emerald-500'
+                              }`}
+                            />
+                            <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Discount Amount */}
@@ -2581,17 +2989,245 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       </div>
 
 
-      {/* SECTION 2: Outdoor Services & Packages */}
+      {/* SECTION 2: PAYMENT CYCLE & COUNSELING SCHEDULE BREAKDOWN CARD */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-emerald-300 space-y-4">
+        
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-xs shadow-2xs">
+              <CreditCard className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <span>2. Payment Cycle & Counseling Schedule</span>
+                <span className="text-[10px] font-black bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded-full border border-emerald-300 uppercase tracking-wider">
+                  Counseling Tool
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Select an automatic or custom installment schedule to present manageable payment steps during patient counseling.
+              </p>
+            </div>
+          </div>
+
+          {/* Cycle Mode Tabs */}
+          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('4_cycles')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === '4_cycles'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              4 Cycles Schedule
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('10_day_cycles')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === '10_day_cycles'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              10-Day Cycles
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('15_day_cycles')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === '15_day_cycles'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              15-Day Cycles
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('full')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === 'full'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Full Payment
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPaymentPlanMode('custom_phases')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                paymentPlanMode === 'custom_phases'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Custom Installments
+            </button>
+          </div>
+        </div>
+
+        {/* Payment Cycle Breakdown Cards */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 font-medium gap-2">
+            <span className="flex items-center gap-1.5">
+              <span>Total Course Payable Bill:</span>
+              <strong className="text-emerald-800 font-extrabold text-sm">BDT {grandTotal.toLocaleString()}</strong>
+              {treatmentDays !== '' && Number(treatmentDays) > 0 && (
+                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                  {treatmentDays}-Day Course
+                </span>
+              )}
+            </span>
+
+            {paymentPlanMode === 'custom_phases' && (
+              <button
+                type="button"
+                onClick={addCustomPhase}
+                className="flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-bold text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-lg border border-emerald-300 transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Add Installment Cycle</span>
+              </button>
+            )}
+          </div>
+
+          {/* Cycle Cards List */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {paymentPhases.map((phase, idx) => (
+              <div 
+                key={phase.id || idx}
+                className="bg-gradient-to-br from-slate-50 via-white to-emerald-50/40 rounded-xl p-4 border border-emerald-200 shadow-2xs space-y-2.5 relative group"
+              >
+                <div className="flex items-center justify-between gap-2 border-b border-emerald-100 pb-2">
+                  <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Cycle {idx + 1}</span>
+                  </span>
+                  <span className="text-[10px] font-black bg-emerald-100/90 text-emerald-900 px-2 py-0.5 rounded-md border border-emerald-200">
+                    {phase.percentage || (grandTotal > 0 ? Math.round(((phase.amount === '' ? 0 : Number(phase.amount)) / grandTotal) * 100) : 0)}% of Bill
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {/* Editable Title */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Cycle Title</label>
+                    <input
+                      type="text"
+                      value={phase.phaseName}
+                      onChange={(e) => updatePaymentPhase(phase.id, { phaseName: e.target.value })}
+                      className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-2">
+                    {/* Editable Cycle Days */}
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-black text-emerald-800 uppercase mb-0.5">
+                        Cycle Days
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min={1}
+                          value={phase.daysOrSessions !== undefined ? (phase.daysOrSessions || '') : ''}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? 0 : Number(e.target.value);
+                            updatePaymentPhase(phase.id, { daysOrSessions: val });
+                          }}
+                          placeholder="Days"
+                          className="w-full pr-8 pl-2.5 py-1 bg-emerald-50/70 border border-emerald-300 rounded-lg text-xs font-black text-emerald-950 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <span className="absolute right-1.5 top-1 text-slate-400 font-bold text-[10px] pointer-events-none">Days</span>
+                      </div>
+                    </div>
+
+                    {/* Editable Amount */}
+                    <div className="col-span-3">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Payment Amount (BDT)</label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1.5 text-slate-400 font-bold text-xs">BDT</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={phase.amount === '' ? '' : phase.amount}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updatePaymentPhase(phase.id, { amount: val === '' ? '' : Number(val) });
+                          }}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          className="w-full pl-10 pr-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-black text-emerald-800 focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Counseling Note</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 1st 10 days treatment fee..."
+                      value={phase.notes || ''}
+                      onChange={(e) => updatePaymentPhase(phase.id, { notes: e.target.value })}
+                      className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {paymentPlanMode === 'custom_phases' && paymentPhases.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeCustomPhase(phase.id)}
+                    className="absolute top-2 right-2 text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                    title="Remove this installment cycle"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Phase Sum Verification Bar */}
+          {paymentPhases.length > 0 && (
+            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
+              <span className="font-medium">
+                Total Installments Sum: <strong className="text-emerald-900 font-bold">BDT {paymentPhases.reduce((s, p) => s + (p.amount === '' ? 0 : Number(p.amount) || 0), 0).toLocaleString()}</strong>
+              </span>
+              {paymentPhases.reduce((s, p) => s + (p.amount === '' ? 0 : Number(p.amount) || 0), 0) !== grandTotal && (
+                <span className="text-rose-700 font-bold bg-rose-50 px-2.5 py-0.5 rounded-md border border-rose-200 text-[11px]">
+                  ⚠️ Warning: Sum of installments (BDT {paymentPhases.reduce((s, p) => s + (p.amount === '' ? 0 : Number(p.amount) || 0), 0).toLocaleString()}) does not equal Grand Total (BDT {grandTotal.toLocaleString()})
+                </span>
+              )}
+            </div>
+          )}
+
+        </div>
+
+      </div>
+
+
+      {/* SECTION 3: Outdoor Services & Packages */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-teal-100 flex items-center justify-center text-teal-700 font-bold text-xs">
-              2
+              3
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>2. Outdoor Packages</span>
+                <span>3. Outdoor Packages</span>
                 <span className="text-[11px] font-semibold bg-teal-100 text-teal-800 px-2.5 py-0.5 rounded-full border border-teal-200">
                   Catalog List Mode
                 </span>
@@ -2781,17 +3417,17 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       </div>
 
 
-      {/* SECTION 3: Indoor Services */}
+      {/* SECTION 4: Indoor Services */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs">
-              3
+              4
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>3. Indoor Room & Accommodation Services</span>
+                <span>4. Indoor Room & Accommodation Services</span>
                 <span className="text-[11px] font-semibold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
                   Catalog List Mode
                 </span>
@@ -3128,20 +3764,20 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       </div>
 
 
-      {/* SECTION 4: Additional Treatments */}
+      {/* SECTION 5: Weekly Treatments */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-700 font-bold text-xs">
-              4
+              5
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>4. Additional Treatments</span>
+                <span>5. Weekly Treatments</span>
               </h3>
               <p className="text-xs text-slate-500">
-                Additional procedures (Ozon, ED, etc.). Supports automatic 10-day cycle ratio session calculation (3 sessions per 10 days).
+                Weekly procedures (Ozon, ED, etc.). Supports automatic 10-day cycle ratio session calculation (3 sessions per 10 days).
               </p>
             </div>
           </div>
@@ -3151,7 +3787,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Filter additional treatments..."
+                placeholder="Filter weekly treatments..."
                 value={additionalTreatmentSearch}
                 onChange={(e) => setAdditionalTreatmentSearch(e.target.value)}
                 className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-sky-500"
@@ -3160,7 +3796,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </div>
         </div>
 
-        {/* Additional Treatments Table */}
+        {/* Weekly Treatments Table */}
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
@@ -3171,7 +3807,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                     checked={isAllAdditionalTreatmentsSelected}
                     onChange={toggleSelectAllAdditionalTreatments}
                     className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer accent-sky-600"
-                    title="Select / Deselect All Additional Treatments"
+                    title="Select / Deselect All Weekly Treatments"
                   />
                 </th>
                 <th className="p-3">SL & Treatment Name</th>
@@ -3186,7 +3822,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               {filteredAdditionalTreatmentList.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-6 text-center text-slate-400 text-xs font-medium">
-                    No additional treatments found.
+                    No weekly treatments found.
                   </td>
                 </tr>
               ) : (
@@ -3241,7 +3877,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                                 <span className={`text-xs font-bold ${isChecked ? 'text-sky-950' : 'text-slate-800'}`}>
                                   {item.treatmentName}
                                 </span>
-                                {item.isIndoorFree && (
+                                {isChecked && item.isIndoorFree && (
                                   <span
                                     className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
                                       patientTreatmentMode === 'indoor'
@@ -3251,6 +3887,26 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                                     title={patientTreatmentMode === 'indoor' ? 'Indoor Patient - 100% Free Treatment' : 'Free for Indoor Patients'}
                                   >
                                     🎁 {patientTreatmentMode === 'indoor' ? 'Indoor 100% Free' : 'Free for Indoor'}
+                                  </span>
+                                )}
+                                {isChecked && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0 && (
+                                  <span
+                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
+                                      patientTreatmentMode === 'outdoor'
+                                        ? 'bg-amber-100 text-amber-900 border-amber-300 ring-1 ring-amber-400'
+                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}
+                                    title={`Outdoor Discount: ${item.outdoorDiscountPercent}% Off`}
+                                  >
+                                    🏷️ Outdoor {item.outdoorDiscountPercent}% Off
+                                  </span>
+                                )}
+                                {isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
+                                    title={`Fixed Discount: BDT ${item.fixedDiscountAmount}`}
+                                  >
+                                    🏷️ Fixed BDT {item.fixedDiscountAmount.toLocaleString()} Off
                                   </span>
                                 )}
                               </div>
@@ -3298,12 +3954,20 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
                       {/* Discount (%) */}
                       <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        {patientTreatmentMode === 'indoor' && item.isIndoorFree ? (
+                        {isChecked && patientTreatmentMode === 'indoor' && item.isIndoorFree ? (
                           <div
                             className="bg-indigo-100/80 border border-indigo-300 text-indigo-900 rounded-lg py-1 px-1 text-[11px] font-black text-center shadow-2xs"
                             title="Indoor patients get this treatment 100% free"
                           >
                             100% Free
+                          </div>
+                        ) : isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 ? (
+                          <div
+                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
+                            title={`Fixed Discount Tag: BDT ${Number(item.fixedDiscountAmount).toLocaleString()}`}
+                          >
+                            <span>🏷️</span>
+                            <span>Fixed BDT {Number(item.fixedDiscountAmount).toLocaleString()}</span>
                           </div>
                         ) : (
                           <div className="relative">
@@ -3312,8 +3976,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                               min={0}
                               max={100}
                               placeholder="0"
-                              value={item.discountPercent === '' ? '' : item.discountPercent}
+                              value={item.discountPercent === 0 || item.discountPercent === '' ? '' : item.discountPercent}
                               onChange={(e) => updateAdditionalTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
+                              onFocus={(e) => e.target.select()}
                               className="w-full pr-5 pl-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-amber-800 text-center focus:ring-2 focus:ring-sky-500 placeholder-slate-300"
                             />
                             <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
@@ -3345,11 +4010,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         {/* Footer Subtotal */}
         <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs">
           <div className="text-slate-500 font-medium">
-            Selected additional treatments: <span className="font-bold text-sky-800">{activeAdditionalTreatments.length}</span> of {additionalTreatmentList.length} items
+            Selected weekly treatments: <span className="font-bold text-sky-800">{activeAdditionalTreatments.length}</span> of {additionalTreatmentList.length} items
           </div>
 
           <div className="text-right flex items-center gap-2">
-            <span className="text-slate-700 font-bold">Additional Treatments Subtotal: </span>
+            <span className="text-slate-700 font-bold">Weekly Treatments Subtotal: </span>
             <span className="text-sky-700 font-black text-base ml-2">
               BDT {additionalTreatmentsSubtotal.toLocaleString()}
             </span>
@@ -3358,219 +4023,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
       </div>
 
-
-      {/* PAYMENT CYCLE & COUNSELING SCHEDULE BREAKDOWN CARD */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-emerald-300 space-y-4">
-        
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-xs shadow-2xs">
-              <CreditCard className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                <span>5. Payment Cycle & Counseling Schedule</span>
-                <span className="text-[10px] font-black bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded-full border border-emerald-300 uppercase tracking-wider">
-                  Counseling Tool
-                </span>
-              </h3>
-              <p className="text-xs text-slate-500">
-                Select an automatic or custom installment schedule to present manageable payment steps during patient counseling.
-              </p>
-            </div>
-          </div>
-
-          {/* Cycle Mode Tabs */}
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('10_day_cycles')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === '10_day_cycles'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              10-Day Cycles
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('15_day_cycles')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === '15_day_cycles'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              15-Day Cycles
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('full')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === 'full'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Full Payment
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('custom_phases')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === 'custom_phases'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Custom Installments
-            </button>
-          </div>
-        </div>
-
-        {/* Payment Cycle Breakdown Cards */}
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 font-medium gap-2">
-            <span className="flex items-center gap-1.5">
-              <span>Total Course Payable Bill:</span>
-              <strong className="text-emerald-800 font-extrabold text-sm">BDT {grandTotal.toLocaleString()}</strong>
-              {treatmentDays !== '' && Number(treatmentDays) > 0 && (
-                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
-                  {treatmentDays}-Day Course
-                </span>
-              )}
-            </span>
-
-            {paymentPlanMode === 'custom_phases' && (
-              <button
-                type="button"
-                onClick={addCustomPhase}
-                className="flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-bold text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-lg border border-emerald-300 transition-colors cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ Add Installment Cycle</span>
-              </button>
-            )}
-          </div>
-
-          {/* Cycle Cards List */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {paymentPhases.map((phase, idx) => (
-              <div 
-                key={phase.id || idx}
-                className="bg-gradient-to-br from-slate-50 via-white to-emerald-50/40 rounded-xl p-4 border border-emerald-200 shadow-2xs space-y-2.5 relative group"
-              >
-                <div className="flex items-center justify-between gap-2 border-b border-emerald-100 pb-2">
-                  <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                    <span>Cycle {idx + 1}</span>
-                  </span>
-                  <span className="text-[10px] font-black bg-emerald-100/90 text-emerald-900 px-2 py-0.5 rounded-md border border-emerald-200">
-                    {phase.percentage || (grandTotal > 0 ? Math.round((phase.amount / grandTotal) * 100) : 0)}% of Bill
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {/* Editable Title */}
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Cycle Title</label>
-                    <input
-                      type="text"
-                      value={phase.phaseName}
-                      onChange={(e) => updatePaymentPhase(phase.id, { phaseName: e.target.value })}
-                      className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-5 gap-2">
-                    {/* Editable Cycle Days */}
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-black text-emerald-800 uppercase mb-0.5">
-                        Cycle Days
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          min={1}
-                          value={phase.daysOrSessions !== undefined ? (phase.daysOrSessions || '') : ''}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : Number(e.target.value);
-                            updatePaymentPhase(phase.id, { daysOrSessions: val });
-                          }}
-                          placeholder="Days"
-                          className="w-full pr-8 pl-2.5 py-1 bg-emerald-50/70 border border-emerald-300 rounded-lg text-xs font-black text-emerald-950 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                        />
-                        <span className="absolute right-1.5 top-1 text-slate-400 font-bold text-[10px] pointer-events-none">Days</span>
-                      </div>
-                    </div>
-
-                    {/* Editable Amount */}
-                    <div className="col-span-3">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Payment Amount (BDT)</label>
-                      <div className="relative">
-                        <span className="absolute left-2.5 top-1.5 text-slate-400 font-bold text-xs">BDT</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={phase.amount}
-                          onChange={(e) => {
-                            const newAmt = e.target.value === '' ? 0 : Number(e.target.value);
-                            updatePaymentPhase(phase.id, { amount: newAmt });
-                          }}
-                          className="w-full pl-10 pr-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-black text-emerald-800 focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Notes */}
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Counseling Note</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 1st 10 days treatment fee..."
-                      value={phase.notes || ''}
-                      onChange={(e) => updatePaymentPhase(phase.id, { notes: e.target.value })}
-                      className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                </div>
-
-                {paymentPlanMode === 'custom_phases' && paymentPhases.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeCustomPhase(phase.id)}
-                    className="absolute top-2 right-2 text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                    title="Remove this installment cycle"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Phase Sum Verification Bar */}
-          {paymentPhases.length > 0 && (
-            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
-              <span className="font-medium">
-                Total Installments Sum: <strong className="text-emerald-900 font-bold">BDT {paymentPhases.reduce((s, p) => s + (p.amount || 0), 0).toLocaleString()}</strong>
-              </span>
-              {paymentPhases.reduce((s, p) => s + (p.amount || 0), 0) !== grandTotal && (
-                <span className="text-rose-700 font-bold bg-rose-50 px-2.5 py-0.5 rounded-md border border-rose-200 text-[11px]">
-                  ⚠️ Warning: Sum of installments (BDT {paymentPhases.reduce((s, p) => s + (p.amount || 0), 0).toLocaleString()}) does not equal Grand Total (BDT {grandTotal.toLocaleString()})
-                </span>
-              )}
-            </div>
-          )}
-
-        </div>
-
-      </div>
 
       {/* SUMMARY, DISCOUNTS, PAYMENTS & GRAND TOTAL */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -3722,23 +4174,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   </div>
                 )}
 
-                {activeAdditionalTreatments.length > 0 && (
-                  <div className="space-y-1 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/80">
-                    <div className="flex justify-between items-center text-xs font-bold text-sky-300">
-                      <span>Additional Treatments ({activeAdditionalTreatments.length}):</span>
-                      <span className="text-sky-200">BDT {additionalTreatmentsSubtotal.toLocaleString()}</span>
-                    </div>
-                    <div className="space-y-1 pt-1 border-t border-slate-700/60">
-                      {activeAdditionalTreatments.map((tr) => (
-                        <div key={tr.id} className="flex justify-between items-center text-[11px] text-slate-300">
-                          <span className="truncate pr-1 text-slate-300" title={tr.treatmentName}>• {tr.treatmentName} ({tr.sessions}s)</span>
-                          <span className="font-bold text-white shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 <div className="flex justify-between items-center">
                   <span className="text-slate-300">Food Charge:</span>
                   <span className="font-bold text-white">BDT {foodChargeTotal.toLocaleString()}</span>
@@ -3779,6 +4214,27 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Weekly Treatments (Separated Below Grand Total) */}
+              {activeAdditionalTreatments.length > 0 && (
+                <div className="space-y-1.5 bg-sky-950/70 p-3 rounded-xl border border-sky-800/80">
+                  <div className="flex justify-between items-center text-xs font-bold text-sky-300">
+                    <span>Weekly Treatments ({activeAdditionalTreatments.length}):</span>
+                    <span className="text-sky-200 font-extrabold">BDT {additionalTreatmentsSubtotal.toLocaleString()}</span>
+                  </div>
+                  <div className="space-y-1 pt-1.5 border-t border-sky-800/60">
+                    {activeAdditionalTreatments.map((tr) => (
+                      <div key={tr.id} className="flex justify-between items-center text-[11px] text-slate-300">
+                        <span className="truncate pr-1 text-slate-300" title={tr.treatmentName}>• {tr.treatmentName} ({tr.sessions}s)</span>
+                        <span className="font-bold text-white shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-sky-300/80 pt-1 border-t border-sky-800/40 italic">
+                    * Billed separately per session/week (Excluded from Grand Total)
+                  </div>
+                </div>
+              )}
 
               {/* Advance & Due */}
               <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-1.5">

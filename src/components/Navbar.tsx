@@ -13,7 +13,8 @@ import {
   PhoneCall,
   LogOut,
   LogIn,
-  Users
+  Users,
+  Receipt
 } from 'lucide-react';
 import { User } from '../types';
 import { SuoxiLogo } from './SuoxiLogo';
@@ -54,7 +55,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const canAccessAppointments = userRole === 'System Admin' || userRole === 'Call Center';
   const canAccessQuotation = userRole === 'System Admin' || userRole === 'Doctor';
-  const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor';
+  const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter';
   const canAccessCatalog = userRole === 'System Admin';
   const canAccessUsers = userRole === 'System Admin';
 
@@ -80,6 +81,13 @@ export const Navbar: React.FC<NavbarProps> = ({
         </span>
       );
     }
+    if (userRole === 'Billing Counter') {
+      return (
+        <span className="bg-purple-500/20 text-purple-200 border border-purple-400/30 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+          <Receipt className="w-3 h-3 text-purple-300" /> Billing Counter
+        </span>
+      );
+    }
     return (
       <span className="bg-emerald-500/20 text-emerald-200 border border-emerald-400/30 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
         <Shield className="w-3 h-3 text-emerald-300" /> System Admin
@@ -94,7 +102,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           
           {/* Logo & Brand */}
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab(canAccessAppointments ? 'appointments' : 'quotation')}>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab(canAccessAppointments ? 'appointments' : (canAccessQuotation ? 'quotation' : 'history'))}>
             <div className="bg-white/95 p-1.5 rounded-xl shadow border border-slate-700/50 flex items-center justify-center">
               <SuoxiLogo size="sm" />
             </div>

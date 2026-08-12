@@ -65,7 +65,7 @@ export interface PaymentPhase {
   id: string;
   phaseName: string; // e.g. "1st 10-Days Counseling Payment", "2nd 10-Days Payment", "3rd 10-Days Payment"
   daysOrSessions?: number;
-  amount: number;
+  amount: number | '';
   percentage?: number;
   isPaid?: boolean;
   notes?: string;
@@ -116,7 +116,7 @@ export interface InvoiceQuotation {
   dueAmount: number;
   
   // Payment Cycle / Installment Schedule
-  paymentPlanMode?: 'full' | '10_day_cycles' | '15_day_cycles' | 'custom_phases';
+  paymentPlanMode?: 'full' | '4_cycles' | '10_day_cycles' | '15_day_cycles' | 'custom_phases';
   paymentPhases?: PaymentPhase[];
 
   paymentStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid';
@@ -130,6 +130,9 @@ export interface CatalogItem {
   category: 'treatment' | 'outdoor_package' | 'indoor_room' | 'consultation' | 'additional_treatment';
   defaultPrice: number;
   defaultDiscountPercent?: number;
+  fixedDiscountAmount?: number;
+  outdoorDiscountPercent?: number;
+  outdoorDiscountAmount?: number;
   description?: string;
   rateNote?: string;
   outdoorSessions?: number;
@@ -139,7 +142,7 @@ export interface CatalogItem {
   sessionsPer10Days?: number;
 }
 
-export type UserRole = 'System Admin' | 'Doctor' | 'Call Center';
+export type UserRole = 'System Admin' | 'Doctor' | 'Call Center' | 'Billing Counter';
 
 export interface User {
   id: string;

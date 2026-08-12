@@ -69,6 +69,19 @@ export default function App() {
     initializeAppData();
   }, [initializeAppData]);
 
+  // Guard activeTab based on user role permissions
+  useEffect(() => {
+    if (!currentUser) return;
+    const role = currentUser.role;
+    if (role === 'Call Center' && activeTab !== 'appointments') {
+      setActiveTab('appointments');
+    } else if (role === 'Doctor' && activeTab !== 'quotation' && activeTab !== 'history') {
+      setActiveTab('quotation');
+    } else if (role === 'Billing Counter' && activeTab !== 'history') {
+      setActiveTab('history');
+    }
+  }, [currentUser, activeTab]);
+
   const handleLoginSuccess = async (user: User) => {
     setCurrentUser(user);
     setIsLoginModalOpen(false);
@@ -76,6 +89,8 @@ export default function App() {
       setActiveTab('appointments');
     } else if (user.role === 'Doctor') {
       setActiveTab('quotation');
+    } else if (user.role === 'Billing Counter') {
+      setActiveTab('history');
     }
     await initializeAppData();
   };

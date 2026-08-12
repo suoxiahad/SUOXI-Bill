@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { UserPlus, Shield, Stethoscope, PhoneCall, Trash2, Key, Edit3, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
+import { UserPlus, Shield, Stethoscope, PhoneCall, Trash2, Key, Edit3, CheckCircle, AlertCircle, Sparkles, Receipt } from 'lucide-react';
 import { getUsersLocal, fetchUsersApi, saveUserApi, deleteUserApi, clearDemoDataApi } from '../utils/storage';
 
 interface UserManagementProps {
@@ -128,6 +128,13 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
         </span>
       );
     }
+    if (uRole === 'Billing Counter') {
+      return (
+        <span className="bg-purple-100 text-purple-800 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 w-fit">
+          <Receipt className="w-3.5 h-3.5 text-purple-600" /> Billing Counter
+        </span>
+      );
+    }
     return (
       <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 w-fit">
         <Shield className="w-3.5 h-3.5 text-emerald-600" /> System Admin
@@ -202,6 +209,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
               >
                 <option value="Doctor">Doctor (Quotation & Patient History)</option>
                 <option value="Call Center">Call Center (Appointment Import & Intake)</option>
+                <option value="Billing Counter">Billing Counter (Quotation History Only)</option>
                 <option value="System Admin">System Admin (Full System Access)</option>
               </select>
             </div>
@@ -221,8 +229,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                   <span>Quotation Builder ({role === 'System Admin' || role === 'Doctor' ? 'Granted' : 'Denied'})</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Doctor' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                  <span>Quotation History ({role === 'System Admin' || role === 'Doctor' ? 'Granted' : 'Denied'})</span>
+                  <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Doctor' || role === 'Billing Counter' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                  <span>Quotation History ({role === 'System Admin' || role === 'Doctor' || role === 'Billing Counter' ? 'Granted' : 'Denied'})</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className={`w-2 h-2 rounded-full ${role === 'System Admin' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>

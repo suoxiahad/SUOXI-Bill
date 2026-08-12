@@ -202,7 +202,7 @@ export const FloatingCalculatorDrawer: React.FC = () => {
       {/* FLOATING TRIGGER BUTTON ATTACHED TO RIGHT EDGE */}
       <motion.button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed right-0 top-1/2 -translate-y-1/2 z-40 bg-gradient-to-l from-emerald-700 to-emerald-600 hover:from-emerald-600 hover:to-emerald-500 text-white pl-3 pr-2 py-3 rounded-l-2xl shadow-2xl border-l-2 border-t-2 border-b-2 border-emerald-300 flex flex-col items-center gap-1.5 cursor-pointer group transition-all"
+        className="fixed right-0 top-1/2 -translate-y-1/2 z-40 bg-gradient-to-l from-emerald-700 to-emerald-600 hover:from-emerald-600 hover:to-emerald-500 text-white pl-3 pr-2 py-3 rounded-l-2xl shadow-2xl border-l-2 border-t-2 border-b-2 border-emerald-300 flex flex-col items-center gap-1.5 cursor-pointer group transition-all print:hidden"
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         title="Open Hospital Calculator"
@@ -229,7 +229,7 @@ export const FloatingCalculatorDrawer: React.FC = () => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsOpen(false)}
-              className="fixed inset-0 bg-slate-900/30 backdrop-blur-[2px] z-40 sm:hidden"
+              className="fixed inset-0 bg-slate-900/30 backdrop-blur-[2px] z-40 sm:hidden print:hidden"
             />
 
             <motion.div
@@ -237,7 +237,7 @@ export const FloatingCalculatorDrawer: React.FC = () => {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 280 }}
-              className="fixed right-0 top-14 bottom-4 sm:top-16 sm:bottom-6 w-[360px] sm:w-[420px] max-w-[95vw] bg-white rounded-l-3xl shadow-2xl border-l-2 border-y-2 border-emerald-300 z-50 flex flex-col overflow-hidden font-sans"
+              className="fixed right-0 top-14 bottom-4 sm:top-16 sm:bottom-6 w-[360px] sm:w-[420px] max-w-[95vw] bg-white rounded-l-3xl shadow-2xl border-l-2 border-y-2 border-emerald-300 z-50 flex flex-col overflow-hidden font-sans print:hidden"
             >
               {/* DRAWER HEADER */}
               <div className="bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 text-white p-3.5 sm:p-4 flex items-center justify-between border-b border-emerald-700/60 shadow-md">

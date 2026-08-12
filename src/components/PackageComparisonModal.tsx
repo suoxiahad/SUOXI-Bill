@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Check, ArrowRight, Sparkles, Scale, TrendingDown, Info, Printer } from 'lucide-react';
 import { SuoxiLogo } from './SuoxiLogo';
 
@@ -27,7 +27,7 @@ interface PackageComparisonModalProps {
   initialFoodChargePerDay?: number;
   initialIncludeAdmissionFee?: boolean;
   initialAdmissionFee?: number;
-  currentMode: 'outdoor' | 'indoor' | '';
+  currentMode: 'outdoor' | 'indoor' | '' | 'individual';
   currentPackage: '30 Days' | '15 Days' | 'Per Day' | '';
   patientName?: string;
   patientMobile?: string;
@@ -59,6 +59,52 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   onApplyPackage,
 }) => {
   const [benchmarkDays, setBenchmarkDays] = useState<number>(30);
+  const [showOutdoor, setShowOutdoor] = useState<boolean>(true);
+  const [showIndoor, setShowIndoor] = useState<boolean>(true);
+
+  // Editable Days and Discount Percent for each scenario
+  const [customDays, setCustomDays] = useState<Record<string, number>>({
+    outdoor_30: 30,
+    outdoor_15: 15,
+    outdoor_perday: 30,
+    indoor_30: 30,
+    indoor_15: 15,
+    indoor_perday: 30,
+  });
+
+  const [customDiscounts, setCustomDiscounts] = useState<Record<string, number>>({
+    outdoor_30: 35,
+    outdoor_15: 25,
+    outdoor_perday: 0,
+    indoor_30: 30,
+    indoor_15: 30,
+    indoor_perday: 30,
+  });
+
+  // Keep per-day package days synced when benchmarkDays changes
+  useEffect(() => {
+    setCustomDays(prev => ({
+      ...prev,
+      outdoor_perday: benchmarkDays,
+      indoor_perday: benchmarkDays,
+    }));
+  }, [benchmarkDays]);
+
+  // Auto-select Patient Type in "Show Comparison" based on currentMode selected in Individual Treatments & Therapies
+  useEffect(() => {
+    if (isOpen) {
+      if (currentMode === 'outdoor') {
+        setShowOutdoor(true);
+        setShowIndoor(false);
+      } else if (currentMode === 'indoor') {
+        setShowOutdoor(false);
+        setShowIndoor(true);
+      } else {
+        setShowOutdoor(true);
+        setShowIndoor(true);
+      }
+    }
+  }, [isOpen, currentMode]);
 
   if (!isOpen) return null;
 
@@ -80,7 +126,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   const selectedRooms = allIndoorServices.filter(r => r.selected);
   const totalRoomDailyRate = selectedRooms.reduce((sum, r) => sum + (Number(r.dailyRate) || 0), 0);
 
-  // Define the 6 scenarios
+  // Define the scenarios
   interface Scenario {
     id: string;
     patientType: 'outdoor' | 'indoor';
@@ -98,9 +144,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientType: 'outdoor',
       patientTypeLabel: 'Outdoor Patient',
       packageType: '30 Days',
-      days: 30,
-      discountPercent: 35,
-      badgeText: 'Highest Savings (35% OFF)',
+      days: customDays['outdoor_30'] ?? 30,
+      discountPercent: customDiscounts['outdoor_30'] ?? 35,
+      badgeText: 'Highest Savings',
       badgeColor: 'bg-emerald-500 text-white',
     },
     {
@@ -108,9 +154,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientType: 'outdoor',
       patientTypeLabel: 'Outdoor Patient',
       packageType: '15 Days',
-      days: 15,
-      discountPercent: 25,
-      badgeText: 'Popular Choice (25% OFF)',
+      days: customDays['outdoor_15'] ?? 15,
+      discountPercent: customDiscounts['outdoor_15'] ?? 25,
+      badgeText: 'Popular Choice',
       badgeColor: 'bg-teal-500 text-white',
     },
     {
@@ -118,9 +164,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientType: 'outdoor',
       patientTypeLabel: 'Outdoor Patient',
       packageType: 'Per Day',
-      days: benchmarkDays,
-      discountPercent: 0,
-      badgeText: 'Standard Rate (0% OFF)',
+      days: customDays['outdoor_perday'] ?? benchmarkDays,
+      discountPercent: customDiscounts['outdoor_perday'] ?? 0,
+      badgeText: 'Standard Rate',
       badgeColor: 'bg-slate-200 text-slate-700',
     },
     {
@@ -128,9 +174,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientType: 'indoor',
       patientTypeLabel: 'Indoor Patient',
       packageType: '30 Days',
-      days: 30,
-      discountPercent: 30,
-      badgeText: 'Indoor Full Care (30% OFF)',
+      days: customDays['indoor_30'] ?? 30,
+      discountPercent: customDiscounts['indoor_30'] ?? 30,
+      badgeText: 'Indoor Full Care',
       badgeColor: 'bg-indigo-600 text-white',
     },
     {
@@ -138,9 +184,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientType: 'indoor',
       patientTypeLabel: 'Indoor Patient',
       packageType: '15 Days',
-      days: 15,
-      discountPercent: 30,
-      badgeText: 'Indoor Half Month (30% OFF)',
+      days: customDays['indoor_15'] ?? 15,
+      discountPercent: customDiscounts['indoor_15'] ?? 30,
+      badgeText: 'Indoor Half Month',
       badgeColor: 'bg-indigo-500 text-white',
     },
     {
@@ -148,9 +194,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientType: 'indoor',
       patientTypeLabel: 'Indoor Patient',
       packageType: 'Per Day',
-      days: benchmarkDays,
-      discountPercent: 30,
-      badgeText: 'Indoor Daily Care (30% OFF)',
+      days: customDays['indoor_perday'] ?? benchmarkDays,
+      discountPercent: customDiscounts['indoor_perday'] ?? 30,
+      badgeText: 'Indoor Daily Care',
       badgeColor: 'bg-indigo-100 text-indigo-800',
     },
   ];
@@ -249,7 +295,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
         <div className="bg-emerald-50/80 px-6 py-3 border-b border-emerald-100 flex flex-col gap-2 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Info className="w-4 h-4 text-emerald-700" />
+              <Info className="w-4 h-4 text-emerald-700 shrink-0" />
               <span className="text-emerald-900 font-medium">
                 {selectedTreatments.length > 0 ? (
                   <>Comparing based on <strong>{selectedTreatments.length} selected treatment(s)</strong></>
@@ -258,6 +304,30 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                 )}
               </span>
             </div>
+
+            {/* Check Mark Boxes for Outdoor, Indoor */}
+            <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-xl border border-emerald-200 shadow-2xs">
+              <span className="text-slate-700 font-bold text-xs">Show Comparison:</span>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-emerald-800 hover:text-emerald-950 select-none">
+                <input
+                  type="checkbox"
+                  checked={showOutdoor}
+                  onChange={(e) => setShowOutdoor(e.target.checked)}
+                  className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
+                />
+                <span>Outdoor</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-indigo-800 hover:text-indigo-950 select-none">
+                <input
+                  type="checkbox"
+                  checked={showIndoor}
+                  onChange={(e) => setShowIndoor(e.target.checked)}
+                  className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 accent-indigo-600 cursor-pointer"
+                />
+                <span>Indoor</span>
+              </label>
+            </div>
+
             {selectedTreatments.length > 0 && (
               <div className="flex items-center gap-2">
                 <span className="text-slate-600 font-semibold">Per Day Benchmark for 'Per Day' packages:</span>
@@ -296,231 +366,306 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
         {/* Content - Comparison Grid */}
         <div className="p-6 overflow-y-auto space-y-6">
           {/* Section: Outdoor Patient Packages */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
-              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-                Outdoor Patient Packages
-              </h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {scenarios.filter(s => s.patientType === 'outdoor').map(sc => {
-                const details = calculateDetails(sc);
-                const isCurrentActive = currentMode === 'outdoor' && currentPackage === sc.packageType;
+          {showOutdoor && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                  Outdoor Patient Packages
+                </h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {scenarios.filter(s => s.patientType === 'outdoor').map(sc => {
+                  const details = calculateDetails(sc);
+                  const isCurrentActive = currentMode === 'outdoor' && currentPackage === sc.packageType;
 
-                return (
-                  <div
-                    key={sc.id}
-                    className={`rounded-2xl border p-4 transition-all relative flex flex-col justify-between ${
-                      isCurrentActive
-                        ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/30 shadow-md'
-                        : 'border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm'
-                    }`}
-                  >
-                    {isCurrentActive && (
-                      <span className="absolute -top-3 right-4 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Currently Active
-                      </span>
-                    )}
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${sc.badgeColor}`}>
-                          {sc.badgeText}
-                        </span>
-                      </div>
-                      <h4 className="text-base font-bold text-slate-900">
-                        {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
-                      </h4>
-                      <p className="text-xs text-slate-500 font-medium mb-3">
-                        Outdoor Patient • {sc.discountPercent}% Discount
-                      </p>
-
-                      <div className="space-y-1.5 border-t border-slate-100 pt-3 text-xs">
-                        <div className="flex justify-between text-slate-600">
-                          <span>Gross Treatment ({sc.days} Days):</span>
-                          <span className="font-semibold text-slate-800">BDT {details.treatmentGross.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-emerald-700 font-semibold">
-                          <span>Package Discount ({sc.discountPercent}%):</span>
-                          <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2">
-                          <span>Net Payable Total:</span>
-                          <span className="text-emerald-700">BDT {details.grandTotal.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-500 text-[11px] pt-1">
-                          <span>Effective Rate / Day:</span>
-                          <span className="font-semibold text-slate-700">BDT {details.perDayNet.toLocaleString()} / Day</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onApplyPackage(
-                          'outdoor',
-                          sc.packageType,
-                          sc.packageType === 'Per Day' ? sc.days : (sc.packageType === '30 Days' ? 30 : 15),
-                          sc.discountPercent
-                        );
-                        onClose();
-                      }}
-                      className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  return (
+                    <div
+                      key={sc.id}
+                      className={`rounded-2xl border p-4 transition-all relative flex flex-col justify-between ${
                         isCurrentActive
-                          ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                          : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                          ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/30 shadow-md'
+                          : 'border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm'
                       }`}
                     >
-                      {isCurrentActive ? 'Already Applied' : 'Apply Outdoor Package'}
-                      {!isCurrentActive && <ArrowRight className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                );
-              })}
+                      {isCurrentActive && (
+                        <span className="absolute -top-3 right-4 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Currently Active
+                        </span>
+                      )}
+
+                      <div>
+                        <div className="flex items-center justify-between gap-1.5 mb-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${sc.badgeColor}`}>
+                            {sc.badgeText}
+                          </span>
+                          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-xl shadow-2xs shrink-0">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Days:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="365"
+                                value={sc.days}
+                                onChange={(e) => {
+                                  const val = Math.max(1, parseInt(e.target.value) || 1);
+                                  setCustomDays(prev => ({ ...prev, [sc.id]: val }));
+                                }}
+                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              />
+                            </div>
+                            <div className="h-3 w-px bg-slate-300"></div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Disc:</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={sc.discountPercent}
+                                onChange={(e) => {
+                                  const val = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
+                                  setCustomDiscounts(prev => ({ ...prev, [sc.id]: val }));
+                                }}
+                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              />
+                              <span className="text-[10px] font-extrabold text-slate-500">%</span>
+                            </div>
+                          </div>
+                        </div>
+                        <h4 className="text-base font-bold text-slate-900">
+                          {sc.packageType} ({sc.days} Days)
+                        </h4>
+                        <p className="text-xs text-slate-500 font-medium mb-3">
+                          Outdoor Patient • {sc.discountPercent}% Discount
+                        </p>
+
+                        <div className="space-y-1.5 border-t border-slate-100 pt-3 text-xs">
+                          <div className="flex justify-between text-slate-600">
+                            <span>Gross Treatment ({sc.days} Days):</span>
+                            <span className="font-semibold text-slate-800">BDT {details.treatmentGross.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-emerald-700 font-semibold">
+                            <span>Package Discount ({sc.discountPercent}%):</span>
+                            <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2">
+                            <span>Net Payable Total:</span>
+                            <span className="text-emerald-700">BDT {details.grandTotal.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-slate-500 text-[11px] pt-1">
+                            <span>Effective Rate / Day:</span>
+                            <span className="font-semibold text-slate-700">BDT {details.perDayNet.toLocaleString()} / Day</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onApplyPackage(
+                            'outdoor',
+                            sc.packageType,
+                            sc.days,
+                            sc.discountPercent
+                          );
+                          onClose();
+                        }}
+                        className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                          isCurrentActive
+                            ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                        }`}
+                      >
+                        {isCurrentActive ? 'Already Applied' : 'Apply Outdoor Package'}
+                        {!isCurrentActive && <ArrowRight className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Section: Indoor Patient Packages */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="w-3 h-3 rounded-full bg-indigo-600 inline-block"></span>
-              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-                Indoor Patient Packages (With Room, Food & Admission)
-              </h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {scenarios.filter(s => s.patientType === 'indoor').map(sc => {
-                const details = calculateDetails(sc);
-                const isCurrentActive = currentMode === 'indoor' && currentPackage === sc.packageType;
+          {showIndoor && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-3 h-3 rounded-full bg-indigo-600 inline-block"></span>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                  Indoor Patient Packages (With Room, Food & Admission)
+                </h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {scenarios.filter(s => s.patientType === 'indoor').map(sc => {
+                  const details = calculateDetails(sc);
+                  const isCurrentActive = currentMode === 'indoor' && currentPackage === sc.packageType;
 
-                return (
-                  <div
-                    key={sc.id}
-                    className={`rounded-2xl border p-4 transition-all relative flex flex-col justify-between ${
-                      isCurrentActive
-                        ? 'border-indigo-600 ring-2 ring-indigo-600/20 bg-indigo-50/30 shadow-md'
-                        : 'border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm'
-                    }`}
-                  >
-                    {isCurrentActive && (
-                      <span className="absolute -top-3 right-4 bg-indigo-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Currently Active
-                      </span>
-                    )}
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${sc.badgeColor}`}>
-                          {sc.badgeText}
-                        </span>
-                      </div>
-                      <h4 className="text-base font-bold text-slate-900">
-                        {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
-                      </h4>
-                      <p className="text-xs text-slate-500 font-medium mb-3">
-                        Indoor Patient • {sc.discountPercent}% Treatment Discount
-                      </p>
-
-                      <div className="space-y-1.5 border-t border-slate-100 pt-2 text-[11px]">
-                        {/* Treatment Breakdown */}
-                        <div className="flex justify-between text-slate-600">
-                          <span>Treatment Gross ({sc.days}d):</span>
-                          <span className="font-semibold text-slate-800">BDT {details.treatmentGross.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-indigo-700 font-semibold">
-                          <span>Treatment Disc ({sc.discountPercent}%):</span>
-                          <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-800 font-semibold border-b border-slate-100 pb-1">
-                          <span>Treatment Net:</span>
-                          <span>BDT {details.treatmentNet.toLocaleString()}</span>
-                        </div>
-
-                        {/* Room Charge & Accommodation Breakdown */}
-                        {selectedRooms.length > 0 ? (
-                          <div className="space-y-1 my-1 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100/80">
-                            <div className="flex justify-between items-center text-slate-800 font-bold text-[11px] border-b border-indigo-200/80 pb-1">
-                              <span>Room Accommodation ({sc.days}d):</span>
-                              <span className="text-indigo-900 font-extrabold">+ BDT {details.roomTotal.toLocaleString()}</span>
-                            </div>
-                            <div className="space-y-0.5 pt-0.5">
-                              {selectedRooms.map(r => {
-                                const cost = (Number(r.dailyRate) || 0) * sc.days;
-                                return (
-                                  <div key={r.id} className="flex justify-between items-center text-[10px] text-slate-700">
-                                    <span className="truncate pr-1 font-semibold text-slate-800" title={r.roomType}>
-                                      • {r.roomType} <span className="text-slate-500 font-normal">({r.dailyRate}/d)</span>
-                                    </span>
-                                    <span className="font-bold text-indigo-950 shrink-0">+ BDT {cost.toLocaleString()}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex justify-between text-slate-600">
-                            <span>Room/Cabin ({sc.days}d):</span>
-                            <span className="font-semibold text-slate-400 italic">No room selected (0 BDT)</span>
-                          </div>
-                        )}
-
-                        {/* Food Charge */}
-                        <div className="flex justify-between text-slate-600">
-                          <span>Food Charge ({sc.days}d):</span>
-                          <span className="font-semibold text-slate-800">
-                            {details.foodTotal > 0 ? `+ BDT ${details.foodTotal.toLocaleString()}` : '0 BDT'}
-                          </span>
-                        </div>
-
-                        {/* Effective Rate / Day (Excluding Admission Fee) */}
-                        <div className="flex justify-between text-slate-700 bg-slate-50 p-1.5 rounded-lg border border-slate-200/80 my-1 font-semibold text-[11px]">
-                          <span>Effective Rate / Day:</span>
-                          <span className="font-extrabold text-slate-900">BDT {details.perDayNet.toLocaleString()} / Day</span>
-                        </div>
-
-                        {/* Admission Fee (1-Time, added below Effective Rate) */}
-                        <div className="flex justify-between text-slate-600 text-[11px] pt-0.5">
-                          <span>Admission Fee (1-Time):</span>
-                          <span className="font-semibold text-slate-800">
-                            {details.admissionTotal > 0 ? `+ BDT ${details.admissionTotal.toLocaleString()}` : '0 BDT'}
-                          </span>
-                        </div>
-
-                        {/* Total Net Payable */}
-                        <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2 mt-1">
-                          <span>Total Net Estimate:</span>
-                          <span className="text-indigo-700 font-black">BDT {details.grandTotal.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onApplyPackage(
-                          'indoor',
-                          sc.packageType,
-                          sc.packageType === 'Per Day' ? sc.days : (sc.packageType === '30 Days' ? 30 : 15),
-                          sc.discountPercent
-                        );
-                        onClose();
-                      }}
-                      className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  return (
+                    <div
+                      key={sc.id}
+                      className={`rounded-2xl border p-4 transition-all relative flex flex-col justify-between ${
                         isCurrentActive
-                          ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                          : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs'
+                          ? 'border-indigo-600 ring-2 ring-indigo-600/20 bg-indigo-50/30 shadow-md'
+                          : 'border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm'
                       }`}
                     >
-                      {isCurrentActive ? 'Already Applied' : 'Apply Indoor Package'}
-                      {!isCurrentActive && <ArrowRight className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                );
-              })}
+                      {isCurrentActive && (
+                        <span className="absolute -top-3 right-4 bg-indigo-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Currently Active
+                        </span>
+                      )}
+
+                      <div>
+                        <div className="flex items-center justify-between gap-1.5 mb-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${sc.badgeColor}`}>
+                            {sc.badgeText}
+                          </span>
+                          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-xl shadow-2xs shrink-0">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Days:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="365"
+                                value={sc.days}
+                                onChange={(e) => {
+                                  const val = Math.max(1, parseInt(e.target.value) || 1);
+                                  setCustomDays(prev => ({ ...prev, [sc.id]: val }));
+                                }}
+                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              />
+                            </div>
+                            <div className="h-3 w-px bg-slate-300"></div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Disc:</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={sc.discountPercent}
+                                onChange={(e) => {
+                                  const val = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
+                                  setCustomDiscounts(prev => ({ ...prev, [sc.id]: val }));
+                                }}
+                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              />
+                              <span className="text-[10px] font-extrabold text-slate-500">%</span>
+                            </div>
+                          </div>
+                        </div>
+                        <h4 className="text-base font-bold text-slate-900">
+                          {sc.packageType} ({sc.days} Days)
+                        </h4>
+                        <p className="text-xs text-slate-500 font-medium mb-3">
+                          Indoor Patient • {sc.discountPercent}% Treatment Discount
+                        </p>
+
+                        <div className="space-y-1.5 border-t border-slate-100 pt-2 text-[11px]">
+                          {/* Treatment Breakdown */}
+                          <div className="flex justify-between text-slate-600">
+                            <span>Treatment Gross ({sc.days}d):</span>
+                            <span className="font-semibold text-slate-800">BDT {details.treatmentGross.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-indigo-700 font-semibold">
+                            <span>Treatment Disc ({sc.discountPercent}%):</span>
+                            <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-slate-800 font-semibold border-b border-slate-100 pb-1">
+                            <span>Treatment Net:</span>
+                            <span>BDT {details.treatmentNet.toLocaleString()}</span>
+                          </div>
+
+                          {/* Room Charge & Accommodation Breakdown */}
+                          {selectedRooms.length > 0 ? (
+                            <div className="space-y-1 my-1 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100/80">
+                              <div className="flex justify-between items-center text-slate-800 font-bold text-[11px] border-b border-indigo-200/80 pb-1">
+                                <span>Room Accommodation ({sc.days}d):</span>
+                                <span className="text-indigo-900 font-extrabold">+ BDT {details.roomTotal.toLocaleString()}</span>
+                              </div>
+                              <div className="space-y-0.5 pt-0.5">
+                                {selectedRooms.map(r => {
+                                  const cost = (Number(r.dailyRate) || 0) * sc.days;
+                                  return (
+                                    <div key={r.id} className="flex justify-between items-center text-[10px] text-slate-700">
+                                      <span className="truncate pr-1 font-semibold text-slate-800" title={r.roomType}>
+                                        • {r.roomType} <span className="text-slate-500 font-normal">({r.dailyRate}/d)</span>
+                                      </span>
+                                      <span className="font-bold text-indigo-950 shrink-0">+ BDT {cost.toLocaleString()}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex justify-between text-slate-600">
+                              <span>Room/Cabin ({sc.days}d):</span>
+                              <span className="font-semibold text-slate-400 italic">No room selected (0 BDT)</span>
+                            </div>
+                          )}
+
+                          {/* Food Charge */}
+                          <div className="flex justify-between text-slate-600">
+                            <span>Food Charge ({sc.days}d):</span>
+                            <span className="font-semibold text-slate-800">
+                              {details.foodTotal > 0 ? `+ BDT ${details.foodTotal.toLocaleString()}` : '0 BDT'}
+                            </span>
+                          </div>
+
+                          {/* Effective Rate / Day (Excluding Admission Fee) */}
+                          <div className="flex justify-between text-slate-700 bg-slate-50 p-1.5 rounded-lg border border-slate-200/80 my-1 font-semibold text-[11px]">
+                            <span>Effective Rate / Day:</span>
+                            <span className="font-extrabold text-slate-900">BDT {details.perDayNet.toLocaleString()} / Day</span>
+                          </div>
+
+                          {/* Admission Fee (1-Time, added below Effective Rate) */}
+                          <div className="flex justify-between text-slate-600 text-[11px] pt-0.5">
+                            <span>Admission Fee (1-Time):</span>
+                            <span className="font-semibold text-slate-800">
+                              {details.admissionTotal > 0 ? `+ BDT ${details.admissionTotal.toLocaleString()}` : '0 BDT'}
+                            </span>
+                          </div>
+
+                          {/* Total Net Payable */}
+                          <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2 mt-1">
+                            <span>Total Net Estimate:</span>
+                            <span className="text-indigo-700 font-black">BDT {details.grandTotal.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onApplyPackage(
+                            'indoor',
+                            sc.packageType,
+                            sc.days,
+                            sc.discountPercent
+                          );
+                          onClose();
+                        }}
+                        className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                          isCurrentActive
+                            ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs'
+                        }`}
+                      >
+                        {isCurrentActive ? 'Already Applied' : 'Apply Indoor Package'}
+                        {!isCurrentActive && <ArrowRight className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Empty state if all unchecked */}
+          {!showOutdoor && !showIndoor && (
+            <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-300 rounded-2xl text-slate-500 text-sm">
+              Please check at least one comparison option above (Outdoor or Indoor) to view cost packages.
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -558,8 +703,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           <SuoxiLogo size="md" />
           <div>
             <h1 className="text-xl font-black text-slate-900 uppercase tracking-tight">SUO XI HOSPITAL (ACUPUNCTURE)</h1>
-            <p className="text-xs text-slate-700 font-bold">Comprehensive Acupuncture & Rehabilitation Healthcare</p>
-            <p className="text-[10px] text-slate-500">Shyamoli, Dhaka, Bangladesh • Helpline: +880 1711-223344</p>
+            <p className="text-[10px] text-slate-500 font-semibold">Shaan Tower, 24/1, Chamelibagh, Shantinagar, Dhaka 1217 • Helpline: +88 09613 100 600</p>
           </div>
         </div>
         <div className="text-right">
@@ -602,133 +746,137 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       </div>
 
       {/* SECTION 1: OUTDOOR PATIENT PACKAGES (3 COMPARISON CARDS) */}
-      <div className="mb-4">
-        <div className="flex items-center gap-2 mb-2 pb-1 border-b border-emerald-200">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block"></span>
-          <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider">
-            OUTDOOR PATIENT PACKAGES (TREATMENT COST ONLY)
-          </h3>
-        </div>
-        <div className="grid grid-cols-3 gap-2.5">
-          {scenarios.filter(s => s.patientType === 'outdoor').map(sc => {
-            const details = calculateDetails(sc);
-            return (
-              <div key={sc.id} className="border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
-                <div>
-                  <div className="mb-1">
-                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-200">
-                      {sc.badgeText}
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-black text-slate-900">
-                    {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
-                  </h4>
-                  <p className="text-[10px] text-slate-500 font-semibold mb-2">
-                    Outdoor • {sc.discountPercent}% Discount
-                  </p>
+      {showOutdoor && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2 pb-1 border-b border-emerald-200">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block"></span>
+            <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+              OUTDOOR PATIENT PACKAGES (TREATMENT COST ONLY)
+            </h3>
+          </div>
+          <div className="grid grid-cols-3 gap-2.5">
+            {scenarios.filter(s => s.patientType === 'outdoor').map(sc => {
+              const details = calculateDetails(sc);
+              return (
+                <div key={sc.id} className="border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
+                  <div>
+                    <div className="mb-1">
+                      <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-200">
+                        {sc.badgeText}
+                      </span>
+                    </div>
+                    <h4 className="text-sm font-black text-slate-900">
+                      {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
+                    </h4>
+                    <p className="text-[10px] text-slate-500 font-semibold mb-2">
+                      Outdoor • {sc.discountPercent}% Discount
+                    </p>
 
-                  <div className="space-y-1 border-t border-slate-200 pt-2 text-[10px]">
-                    <div className="flex justify-between text-slate-600">
-                      <span>Gross ({sc.days}d):</span>
-                      <span className="font-semibold text-slate-900">BDT {details.treatmentGross.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-emerald-700 font-semibold">
-                      <span>Discount ({sc.discountPercent}%):</span>
-                      <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-200 pt-1">
-                      <span>Net Payable:</span>
-                      <span className="text-emerald-800">BDT {details.grandTotal.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-500 text-[9px] pt-0.5">
-                      <span>Rate / Day:</span>
-                      <span className="font-bold text-slate-700">BDT {details.perDayNet.toLocaleString()}/d</span>
+                    <div className="space-y-1 border-t border-slate-200 pt-2 text-[10px]">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Gross ({sc.days}d):</span>
+                        <span className="font-semibold text-slate-900">BDT {details.treatmentGross.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-emerald-700 font-semibold">
+                        <span>Discount ({sc.discountPercent}%):</span>
+                        <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-200 pt-1">
+                        <span>Net Payable:</span>
+                        <span className="text-emerald-800">BDT {details.grandTotal.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-500 text-[9px] pt-0.5">
+                        <span>Rate / Day:</span>
+                        <span className="font-bold text-slate-700">BDT {details.perDayNet.toLocaleString()}/d</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* SECTION 2: INDOOR PATIENT PACKAGES (3 COMPARISON CARDS) */}
-      <div className="mb-4">
-        <div className="flex items-center gap-2 mb-2 pb-1 border-b border-indigo-200">
-          <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block"></span>
-          <h3 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
-            INDOOR PATIENT PACKAGES (WITH ROOM, FOOD & ADMISSION)
-          </h3>
-        </div>
-        <div className="grid grid-cols-3 gap-2.5">
-          {scenarios.filter(s => s.patientType === 'indoor').map(sc => {
-            const details = calculateDetails(sc);
-            return (
-              <div key={sc.id} className="border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
-                <div>
-                  <div className="mb-1">
-                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-200">
-                      {sc.badgeText}
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-black text-slate-900">
-                    {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
-                  </h4>
-                  <p className="text-[10px] text-slate-500 font-semibold mb-2">
-                    Indoor • {sc.discountPercent}% Treatment Disc
-                  </p>
-
-                  <div className="space-y-1 border-t border-slate-200 pt-1.5 text-[10px]">
-                    <div className="flex justify-between text-slate-600">
-                      <span>Treatment Gross ({sc.days}d):</span>
-                      <span className="font-semibold text-slate-900">BDT {details.treatmentGross.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-indigo-700 font-semibold">
-                      <span>Treatment Disc ({sc.discountPercent}%):</span>
-                      <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-800 font-bold border-b border-slate-100 pb-0.5">
-                      <span>Treatment Net:</span>
-                      <span>BDT {details.treatmentNet.toLocaleString()}</span>
-                    </div>
-
-                    <div className="flex justify-between text-slate-600">
-                      <span>Room/Cabin ({sc.days}d):</span>
-                      <span className="font-bold text-indigo-900">
-                        {details.roomTotal > 0 ? `+ BDT ${details.roomTotal.toLocaleString()}` : '0 BDT'}
+      {showIndoor && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2 pb-1 border-b border-indigo-200">
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block"></span>
+            <h3 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
+              INDOOR PATIENT PACKAGES (WITH ROOM, FOOD & ADMISSION)
+            </h3>
+          </div>
+          <div className="grid grid-cols-3 gap-2.5">
+            {scenarios.filter(s => s.patientType === 'indoor').map(sc => {
+              const details = calculateDetails(sc);
+              return (
+                <div key={sc.id} className="border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
+                  <div>
+                    <div className="mb-1">
+                      <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-200">
+                        {sc.badgeText}
                       </span>
                     </div>
+                    <h4 className="text-sm font-black text-slate-900">
+                      {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
+                    </h4>
+                    <p className="text-[10px] text-slate-500 font-semibold mb-2">
+                      Indoor • {sc.discountPercent}% Treatment Disc
+                    </p>
 
-                    <div className="flex justify-between text-slate-600">
-                      <span>Food Charge ({sc.days}d):</span>
-                      <span className="font-semibold text-slate-800">
-                        {details.foodTotal > 0 ? `+ BDT ${details.foodTotal.toLocaleString()}` : '0 BDT'}
-                      </span>
-                    </div>
+                    <div className="space-y-1 border-t border-slate-200 pt-1.5 text-[10px]">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Treatment Gross ({sc.days}d):</span>
+                        <span className="font-semibold text-slate-900">BDT {details.treatmentGross.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-indigo-700 font-semibold">
+                        <span>Treatment Disc ({sc.discountPercent}%):</span>
+                        <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-800 font-bold border-b border-slate-100 pb-0.5">
+                        <span>Treatment Net:</span>
+                        <span>BDT {details.treatmentNet.toLocaleString()}</span>
+                      </div>
 
-                    <div className="flex justify-between text-slate-700 font-bold border-t border-slate-100 pt-1">
-                      <span>Effective Rate / Day:</span>
-                      <span className="text-slate-900">BDT {details.perDayNet.toLocaleString()}/d</span>
-                    </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>Room/Cabin ({sc.days}d):</span>
+                        <span className="font-bold text-indigo-900">
+                          {details.roomTotal > 0 ? `+ BDT ${details.roomTotal.toLocaleString()}` : '0 BDT'}
+                        </span>
+                      </div>
 
-                    <div className="flex justify-between text-slate-600 pt-0.5">
-                      <span>Admission (1-Time):</span>
-                      <span className="font-semibold text-slate-800">
-                        {details.admissionTotal > 0 ? `+ BDT ${details.admissionTotal.toLocaleString()}` : '0 BDT'}
-                      </span>
-                    </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>Food Charge ({sc.days}d):</span>
+                        <span className="font-semibold text-slate-800">
+                          {details.foodTotal > 0 ? `+ BDT ${details.foodTotal.toLocaleString()}` : '0 BDT'}
+                        </span>
+                      </div>
 
-                    <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-200 pt-1">
-                      <span>Total Net Estimate:</span>
-                      <span className="text-indigo-900">BDT {details.grandTotal.toLocaleString()}</span>
+                      <div className="flex justify-between text-slate-700 font-bold border-t border-slate-100 pt-1">
+                        <span>Effective Rate / Day:</span>
+                        <span className="text-slate-900">BDT {details.perDayNet.toLocaleString()}/d</span>
+                      </div>
+
+                      <div className="flex justify-between text-slate-600 pt-0.5">
+                        <span>Admission (1-Time):</span>
+                        <span className="font-semibold text-slate-800">
+                          {details.admissionTotal > 0 ? `+ BDT ${details.admissionTotal.toLocaleString()}` : '0 BDT'}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-200 pt-1">
+                        <span>Total Net Estimate:</span>
+                        <span className="text-indigo-900">BDT {details.grandTotal.toLocaleString()}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Footer Notes & Signatures */}
       <div className="pt-4 mt-2 border-t border-slate-300">
