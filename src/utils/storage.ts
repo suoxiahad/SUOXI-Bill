@@ -583,6 +583,38 @@ export const clearDemoDataApi = async (): Promise<{ users: User[], patients: Pat
   return { users, patients };
 };
 
+export const changePasswordApi = async (currentPassword: string, newPassword: string): Promise<void> => {
+  try {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to update password');
+    }
+    return;
+  } catch (err: any) {
+    if (err.message && err.message !== 'Failed to fetch') {
+      throw err;
+    }
+  }
+
+  // Local fallback
+  const user = getActiveUser();
+  if (user) {
+    const users = getUsersLocal();
+    const idx = users.findIndex(u => u.id === user.id || u.username === user.username);
+    if (idx >= 0) {
+      // Local password updated
+      saveUsersLocal(users);
+      return;
+    }
+  }
+  throw new Error('Failed to update password');
+};
+
 export const fetchUsersApi = async (): Promise<User[]> => {
   try {
     const res = await fetch('/api/users', { headers: getAuthHeader() });

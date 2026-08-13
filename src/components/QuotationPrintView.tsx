@@ -400,11 +400,11 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
           </div>
 
           {/* Billing Summary Box */}
-          <div className="w-full sm:w-80 bg-slate-900 text-white p-4 rounded-xl shadow border border-slate-800 text-xs space-y-3">
+          <div className="w-full sm:w-80 bg-white text-slate-900 p-4 rounded-xl border-2 border-slate-300 text-xs space-y-3">
             
             {/* Treatments Subtotal Section */}
-            <div className="bg-slate-800/90 p-3 rounded-xl border border-slate-700/80 space-y-2">
-              <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider border-b border-slate-700 pb-1.5 flex items-center justify-between">
+            <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200/90 space-y-2">
+              <div className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider border-b border-emerald-200/80 pb-1.5 flex items-center justify-between">
                 <span>
                   {mode === 'outdoor' 
                     ? 'Treatments Subtotal - Outdoor Packages' 
@@ -414,72 +414,72 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
                 </span>
               </div>
 
-              <div className="space-y-1 text-slate-300 text-[11px]">
+              <div className="space-y-1 text-slate-700 text-[11px]">
                 <div className="flex justify-between">
                   <span>Total Bill:</span>
-                  <span className="font-bold text-white">BDT {treatmentsGrossSubtotal.toLocaleString()}</span>
+                  <span className="font-bold text-slate-900">BDT {treatmentsGrossSubtotal.toLocaleString()}</span>
                 </div>
 
-                <div className="flex justify-between text-rose-300">
+                <div className="flex justify-between text-rose-700 font-medium">
                   <span>Discount Amount:</span>
-                  <span className="font-bold">-BDT {treatmentsTotalDiscount.toLocaleString()}</span>
+                  <span className="font-bold text-rose-700">-BDT {treatmentsTotalDiscount.toLocaleString()}</span>
                 </div>
 
-                <div className="flex justify-between pt-1 border-t border-slate-700/70 font-bold text-emerald-300">
+                <div className="flex justify-between pt-1 border-t border-emerald-200/80 font-bold text-emerald-900">
                   <span>After Discount Gross Total Bill:</span>
-                  <span className="font-extrabold text-emerald-400">BDT {treatmentsSubtotal.toLocaleString()}</span>
+                  <span className="font-extrabold text-emerald-800">BDT {treatmentsSubtotal.toLocaleString()}</span>
                 </div>
               </div>
             </div>
 
             {/* Additional Services */}
-            <div className="space-y-1.5 pt-1 border-t border-slate-800 text-[11px]">
+            <div className="space-y-1.5 pt-1 border-t border-slate-200 text-[11px]">
               {roomServices.length > 0 ? (
-                <div className="space-y-1 bg-slate-800/80 p-2 rounded-xl border border-slate-700/80">
-                  <div className="flex justify-between items-center text-xs font-bold text-indigo-300">
+                <div className="space-y-1 bg-indigo-50/60 p-2 rounded-xl border border-indigo-200/80">
+                  <div className="flex justify-between items-center text-xs font-bold text-indigo-900">
                     <span>Indoor Rooms ({roomServices.length}):</span>
-                    <span className="text-indigo-200">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
+                    <span className="text-indigo-800">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
                   </div>
-                  <div className="space-y-0.5 pt-1 border-t border-slate-700/60">
+                  <div className="space-y-0.5 pt-1 border-t border-indigo-200/60">
                     {roomServices.map((room, rIdx) => (
-                      <div key={room.id || rIdx} className="flex justify-between items-center text-[10px] text-slate-300">
-                        <span className="truncate pr-1 text-slate-300" title={room.roomType}>• {room.roomType} ({room.days}d)</span>
-                        <span className="font-bold text-white shrink-0">BDT {(room.totalAmount || 0).toLocaleString()}</span>
+                      <div key={room.id || rIdx} className="flex justify-between items-center text-[10px] text-slate-700">
+                        <span className="truncate pr-1 text-slate-700" title={room.roomType}>• {room.roomType} ({room.days}d)</span>
+                        <span className="font-bold text-slate-900 shrink-0">BDT {(room.totalAmount || 0).toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
                 </div>
               ) : (
-                <div className="flex justify-between items-center text-slate-300">
+                <div className="flex justify-between items-center text-slate-700">
                   <span>Indoor Accommodation:</span>
-                  <span className="font-bold text-slate-400">BDT 0</span>
+                  <span className="font-bold text-slate-500">BDT 0</span>
                 </div>
               )}
 
-              <div className="flex justify-between items-center text-slate-300">
+              <div className="flex justify-between items-center text-slate-700">
                 <span>Food Charge:</span>
-                <span className="font-bold text-white">BDT {foodChargeTotal.toLocaleString()}</span>
+                <span className="font-bold text-slate-900">BDT {foodChargeTotal.toLocaleString()}</span>
               </div>
 
-              <div className="flex justify-between items-center text-slate-300">
+              <div className="flex justify-between items-center text-slate-700">
                 <span>Admission Fee:</span>
-                <span className="font-bold text-white">BDT {actualAdmissionFee.toLocaleString()}</span>
+                <span className="font-bold text-slate-900">BDT {actualAdmissionFee.toLocaleString()}</span>
               </div>
             </div>
 
             {/* Additional Special Discount */}
             {overallDiscountAmount > 0 && (
-              <div className="pt-1.5 border-t border-slate-800 flex justify-between items-center text-[11px] text-amber-300 font-medium">
+              <div className="pt-1.5 border-t border-slate-200 flex justify-between items-center text-[11px] text-amber-800 font-bold">
                 <span>Additional Special Discount ({quotation.overallDiscountPercent || 0}%):</span>
                 <span>-BDT {overallDiscountAmount.toLocaleString()}</span>
               </div>
             )}
 
             {/* Grand Total */}
-            <div className="pt-2 border-t border-slate-800">
+            <div className="pt-2 border-t-2 border-slate-300">
               <div className="flex justify-between items-end font-extrabold">
-                <span className="text-[11px] text-slate-300 uppercase tracking-wider">Grand Total Bill:</span>
-                <span className="text-xl text-emerald-400">
+                <span className="text-[11px] text-slate-800 uppercase tracking-wider">Grand Total Bill:</span>
+                <span className="text-xl text-emerald-800 font-black">
                   BDT {quotation.grandTotal.toLocaleString()}
                 </span>
               </div>
@@ -487,34 +487,34 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
 
             {/* Weekly Treatments (Separated Below Grand Total) */}
             {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
-              <div className="p-2.5 bg-sky-950/70 rounded-xl border border-sky-800/80 space-y-1.5 text-[11px]">
-                <div className="flex justify-between items-center font-bold text-sky-300">
+              <div className="p-2.5 bg-sky-50/80 rounded-xl border border-sky-200 space-y-1.5 text-[11px]">
+                <div className="flex justify-between items-center font-bold text-sky-950">
                   <span>Weekly Treatments ({quotation.additionalTreatments.length}):</span>
-                  <span className="text-sky-200 font-extrabold">BDT {(quotation.additionalTreatmentsSubtotal || 0).toLocaleString()}</span>
+                  <span className="text-sky-900 font-extrabold">BDT {(quotation.additionalTreatmentsSubtotal || 0).toLocaleString()}</span>
                 </div>
-                <div className="space-y-0.5 pt-1 border-t border-sky-800/50">
+                <div className="space-y-0.5 pt-1 border-t border-sky-200/80">
                   {quotation.additionalTreatments.map((tr, idx) => (
-                    <div key={tr.id || idx} className="flex justify-between items-center text-[10px] text-slate-300">
-                      <span className="truncate pr-1 text-slate-300">• {tr.treatmentName} ({tr.sessions}s)</span>
-                      <span className="font-bold text-white shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
+                    <div key={tr.id || idx} className="flex justify-between items-center text-[10px] text-slate-700">
+                      <span className="truncate pr-1 text-slate-700">• {tr.treatmentName} ({tr.sessions}s)</span>
+                      <span className="font-bold text-slate-900 shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
                     </div>
                   ))}
                 </div>
-                <div className="text-[9px] text-sky-300/80 pt-0.5 border-t border-sky-800/30 italic">
+                <div className="text-[9px] text-sky-800 pt-0.5 border-t border-sky-200/60 italic">
                   * Billed separately per session/week (Excluded from Grand Total)
                 </div>
               </div>
             )}
 
             {/* Advance Paid & Net Due */}
-            <div className="p-2.5 bg-slate-800/80 rounded-xl space-y-1 text-[11px] font-semibold border border-slate-700/50">
-              <div className="flex justify-between text-slate-300">
+            <div className="p-2.5 bg-slate-50 rounded-xl space-y-1 text-[11px] font-semibold border border-slate-200">
+              <div className="flex justify-between text-slate-700">
                 <span>Advance Paid:</span>
-                <span className="font-bold text-white">BDT {(quotation.advancePaid || 0).toLocaleString()}</span>
+                <span className="font-bold text-slate-900">BDT {(quotation.advancePaid || 0).toLocaleString()}</span>
               </div>
-              <div className="flex justify-between text-rose-300 font-bold">
+              <div className="flex justify-between text-rose-700 font-bold">
                 <span>Net Due Balance:</span>
-                <span className="font-black text-rose-400 text-xs">BDT {(quotation.dueAmount || 0).toLocaleString()}</span>
+                <span className="font-black text-rose-700 text-xs">BDT {(quotation.dueAmount || 0).toLocaleString()}</span>
               </div>
             </div>
 

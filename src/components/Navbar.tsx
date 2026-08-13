@@ -57,7 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const canAccessQuotation = userRole === 'System Admin' || userRole === 'Doctor';
   const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter';
   const canAccessCatalog = userRole === 'System Admin';
-  const canAccessUsers = userRole === 'System Admin';
+  const canAccessUsers = !!currentUser;
 
   const getRoleBadge = () => {
     if (!currentUser) {
@@ -266,7 +266,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Users className="w-4 h-4" />
-              <span>User Accounts</span>
+              <span>{userRole === 'System Admin' ? 'User Accounts' : 'My Account'}</span>
             </button>
           )}
 

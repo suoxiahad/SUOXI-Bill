@@ -540,6 +540,46 @@ app.get('/api/auth/me', authenticateToken, (req: any, res) => {
   res.json({ user: req.user });
 });
 
+app.post('/api/auth/change-password', authenticateToken, async (req: any, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 4) {
+    return res.status(400).json({ error: 'New password must be at least 4 characters long' });
+  }
+
+  const userId = req.user?.id;
+  const username = req.user?.username;
+
+  const existingIdx = localData.users.findIndex(u => u.id === userId || u.username === username);
+  if (existingIdx < 0) {
+    return res.status(404).json({ error: 'User account not found' });
+  }
+
+  const targetUser = localData.users[existingIdx];
+  if (currentPassword) {
+    const isMatch = bcrypt.compareSync(currentPassword, targetUser.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+  }
+
+  const newHash = bcrypt.hashSync(newPassword, 10);
+  localData.users[existingIdx].password_hash = newHash;
+  saveLocalDb();
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      await mysqlPool.execute(
+        'UPDATE users SET password_hash = ? WHERE id = ? OR username = ?',
+        [newHash, userId, username]
+      );
+    } catch (err) {
+      console.error('MySQL update password error:', err);
+    }
+  }
+
+  res.json({ message: 'Password updated successfully' });
+});
+
 // 3. User Management Endpoints (System Admin can Create, Edit, Delete Users)
 app.get('/api/users', authenticateToken, requireRole('System Admin'), async (req: any, res) => {
   if (isMySqlActive && mysqlPool) {

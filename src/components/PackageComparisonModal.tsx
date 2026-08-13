@@ -28,14 +28,14 @@ interface PackageComparisonModalProps {
   initialIncludeAdmissionFee?: boolean;
   initialAdmissionFee?: number;
   currentMode: 'outdoor' | 'indoor' | '' | 'individual';
-  currentPackage: '30 Days' | '15 Days' | 'Per Day' | '';
+  currentPackage: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string;
   patientName?: string;
   patientMobile?: string;
   consultingDoctor?: string;
   quotationNo?: string;
   onApplyPackage: (
     patientType: 'outdoor' | 'indoor',
-    packageType: '30 Days' | '15 Days' | 'Per Day',
+    packageType: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string,
     days: number | '',
     discount: number
   ) => void;
@@ -66,19 +66,21 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   const [customDays, setCustomDays] = useState<Record<string, number>>({
     outdoor_30: 30,
     outdoor_15: 15,
+    outdoor_10: 10,
     outdoor_perday: 30,
-    indoor_30: 30,
+    indoor_10: 10,
     indoor_15: 15,
-    indoor_perday: 30,
+    indoor_7: 7,
   });
 
   const [customDiscounts, setCustomDiscounts] = useState<Record<string, number>>({
     outdoor_30: 35,
     outdoor_15: 25,
+    outdoor_10: 15,
     outdoor_perday: 0,
-    indoor_30: 30,
+    indoor_10: 30,
     indoor_15: 30,
-    indoor_perday: 30,
+    indoor_7: 30,
   });
 
   // Keep per-day package days synced when benchmarkDays changes
@@ -86,7 +88,6 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     setCustomDays(prev => ({
       ...prev,
       outdoor_perday: benchmarkDays,
-      indoor_perday: benchmarkDays,
     }));
   }, [benchmarkDays]);
 
@@ -131,7 +132,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     id: string;
     patientType: 'outdoor' | 'indoor';
     patientTypeLabel: string;
-    packageType: '30 Days' | '15 Days' | 'Per Day';
+    packageType: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string;
     days: number;
     discountPercent: number;
     badgeText: string;
@@ -160,6 +161,16 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       badgeColor: 'bg-teal-500 text-white',
     },
     {
+      id: 'outdoor_10',
+      patientType: 'outdoor',
+      patientTypeLabel: 'Outdoor Patient',
+      packageType: '10 Days',
+      days: customDays['outdoor_10'] ?? 10,
+      discountPercent: customDiscounts['outdoor_10'] ?? 15,
+      badgeText: 'Value Choice',
+      badgeColor: 'bg-cyan-600 text-white',
+    },
+    {
       id: 'outdoor_perday',
       patientType: 'outdoor',
       patientTypeLabel: 'Outdoor Patient',
@@ -170,13 +181,13 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       badgeColor: 'bg-slate-200 text-slate-700',
     },
     {
-      id: 'indoor_30',
+      id: 'indoor_10',
       patientType: 'indoor',
       patientTypeLabel: 'Indoor Patient',
-      packageType: '30 Days',
-      days: customDays['indoor_30'] ?? 30,
-      discountPercent: customDiscounts['indoor_30'] ?? 30,
-      badgeText: 'Indoor Full Care',
+      packageType: '10 Days',
+      days: customDays['indoor_10'] ?? 10,
+      discountPercent: customDiscounts['indoor_10'] ?? 30,
+      badgeText: 'Indoor 10 Days',
       badgeColor: 'bg-indigo-600 text-white',
     },
     {
@@ -186,18 +197,18 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       packageType: '15 Days',
       days: customDays['indoor_15'] ?? 15,
       discountPercent: customDiscounts['indoor_15'] ?? 30,
-      badgeText: 'Indoor Half Month',
+      badgeText: 'Indoor 15 Days',
       badgeColor: 'bg-indigo-500 text-white',
     },
     {
-      id: 'indoor_perday',
+      id: 'indoor_7',
       patientType: 'indoor',
       patientTypeLabel: 'Indoor Patient',
-      packageType: 'Per Day',
-      days: customDays['indoor_perday'] ?? benchmarkDays,
-      discountPercent: customDiscounts['indoor_perday'] ?? 30,
-      badgeText: 'Indoor Daily Care',
-      badgeColor: 'bg-indigo-100 text-indigo-800',
+      packageType: '7 Days',
+      days: customDays['indoor_7'] ?? 7,
+      discountPercent: customDiscounts['indoor_7'] ?? 30,
+      badgeText: 'Indoor 7 Days',
+      badgeColor: 'bg-indigo-400 text-white',
     },
   ];
 
@@ -256,7 +267,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     <>
       {/* Screen Interactive Modal (Hidden during printing) */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:hidden">
-        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl my-6 overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-6xl my-6 overflow-hidden flex flex-col max-h-[92vh]">
           {/* Header */}
           <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
             <div className="flex items-center gap-3">
@@ -374,7 +385,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                   Outdoor Patient Packages
                 </h3>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {scenarios.filter(s => s.patientType === 'outdoor').map(sc => {
                   const details = calculateDetails(sc);
                   const isCurrentActive = currentMode === 'outdoor' && currentPackage === sc.packageType;
@@ -433,7 +444,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                           </div>
                         </div>
                         <h4 className="text-base font-bold text-slate-900">
-                          {sc.packageType} ({sc.days} Days)
+                          {sc.days} Days
                         </h4>
                         <p className="text-xs text-slate-500 font-medium mb-3">
                           Outdoor Patient • {sc.discountPercent}% Discount
@@ -518,7 +529,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                       <div>
                         <div className="flex items-center justify-between gap-1.5 mb-2">
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${sc.badgeColor}`}>
-                            {sc.badgeText}
+                            Indoor {sc.days} Days
                           </span>
                           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-xl shadow-2xs shrink-0">
                             <div className="flex items-center gap-1">
@@ -554,7 +565,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                           </div>
                         </div>
                         <h4 className="text-base font-bold text-slate-900">
-                          {sc.packageType} ({sc.days} Days)
+                          {sc.days} Days
                         </h4>
                         <p className="text-xs text-slate-500 font-medium mb-3">
                           Indoor Patient • {sc.discountPercent}% Treatment Discount
@@ -673,7 +684,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           <div className="flex items-center gap-1.5">
             <TrendingDown className="w-4 h-4 text-emerald-600" />
             <span>
-              Tip: Outdoor 30-Day offers <strong>35% OFF</strong> treatment cost, while Indoor 30-Day offers <strong>30% OFF</strong> treatment cost plus full room & board estimation.
+              Tip: Outdoor 30-Day offers <strong>35% OFF</strong> treatment cost, while Indoor packages (10, 15, 7 Days) offer <strong>30% OFF</strong> treatment cost plus full room & board estimation.
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -754,7 +765,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               OUTDOOR PATIENT PACKAGES (TREATMENT COST ONLY)
             </h3>
           </div>
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-4 gap-2">
             {scenarios.filter(s => s.patientType === 'outdoor').map(sc => {
               const details = calculateDetails(sc);
               return (
@@ -766,7 +777,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                       </span>
                     </div>
                     <h4 className="text-sm font-black text-slate-900">
-                      {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
+                      {sc.days} Days
                     </h4>
                     <p className="text-[10px] text-slate-500 font-semibold mb-2">
                       Outdoor • {sc.discountPercent}% Discount
@@ -815,11 +826,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                   <div>
                     <div className="mb-1">
                       <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-200">
-                        {sc.badgeText}
+                        Indoor {sc.days} Days
                       </span>
                     </div>
                     <h4 className="text-sm font-black text-slate-900">
-                      {sc.packageType} {sc.packageType === 'Per Day' ? `(${sc.days} Days)` : ''}
+                      {sc.days} Days
                     </h4>
                     <p className="text-[10px] text-slate-500 font-semibold mb-2">
                       Indoor • {sc.discountPercent}% Treatment Disc

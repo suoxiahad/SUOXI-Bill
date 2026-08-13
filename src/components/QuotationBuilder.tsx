@@ -1411,12 +1411,16 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [paymentPhases, setPaymentPhases] = useState<PaymentPhase[]>([]);
   const [isDraftRestored, setIsDraftRestored] = useState<boolean>(false);
 
-  const DRAFT_STORAGE_KEY = 'suo_xi_quotation_builder_draft_v2';
+  const userId = currentUser?.id || currentUser?.username || 'guest';
+  const DRAFT_STORAGE_KEY = `suo_xi_quotation_builder_draft_${userId}_v3`;
   const isClearingDraftRef = useRef<boolean>(false);
 
-  // Restore draft from localStorage on initial component mount
+  // Restore draft from localStorage on initial component mount or when user changes
   useEffect(() => {
     try {
+      // Clean up old legacy non-user-specific draft if present
+      localStorage.removeItem('suo_xi_quotation_builder_draft_v2');
+
       const saved = localStorage.getItem(DRAFT_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -1456,11 +1460,14 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         if (parsed.paymentPhases && Array.isArray(parsed.paymentPhases)) setPaymentPhases(parsed.paymentPhases);
 
         setIsDraftRestored(true);
+      } else {
+        // Reset state for new user if no draft exists
+        clearFormAndDraftState();
       }
     } catch (e) {
       console.error('Failed to load quotation draft:', e);
     }
-  }, []);
+  }, [DRAFT_STORAGE_KEY]);
 
   // Auto-save draft to localStorage on any state modification
   useEffect(() => {
@@ -4110,19 +4117,19 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         </div>
 
         {/* Right Final Calculation Card */}
-        <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-xl border border-slate-800 space-y-5 flex flex-col justify-between">
+        <div className="bg-white text-slate-900 rounded-2xl p-6 shadow-md border-2 border-slate-200 space-y-5 flex flex-col justify-between">
           
           <div className="space-y-3">
-            <h3 className="text-base font-bold text-white border-b border-slate-800 pb-2 flex items-center justify-between">
+            <h3 className="text-base font-bold text-slate-900 border-b border-slate-200 pb-2 flex items-center justify-between">
               <span>Billing Summary</span>
-              <Calculator className="w-5 h-5 text-emerald-400" />
+              <Calculator className="w-5 h-5 text-emerald-600" />
             </h3>
 
-            <div className="space-y-3 text-xs text-slate-300">
+            <div className="space-y-3 text-xs text-slate-700">
               
               {/* Treatments Subtotal Section */}
-              <div className="bg-slate-800/90 p-3 rounded-xl border border-slate-700/80 space-y-2">
-                <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider border-b border-slate-700 pb-1.5 flex items-center justify-between">
+              <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200/90 space-y-2">
+                <div className="text-xs font-bold text-emerald-900 uppercase tracking-wider border-b border-emerald-200/80 pb-1.5 flex items-center justify-between">
                   <span>
                     {patientTreatmentMode === 'outdoor' 
                       ? 'Treatments Subtotal - Outdoor Packages' 
@@ -4132,62 +4139,62 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   </span>
                 </div>
 
-                <div className="space-y-1.5 text-slate-300">
+                <div className="space-y-1.5 text-slate-700">
                   <div className="flex justify-between">
                     <span>Total Bill:</span>
-                    <span className="font-bold text-white">BDT {treatmentsGrossSubtotal.toLocaleString()}</span>
+                    <span className="font-bold text-slate-900">BDT {treatmentsGrossSubtotal.toLocaleString()}</span>
                   </div>
 
-                  <div className="flex justify-between text-rose-300">
+                  <div className="flex justify-between text-rose-700 font-medium">
                     <span>Discount Amount:</span>
-                    <span className="font-bold">-BDT {treatmentsTotalDiscount.toLocaleString()}</span>
+                    <span className="font-bold text-rose-700">-BDT {treatmentsTotalDiscount.toLocaleString()}</span>
                   </div>
 
-                  <div className="flex justify-between pt-1 border-t border-slate-700/70 font-bold text-emerald-300">
+                  <div className="flex justify-between pt-1 border-t border-emerald-200/80 font-bold text-emerald-900">
                     <span>After Discount Gross Total Bill:</span>
-                    <span className="text-sm font-extrabold text-emerald-400">BDT {treatmentsSubtotal.toLocaleString()}</span>
+                    <span className="text-sm font-extrabold text-emerald-800">BDT {treatmentsSubtotal.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
 
               {/* Additional Services */}
-              <div className="space-y-2 pt-2 border-t border-slate-800">
+              <div className="space-y-2 pt-2 border-t border-slate-200">
                 {activeIndoorServices.length > 0 ? (
-                  <div className="space-y-1 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/80">
-                    <div className="flex justify-between items-center text-xs font-bold text-indigo-300">
+                  <div className="space-y-1 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80">
+                    <div className="flex justify-between items-center text-xs font-bold text-indigo-900">
                       <span>Indoor Rooms ({activeIndoorServices.length}):</span>
-                      <span className="text-indigo-200">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
+                      <span className="text-indigo-800">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
                     </div>
-                    <div className="space-y-1 pt-1 border-t border-slate-700/60">
+                    <div className="space-y-1 pt-1 border-t border-indigo-200/60">
                       {activeIndoorServices.map((room) => (
-                        <div key={room.id} className="flex justify-between items-center text-[11px] text-slate-300">
-                          <span className="truncate pr-1 text-slate-300" title={room.roomType}>• {room.roomType} ({room.days}d)</span>
-                          <span className="font-bold text-white shrink-0">BDT {(room.totalAmount || 0).toLocaleString()}</span>
+                        <div key={room.id} className="flex justify-between items-center text-[11px] text-slate-700">
+                          <span className="truncate pr-1 text-slate-700" title={room.roomType}>• {room.roomType} ({room.days}d)</span>
+                          <span className="font-bold text-slate-900 shrink-0">BDT {(room.totalAmount || 0).toLocaleString()}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 ) : (
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-300">Indoor Accommodation:</span>
-                    <span className="font-bold text-slate-400">BDT 0</span>
+                    <span className="text-slate-700">Indoor Accommodation:</span>
+                    <span className="font-bold text-slate-500">BDT 0</span>
                   </div>
                 )}
 
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300">Food Charge:</span>
-                  <span className="font-bold text-white">BDT {foodChargeTotal.toLocaleString()}</span>
+                  <span className="text-slate-700">Food Charge:</span>
+                  <span className="font-bold text-slate-900">BDT {foodChargeTotal.toLocaleString()}</span>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300">Admission Fee:</span>
-                  <span className="font-bold text-white">BDT {actualAdmissionFee.toLocaleString()}</span>
+                  <span className="text-slate-700">Admission Fee:</span>
+                  <span className="font-bold text-slate-900">BDT {actualAdmissionFee.toLocaleString()}</span>
                 </div>
               </div>
 
               {/* Overall Special Discount */}
-              <div className="pt-2 border-t border-slate-800">
-                <div className="flex justify-between items-center text-xs text-amber-300 mb-1">
+              <div className="pt-2 border-t border-slate-200">
+                <div className="flex justify-between items-center text-xs text-amber-800 font-semibold mb-1">
                   <span>Additional Special Discount (%):</span>
                   <span>-BDT {overallDiscountAmount.toLocaleString()}</span>
                 </div>
@@ -4201,15 +4208,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                     const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
                     setOverallDiscountPercent(val);
                   }}
-                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs font-bold text-amber-300 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
 
               {/* Grand Total */}
-              <div className="pt-3 border-t border-slate-800">
+              <div className="pt-3 border-t-2 border-slate-300">
                 <div className="flex justify-between items-end">
-                  <span className="text-xs text-slate-300 uppercase font-bold tracking-wider">Grand Total Bill:</span>
-                  <span className="text-2xl font-black text-emerald-400">
+                  <span className="text-xs text-slate-800 uppercase font-extrabold tracking-wider">Grand Total Bill:</span>
+                  <span className="text-2xl font-black text-emerald-700">
                     BDT {grandTotal.toLocaleString()}
                   </span>
                 </div>
@@ -4217,34 +4224,34 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
               {/* Weekly Treatments (Separated Below Grand Total) */}
               {activeAdditionalTreatments.length > 0 && (
-                <div className="space-y-1.5 bg-sky-950/70 p-3 rounded-xl border border-sky-800/80">
-                  <div className="flex justify-between items-center text-xs font-bold text-sky-300">
+                <div className="space-y-1.5 bg-sky-50/80 p-3 rounded-xl border border-sky-200">
+                  <div className="flex justify-between items-center text-xs font-bold text-sky-950">
                     <span>Weekly Treatments ({activeAdditionalTreatments.length}):</span>
-                    <span className="text-sky-200 font-extrabold">BDT {additionalTreatmentsSubtotal.toLocaleString()}</span>
+                    <span className="text-sky-900 font-extrabold">BDT {additionalTreatmentsSubtotal.toLocaleString()}</span>
                   </div>
-                  <div className="space-y-1 pt-1.5 border-t border-sky-800/60">
+                  <div className="space-y-1 pt-1.5 border-t border-sky-200/80">
                     {activeAdditionalTreatments.map((tr) => (
-                      <div key={tr.id} className="flex justify-between items-center text-[11px] text-slate-300">
-                        <span className="truncate pr-1 text-slate-300" title={tr.treatmentName}>• {tr.treatmentName} ({tr.sessions}s)</span>
-                        <span className="font-bold text-white shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
+                      <div key={tr.id} className="flex justify-between items-center text-[11px] text-slate-700">
+                        <span className="truncate pr-1 text-slate-700" title={tr.treatmentName}>• {tr.treatmentName} ({tr.sessions}s)</span>
+                        <span className="font-bold text-slate-900 shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="text-[10px] text-sky-300/80 pt-1 border-t border-sky-800/40 italic">
+                  <div className="text-[10px] text-sky-800 pt-1 border-t border-sky-200/60 italic">
                     * Billed separately per session/week (Excluded from Grand Total)
                   </div>
                 </div>
               )}
 
               {/* Advance & Due */}
-              <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 space-y-1.5">
-                <div className="flex justify-between text-xs">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5">
+                <div className="flex justify-between text-xs font-semibold text-slate-700">
                   <span>Advance Paid:</span>
-                  <span className="font-bold text-emerald-300">BDT {advancePaid.toLocaleString()}</span>
+                  <span className="font-bold text-slate-900">BDT {advancePaid.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-xs font-bold text-rose-300">
+                <div className="flex justify-between text-xs font-bold text-rose-700">
                   <span>Net Due Balance:</span>
-                  <span className="text-base font-black text-rose-300">BDT {dueAmount.toLocaleString()}</span>
+                  <span className="text-base font-black text-rose-700">BDT {dueAmount.toLocaleString()}</span>
                 </div>
               </div>
 
