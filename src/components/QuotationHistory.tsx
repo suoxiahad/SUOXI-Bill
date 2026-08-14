@@ -25,6 +25,7 @@ interface QuotationHistoryProps {
   patients?: Patient[];
   currentUser?: User | null;
   onViewPrintQuotation: (quotation: InvoiceQuotation) => void;
+  onUpdateQuotation?: (quotation: InvoiceQuotation) => void;
   onDeleteQuotations?: (ids: string[]) => void;
   onSelectPatientForQuotation?: (patient: Patient) => void;
 }
@@ -53,15 +54,216 @@ export function getVisitOrdinal(index: number): string {
   return `${ordinal.toUpperCase()} INVOICE`;
 }
 
+// Helper to compute daily treatment rate & total daily cost for an invoice quotation
+export function getQuotationDailyRateBreakdown(quotation: InvoiceQuotation) {
+  const treatmentSessions = quotation.treatments?.map(t => t.sessions || 0) || [];
+  const indoorDays = quotation.indoorServices?.map(s => s.days || 0) || [];
+  const allDays = [...treatmentSessions, ...indoorDays].filter(d => d > 0);
+  const baseDays = allDays.length > 0 ? Math.max(...allDays) : 15;
+
+  let treatmentDaily = 0;
+  if (quotation.treatments && quotation.treatments.length > 0) {
+    quotation.treatments.forEach(t => {
+      const sess = t.sessions > 0 ? t.sessions : baseDays;
+      treatmentDaily += (t.totalCost || 0) / sess;
+    });
+  }
+
+  if (quotation.outdoorPackages && quotation.outdoorPackages.length > 0) {
+    quotation.outdoorPackages.forEach(pkg => {
+      const pDays = pkg.packageType === '30_day' ? 30 : pkg.packageType === '15_day' ? 15 : baseDays;
+      treatmentDaily += (pkg.netCost || 0) / pDays;
+    });
+  }
+
+  if (quotation.additionalTreatments && quotation.additionalTreatments.length > 0) {
+    quotation.additionalTreatments.forEach(at => {
+      const sess = (at.sessions && at.sessions > 0) ? at.sessions : baseDays;
+      treatmentDaily += (at.totalCost || 0) / sess;
+    });
+  }
+
+  let indoorDaily = 0;
+  if (quotation.indoorServices && quotation.indoorServices.length > 0) {
+    quotation.indoorServices.forEach(s => {
+      indoorDaily += s.dailyRate || ((s.totalAmount || 0) / (s.days || 1));
+    });
+  }
+
+  let totalDaily = Math.round(treatmentDaily + indoorDaily);
+  if (totalDaily <= 0 && quotation.grandTotal > 0) {
+    totalDaily = Math.round(quotation.grandTotal / (baseDays || 15));
+  }
+
+  return {
+    baseDays,
+    treatmentDaily: Math.round(treatmentDaily),
+    indoorDaily: Math.round(indoorDaily),
+    totalDaily: totalDaily || 0
+  };
+}
+
 export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   quotations,
   patients,
   currentUser,
   onViewPrintQuotation,
+  onUpdateQuotation,
   onDeleteQuotations,
   onSelectPatientForQuotation
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Payment state for inline billing calculation & updating in Full Details Modal
+  const [paymentEditState, setPaymentEditState] = useState<{
+    [quotationId: string]: {
+      days: number | '';
+      paidAmount: number | '';
+      paymentStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid';
+      isSaving?: boolean;
+      justSaved?: boolean;
+    };
+  }>({});
+
+  const handleDaysInputChange = (q: InvoiceQuotation, daysVal: number | '') => {
+    const rateInfo = getQuotationDailyRateBreakdown(q);
+    if (daysVal === '') {
+      setPaymentEditState(prev => ({
+        ...prev,
+        [q.id]: {
+          ...(prev[q.id] || { paidAmount: q.advancePaid || 0, paymentStatus: q.paymentStatus }),
+          days: ''
+        }
+      }));
+      return;
+    }
+
+    const d = Math.max(1, Math.min(365, daysVal));
+    // Auto-calculate treatment + accommodation cost for the selected days
+    const autoCalculated = Math.min(q.grandTotal, Math.round(rateInfo.totalDaily * d));
+    const autoStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid' = 
+      autoCalculated >= q.grandTotal ? 'Fully Paid' : autoCalculated > 0 ? 'Partial Paid' : 'Quotation';
+
+    setPaymentEditState(prev => ({
+      ...prev,
+      [q.id]: {
+        days: d,
+        paidAmount: autoCalculated,
+        paymentStatus: autoStatus
+      }
+    }));
+  };
+
+  const handlePaidAmountInputChange = (q: InvoiceQuotation, paidVal: number | '') => {
+    const rateInfo = getQuotationDailyRateBreakdown(q);
+    const existingDays = paymentEditState[q.id]?.days ?? rateInfo.baseDays;
+
+    if (paidVal === '') {
+      setPaymentEditState(prev => ({
+        ...prev,
+        [q.id]: {
+          days: existingDays,
+          paidAmount: '',
+          paymentStatus: 'Quotation'
+        }
+      }));
+      return;
+    }
+
+    const p = Math.max(0, Math.min(q.grandTotal * 2, paidVal));
+    const autoStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid' = 
+      p >= q.grandTotal ? 'Fully Paid' : p > 0 ? 'Partial Paid' : 'Quotation';
+
+    setPaymentEditState(prev => ({
+      ...prev,
+      [q.id]: {
+        days: existingDays,
+        paidAmount: p,
+        paymentStatus: autoStatus
+      }
+    }));
+  };
+
+  const handleStatusSelectChange = (q: InvoiceQuotation, newStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid') => {
+    const rateInfo = getQuotationDailyRateBreakdown(q);
+    const currentPaid = paymentEditState[q.id]?.paidAmount ?? (q.advancePaid || 0);
+    const currentDays = paymentEditState[q.id]?.days ?? rateInfo.baseDays;
+
+    let adjustedPaid = currentPaid;
+    if (newStatus === 'Fully Paid' && (currentPaid === '' || currentPaid < q.grandTotal)) {
+      adjustedPaid = q.grandTotal;
+    } else if (newStatus === 'Quotation' && currentPaid !== '') {
+      adjustedPaid = 0;
+    }
+
+    setPaymentEditState(prev => ({
+      ...prev,
+      [q.id]: {
+        days: currentDays,
+        paidAmount: adjustedPaid,
+        paymentStatus: newStatus
+      }
+    }));
+  };
+
+  const handleSaveInvoicePayment = (q: InvoiceQuotation) => {
+    const rateInfo = getQuotationDailyRateBreakdown(q);
+    const state = paymentEditState[q.id];
+    const paidVal = typeof state?.paidAmount === 'number' ? state.paidAmount : (q.advancePaid || 0);
+    const statusVal = state?.paymentStatus || (paidVal >= q.grandTotal ? 'Fully Paid' : paidVal > 0 ? 'Partial Paid' : 'Quotation');
+    const dueVal = Math.max(0, q.grandTotal - paidVal);
+
+    const updatedQuotation: InvoiceQuotation = {
+      ...q,
+      advancePaid: paidVal,
+      dueAmount: dueVal,
+      paymentStatus: statusVal
+    };
+
+    // Update in backend and App state
+    if (onUpdateQuotation) {
+      onUpdateQuotation(updatedQuotation);
+    }
+
+    // Update in selectedPatientModal so the modal reflects the changes immediately
+    if (selectedPatientModal) {
+      const updatedQuotations = selectedPatientModal.quotations.map(item => 
+        item.id === q.id ? { ...item, ...updatedQuotation } : item
+      );
+      const totalBilled = updatedQuotations.reduce((sum, item) => sum + (item.grandTotal || 0), 0);
+      const totalPaid = updatedQuotations.reduce((sum, item) => sum + (item.advancePaid || 0), 0);
+      const totalDue = updatedQuotations.reduce((sum, item) => sum + (item.dueAmount || 0), 0);
+
+      setSelectedPatientModal({
+        ...selectedPatientModal,
+        quotations: updatedQuotations,
+        totalBilled,
+        totalPaid,
+        totalDue
+      });
+    }
+
+    // Trigger feedback badge
+    setPaymentEditState(prev => ({
+      ...prev,
+      [q.id]: {
+        days: state?.days ?? rateInfo.baseDays,
+        paidAmount: paidVal,
+        paymentStatus: statusVal,
+        justSaved: true
+      }
+    }));
+
+    setTimeout(() => {
+      setPaymentEditState(prev => ({
+        ...prev,
+        [q.id]: {
+          ...(prev[q.id] || { days: rateInfo.baseDays, paidAmount: paidVal, paymentStatus: statusVal }),
+          justSaved: false
+        }
+      }));
+    }, 2200);
+  };
 
   const handleCreateNewQuotationForPatient = (group: PatientHistoryGroup) => {
     const existingPatient = patients?.find(
@@ -463,61 +665,152 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                       </div>
 
                       <div className="space-y-3">
-                        {group.quotations.map((q) => (
-                          <div 
-                            key={q.id}
-                            className="bg-slate-50 rounded-xl p-4 border border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 hover:border-emerald-300 transition"
-                          >
-                            <div className="space-y-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="bg-emerald-600 text-white font-extrabold text-[11px] px-2.5 py-0.5 rounded-md shadow-xs">
-                                  {q.visitLabel}
-                                </span>
-                                <span className="font-bold text-slate-800 text-xs">{q.quotationNumber}</span>
-                                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
-                                  <Calendar className="w-3 h-3 text-slate-400" /> {q.createdDate}
-                                </span>
+                        {group.quotations.map((q) => {
+                          const rateInfo = getQuotationDailyRateBreakdown(q);
+                          const editState = paymentEditState[q.id];
+                          const inputDays = editState?.days ?? rateInfo.baseDays;
+                          const inputPaid = editState?.paidAmount ?? (q.advancePaid || 0);
+                          const currentPaidNum = typeof inputPaid === 'number' ? inputPaid : 0;
+                          const currentDue = Math.max(0, q.grandTotal - currentPaidNum);
+                          const currentStatus = editState?.paymentStatus ?? (q.paymentStatus || (currentPaidNum >= q.grandTotal ? 'Fully Paid' : currentPaidNum > 0 ? 'Partial Paid' : 'Quotation'));
+                          const isSaved = editState?.justSaved;
+
+                          return (
+                            <div 
+                              key={q.id}
+                              className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-3 hover:border-emerald-300 transition"
+                            >
+                              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                                <div className="space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="bg-emerald-600 text-white font-extrabold text-[11px] px-2.5 py-0.5 rounded-md shadow-xs">
+                                      {q.visitLabel}
+                                    </span>
+                                    <span className="font-bold text-slate-800 text-xs">{q.quotationNumber}</span>
+                                    <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-slate-400" /> {q.createdDate}
+                                    </span>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                                      currentStatus === 'Fully Paid'
+                                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                        : currentStatus === 'Partial Paid'
+                                        ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                        : 'bg-slate-100 text-slate-700 border-slate-300'
+                                    }`}>
+                                      {currentStatus}
+                                    </span>
+                                  </div>
+
+                                  <p className="text-xs text-slate-600">
+                                    <span className="font-semibold text-slate-700">Services: </span>
+                                    {[
+                                      q.treatments && q.treatments.length > 0 ? `${q.treatments.length} Therapies` : null,
+                                      q.outdoorPackages && q.outdoorPackages.length > 0 ? `${q.outdoorPackages.length} Packages` : null,
+                                      q.indoorServices && q.indoorServices.length > 0 ? `${q.indoorServices.length} Cabin/Room` : null,
+                                    ].filter(Boolean).join(' • ') || 'Consultation'}
+                                  </p>
+                                </div>
+
+                                <div className="text-right">
+                                  <p className="font-black text-slate-900 text-sm">BDT {q.grandTotal.toLocaleString()}</p>
+                                  <p className="text-[11px] text-slate-500 font-medium">
+                                    Paid: <span className="font-bold text-emerald-700">BDT {currentPaidNum.toLocaleString()}</span> | Due: <span className="font-bold text-rose-600">BDT {currentDue.toLocaleString()}</span>
+                                  </p>
+                                </div>
                               </div>
 
-                              <p className="text-xs text-slate-600">
-                                <span className="font-semibold text-slate-700">Services Included: </span>
-                                {[
-                                  q.treatments && q.treatments.length > 0 ? `${q.treatments.length} Individual Therapies` : null,
-                                  q.outdoorPackages && q.outdoorPackages.length > 0 ? `${q.outdoorPackages.length} Outdoor Packages` : null,
-                                  q.indoorServices && q.indoorServices.length > 0 ? `${q.indoorServices.length} Indoor Room Cabin` : null,
-                                ].filter(Boolean).join(' • ') || 'General Consultation'}
-                              </p>
-                            </div>
+                              {/* Interactive Billing Adjustment Row */}
+                              <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {/* Days Input */}
+                                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
+                                    <span className="text-[10px] font-black text-slate-600 uppercase">Day:</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      max="365"
+                                      value={inputDays}
+                                      placeholder="Days"
+                                      onChange={(e) => {
+                                        const val = e.target.value === '' ? '' : parseInt(e.target.value);
+                                        handleDaysInputChange(q, val);
+                                      }}
+                                      className="w-12 px-1 text-center font-bold text-slate-900 bg-white border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 text-xs"
+                                      title="Enter days to auto-calculate treatment cost for those days"
+                                    />
+                                    <span className="text-[10px] font-bold text-emerald-700">
+                                      (= BDT {Math.min(q.grandTotal, Math.round(rateInfo.totalDaily * (typeof inputDays === 'number' ? inputDays : 1))).toLocaleString()})
+                                    </span>
+                                  </div>
 
-                            <div className="flex items-center justify-between md:justify-end gap-2 w-full md:w-auto pt-2 md:pt-0 border-t md:border-t-0 border-slate-200">
-                              <div className="text-right mr-2">
-                                <p className="font-black text-slate-900 text-sm">BDT {q.grandTotal.toLocaleString()}</p>
-                                <p className="text-[11px] text-emerald-700 font-medium">
-                                  Paid: BDT {q.advancePaid.toLocaleString()} | <span className="text-rose-600 font-bold">Due: BDT {q.dueAmount.toLocaleString()}</span>
-                                </p>
+                                  {/* Paid Input */}
+                                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
+                                    <span className="text-[10px] font-black text-slate-600 uppercase">Paid:</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max={q.grandTotal * 2}
+                                      value={inputPaid}
+                                      placeholder="Paid BDT"
+                                      onChange={(e) => {
+                                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                        handlePaidAmountInputChange(q, val);
+                                      }}
+                                      className="w-20 px-1 text-right font-bold text-emerald-800 bg-white border border-emerald-300 rounded focus:ring-1 focus:ring-emerald-500 text-xs"
+                                      title="Enter payment received amount in BDT"
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-500">BDT</span>
+                                  </div>
+
+                                  {/* Status Select */}
+                                  <select
+                                    value={currentStatus}
+                                    onChange={(e) => handleStatusSelectChange(q, e.target.value as any)}
+                                    className="text-[11px] font-bold px-2 py-1 rounded-lg border border-slate-300 bg-white cursor-pointer"
+                                  >
+                                    <option value="Quotation">Quotation</option>
+                                    <option value="Partial Paid">Partial Paid</option>
+                                    <option value="Fully Paid">Fully Paid</option>
+                                  </select>
+
+                                  {/* Save / Update Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveInvoicePayment(q)}
+                                    className={`px-3 py-1 rounded-lg font-bold text-xs transition shadow-xs flex items-center gap-1 cursor-pointer ${
+                                      isSaved
+                                        ? 'bg-emerald-700 text-white'
+                                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                    }`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>{isSaved ? 'Saved!' : 'Update'}</span>
+                                  </button>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 ml-auto">
+                                  <button
+                                    onClick={() => onViewPrintQuotation(q)}
+                                    className="inline-flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-3 py-1 rounded-lg shadow-xs transition cursor-pointer shrink-0"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" />
+                                    <span>Print</span>
+                                  </button>
+
+                                  {isAdmin && (
+                                    <button
+                                      onClick={() => handleDeleteSingleQuotation(q)}
+                                      className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-lg transition cursor-pointer shrink-0"
+                                      title="Delete Invoice (System Admin Only)"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-
-                              <button
-                                onClick={() => onViewPrintQuotation(q)}
-                                className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition cursor-pointer shrink-0"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                                <span>Print Invoice</span>
-                              </button>
-
-                              {isAdmin && (
-                                <button
-                                  onClick={() => handleDeleteSingleQuotation(q)}
-                                  className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer shrink-0"
-                                  title="Delete Invoice (System Admin Only)"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span className="hidden sm:inline">Delete</span>
-                                </button>
-                              )}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -838,40 +1131,175 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                       </div>
                     </div>
 
-                    {/* Totals & Actions */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                      <div className="text-xs">
-                        <span className="font-bold text-slate-800">Grand Total: BDT {q.grandTotal.toLocaleString()}</span>
-                        <span className="text-slate-400 mx-2">•</span>
-                        <span className="text-emerald-700 font-bold">Paid: BDT {q.advancePaid.toLocaleString()}</span>
-                        <span className="text-slate-400 mx-2">•</span>
-                        <span className="text-rose-600 font-bold">Due: BDT {q.dueAmount.toLocaleString()}</span>
-                      </div>
+                    {/* Billing Counter Payment Entry & Status Update Bar */}
+                    {(() => {
+                      const rateInfo = getQuotationDailyRateBreakdown(q);
+                      const editState = paymentEditState[q.id];
+                      const inputDays = editState?.days ?? rateInfo.baseDays;
+                      const inputPaid = editState?.paidAmount ?? (q.advancePaid || 0);
+                      const currentPaidNum = typeof inputPaid === 'number' ? inputPaid : 0;
+                      const currentDue = Math.max(0, q.grandTotal - currentPaidNum);
+                      const currentStatus = editState?.paymentStatus ?? (q.paymentStatus || (currentPaidNum >= q.grandTotal ? 'Fully Paid' : currentPaidNum > 0 ? 'Partial Paid' : 'Quotation'));
+                      const isSaved = editState?.justSaved;
 
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => {
-                            setSelectedPatientModal(null);
-                            onViewPrintQuotation(q);
-                          }}
-                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          <span>Print This Invoice</span>
-                        </button>
+                      return (
+                        <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-3.5 space-y-2.5 mt-3 shadow-2xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2.5">
+                            
+                            {/* Financial Summary & Dynamic Due Calculation */}
+                            <div className="text-xs flex flex-wrap items-center gap-2">
+                              <span className="font-extrabold text-slate-900">Grand Total: BDT {q.grandTotal.toLocaleString()}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="font-bold text-emerald-800">
+                                Paid: BDT {currentPaidNum.toLocaleString()}
+                              </span>
+                              <span className="text-slate-300">•</span>
+                              <span className={`font-bold ${currentDue > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                Due: BDT {currentDue.toLocaleString()}
+                              </span>
+                              <span className="text-slate-300 hidden sm:inline">•</span>
+                              <span className="text-[10.5px] text-slate-600 font-bold bg-white px-2 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                                Day Rate: ~BDT {rateInfo.totalDaily.toLocaleString()}/day
+                              </span>
+                            </div>
 
-                        {isAdmin && (
-                          <button
-                            onClick={() => handleDeleteSingleQuotation(q)}
-                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition flex items-center gap-1 cursor-pointer"
-                            title="Delete Invoice (System Admin Only)"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete Invoice</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                            {/* Status Pill Selector */}
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Paid Status:</span>
+                              <select
+                                value={currentStatus}
+                                onChange={(e) => handleStatusSelectChange(q, e.target.value as any)}
+                                className={`text-xs font-bold px-2.5 py-1 rounded-lg border focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-2xs cursor-pointer ${
+                                  currentStatus === 'Fully Paid'
+                                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                    : currentStatus === 'Partial Paid'
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                    : 'bg-white text-slate-700 border-slate-300'
+                                }`}
+                              >
+                                <option value="Quotation">Quotation (Unpaid)</option>
+                                <option value="Partial Paid">Partial Paid</option>
+                                <option value="Fully Paid">Fully Paid</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Interactive Input Controls: Days + Paid Amount + Quick Shortcuts + Save Button + Print Button */}
+                          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-emerald-100">
+                            <div className="flex flex-wrap items-center gap-2">
+                              
+                              {/* Day Input with Treatment Auto-Count */}
+                              <div className="flex items-center gap-1.5 bg-white border border-slate-300 px-2.5 py-1 rounded-xl shadow-2xs">
+                                <span className="text-[11px] font-black text-slate-600 uppercase">Day:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="365"
+                                  value={inputDays}
+                                  placeholder="Days"
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : parseInt(e.target.value);
+                                    handleDaysInputChange(q, val);
+                                  }}
+                                  className="w-13 px-1.5 py-0.5 text-center text-xs font-black text-slate-900 bg-slate-50 border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  title="Enter days to auto-calculate treatment cost for those days"
+                                />
+                                <span className="text-[10px] font-bold text-emerald-700">
+                                  (= BDT {Math.min(q.grandTotal, Math.round(rateInfo.totalDaily * (typeof inputDays === 'number' ? inputDays : 1))).toLocaleString()})
+                                </span>
+                              </div>
+
+                              {/* Paid Payment Input */}
+                              <div className="flex items-center gap-1.5 bg-white border border-slate-300 px-2.5 py-1 rounded-xl shadow-2xs">
+                                <span className="text-[11px] font-black text-slate-600 uppercase">Paid:</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={q.grandTotal * 2}
+                                  value={inputPaid}
+                                  placeholder="Paid BDT"
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                    handlePaidAmountInputChange(q, val);
+                                  }}
+                                  className="w-24 px-2 py-0.5 text-right text-xs font-black text-emerald-800 bg-emerald-50/50 border border-emerald-300 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  title="Enter payment received amount in BDT"
+                                />
+                                <span className="text-[10px] font-extrabold text-slate-500">BDT</span>
+                              </div>
+
+                              {/* Quick Shortcuts */}
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handlePaidAmountInputChange(q, q.grandTotal)}
+                                  className="px-2 py-1 bg-white hover:bg-emerald-100 text-emerald-800 font-bold text-[10px] rounded-lg border border-emerald-300 shadow-2xs transition cursor-pointer"
+                                  title="Mark as Full Paid"
+                                >
+                                  Full Pay
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePaidAmountInputChange(q, 0)}
+                                  className="px-1.5 py-1 bg-white hover:bg-slate-100 text-slate-600 font-bold text-[10px] rounded-lg border border-slate-300 shadow-2xs transition cursor-pointer"
+                                  title="Reset paid to 0"
+                                >
+                                  Reset 0
+                                </button>
+                              </div>
+
+                              {/* Save & Update Status Button */}
+                              <button
+                                type="button"
+                                onClick={() => handleSaveInvoicePayment(q)}
+                                className={`px-3.5 py-1 rounded-xl font-black text-xs transition shadow-xs flex items-center gap-1 cursor-pointer ${
+                                  isSaved
+                                    ? 'bg-emerald-700 text-white animate-in zoom-in-95'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                                }`}
+                                title="Save payment and update paid status"
+                              >
+                                {isSaved ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>Updated!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>Update Status</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+
+                            {/* Actions: Print Invoice & Delete */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                onClick={() => {
+                                  setSelectedPatientModal(null);
+                                  onViewPrintQuotation(q);
+                                }}
+                                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Print Invoice</span>
+                              </button>
+
+                              {isAdmin && (
+                                <button
+                                  onClick={() => handleDeleteSingleQuotation(q)}
+                                  className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition cursor-pointer"
+                                  title="Delete Invoice (System Admin Only)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                   </div>
                 ))}

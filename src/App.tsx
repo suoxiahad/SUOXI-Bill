@@ -73,6 +73,8 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
     const role = currentUser.role;
+    if (activeTab === 'users') return; // All logged-in users have access to My Profile & Account Settings
+    
     if (role === 'Call Center' && activeTab !== 'appointments') {
       setActiveTab('appointments');
     } else if (role === 'Doctor' && activeTab !== 'quotation' && activeTab !== 'history') {
@@ -216,6 +218,7 @@ export default function App() {
                 patients={patients}
                 currentUser={currentUser}
                 onViewPrintQuotation={(q) => setPrintQuotation(q)}
+                onUpdateQuotation={handleSaveQuotation}
                 onDeleteQuotations={handleDeleteQuotations}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
               />

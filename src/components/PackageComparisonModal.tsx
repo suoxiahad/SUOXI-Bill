@@ -148,7 +148,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       days: customDays['outdoor_30'] ?? 30,
       discountPercent: customDiscounts['outdoor_30'] ?? 35,
       badgeText: 'Highest Savings',
-      badgeColor: 'bg-emerald-500 text-white',
+      badgeColor: 'bg-emerald-600 text-white',
     },
     {
       id: 'outdoor_15',
@@ -158,7 +158,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       days: customDays['outdoor_15'] ?? 15,
       discountPercent: customDiscounts['outdoor_15'] ?? 25,
       badgeText: 'Popular Choice',
-      badgeColor: 'bg-teal-500 text-white',
+      badgeColor: 'bg-teal-600 text-white',
     },
     {
       id: 'outdoor_10',
@@ -168,7 +168,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       days: customDays['outdoor_10'] ?? 10,
       discountPercent: customDiscounts['outdoor_10'] ?? 15,
       badgeText: 'Value Choice',
-      badgeColor: 'bg-cyan-600 text-white',
+      badgeColor: 'bg-cyan-700 text-white',
     },
     {
       id: 'outdoor_perday',
@@ -178,7 +178,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       days: customDays['outdoor_perday'] ?? benchmarkDays,
       discountPercent: customDiscounts['outdoor_perday'] ?? 0,
       badgeText: 'Standard Rate',
-      badgeColor: 'bg-slate-200 text-slate-700',
+      badgeColor: 'bg-slate-600 text-white',
     },
     {
       id: 'indoor_10',
@@ -393,12 +393,18 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                   return (
                     <div
                       key={sc.id}
-                      className={`rounded-2xl border p-4 transition-all relative flex flex-col justify-between ${
+                      className={`rounded-2xl border p-4 pt-5 transition-all relative flex flex-col justify-between ${
                         isCurrentActive
                           ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/30 shadow-md'
                           : 'border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm'
                       }`}
                     >
+                      {/* Badge on Top Border Line (Left Side) */}
+                      <span className={`absolute -top-3 left-4 text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${sc.badgeColor}`}>
+                        {sc.badgeText}
+                      </span>
+
+                      {/* Currently Active Badge on Top Border Line (Right Side) */}
                       {isCurrentActive && (
                         <span className="absolute -top-3 right-4 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">
                           <Check className="w-3 h-3" /> Currently Active
@@ -406,49 +412,53 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                       )}
 
                       <div>
-                        <div className="flex items-center justify-between gap-1.5 mb-2">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${sc.badgeColor}`}>
-                            {sc.badgeText}
-                          </span>
-                          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-xl shadow-2xs shrink-0">
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Days:</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="365"
-                                value={sc.days}
-                                onChange={(e) => {
-                                  const val = Math.max(1, parseInt(e.target.value) || 1);
-                                  setCustomDays(prev => ({ ...prev, [sc.id]: val }));
-                                }}
-                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                              />
-                            </div>
-                            <div className="h-3 w-px bg-slate-300"></div>
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Disc:</span>
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={sc.discountPercent}
-                                onChange={(e) => {
-                                  const val = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
-                                  setCustomDiscounts(prev => ({ ...prev, [sc.id]: val }));
-                                }}
-                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                              />
-                              <span className="text-[10px] font-extrabold text-slate-500">%</span>
-                            </div>
+                        {/* Line 1: Days & Discount Input Fields */}
+                        <div className="flex items-center justify-between gap-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-xl shadow-2xs mb-2.5">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-tight">Days:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="365"
+                              value={sc.days}
+                              onChange={(e) => {
+                                const val = Math.max(1, parseInt(e.target.value) || 1);
+                                setCustomDays(prev => ({ ...prev, [sc.id]: val }));
+                              }}
+                              className="w-12 px-1.5 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-2xs"
+                            />
+                          </div>
+                          <div className="h-3.5 w-px bg-slate-300"></div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-tight">Disc:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={sc.discountPercent}
+                              onChange={(e) => {
+                                const val = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
+                                setCustomDiscounts(prev => ({ ...prev, [sc.id]: val }));
+                              }}
+                              className="w-12 px-1.5 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-2xs"
+                            />
+                            <span className="text-[10px] font-extrabold text-slate-500">%</span>
                           </div>
                         </div>
-                        <h4 className="text-base font-bold text-slate-900">
-                          {sc.days} Days
-                        </h4>
-                        <p className="text-xs text-slate-500 font-medium mb-3">
-                          Outdoor Patient • {sc.discountPercent}% Discount
-                        </p>
+
+                        {/* Line 2: Package Title & Highlighted Discount Title */}
+                        <div className="mb-2">
+                          <h4 className="text-base font-extrabold text-slate-900 leading-tight">
+                            {sc.days} Days
+                          </h4>
+                          <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <span>Outdoor</span>
+                            <span className="text-slate-300">•</span>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[11px] bg-emerald-100 text-emerald-800 border border-emerald-300/80 shadow-2xs">
+                              {sc.discountPercent}% Discount
+                            </span>
+                          </p>
+                        </div>
 
                         <div className="space-y-1.5 border-t border-slate-100 pt-3 text-xs">
                           <div className="flex justify-between text-slate-600">
@@ -514,12 +524,18 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                   return (
                     <div
                       key={sc.id}
-                      className={`rounded-2xl border p-4 transition-all relative flex flex-col justify-between ${
+                      className={`rounded-2xl border p-4 pt-5 transition-all relative flex flex-col justify-between ${
                         isCurrentActive
                           ? 'border-indigo-600 ring-2 ring-indigo-600/20 bg-indigo-50/30 shadow-md'
                           : 'border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm'
                       }`}
                     >
+                      {/* Badge on Top Border Line (Left Side) */}
+                      <span className={`absolute -top-3 left-4 text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${sc.badgeColor}`}>
+                        Indoor {sc.days} Days
+                      </span>
+
+                      {/* Currently Active Badge on Top Border Line (Right Side) */}
                       {isCurrentActive && (
                         <span className="absolute -top-3 right-4 bg-indigo-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">
                           <Check className="w-3 h-3" /> Currently Active
@@ -527,49 +543,53 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                       )}
 
                       <div>
-                        <div className="flex items-center justify-between gap-1.5 mb-2">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${sc.badgeColor}`}>
-                            Indoor {sc.days} Days
-                          </span>
-                          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-xl shadow-2xs shrink-0">
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Days:</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max="365"
-                                value={sc.days}
-                                onChange={(e) => {
-                                  const val = Math.max(1, parseInt(e.target.value) || 1);
-                                  setCustomDays(prev => ({ ...prev, [sc.id]: val }));
-                                }}
-                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                              />
-                            </div>
-                            <div className="h-3 w-px bg-slate-300"></div>
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] font-extrabold text-slate-500 uppercase">Disc:</span>
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={sc.discountPercent}
-                                onChange={(e) => {
-                                  const val = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
-                                  setCustomDiscounts(prev => ({ ...prev, [sc.id]: val }));
-                                }}
-                                className="w-12 px-1 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                              />
-                              <span className="text-[10px] font-extrabold text-slate-500">%</span>
-                            </div>
+                        {/* Line 1: Days & Discount Input Fields */}
+                        <div className="flex items-center justify-between gap-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-xl shadow-2xs mb-2.5">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-tight">Days:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="365"
+                              value={sc.days}
+                              onChange={(e) => {
+                                const val = Math.max(1, parseInt(e.target.value) || 1);
+                                setCustomDays(prev => ({ ...prev, [sc.id]: val }));
+                              }}
+                              className="w-12 px-1.5 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                            />
+                          </div>
+                          <div className="h-3.5 w-px bg-slate-300"></div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-tight">Disc:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={sc.discountPercent}
+                              onChange={(e) => {
+                                const val = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
+                                setCustomDiscounts(prev => ({ ...prev, [sc.id]: val }));
+                              }}
+                              className="w-12 px-1.5 py-0.5 text-center text-xs font-black text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                            />
+                            <span className="text-[10px] font-extrabold text-slate-500">%</span>
                           </div>
                         </div>
-                        <h4 className="text-base font-bold text-slate-900">
-                          {sc.days} Days
-                        </h4>
-                        <p className="text-xs text-slate-500 font-medium mb-3">
-                          Indoor Patient • {sc.discountPercent}% Treatment Discount
-                        </p>
+
+                        {/* Line 2: Package Title & Highlighted Discount Title */}
+                        <div className="mb-2">
+                          <h4 className="text-base font-extrabold text-slate-900 leading-tight">
+                            {sc.days} Days
+                          </h4>
+                          <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <span>Indoor</span>
+                            <span className="text-slate-300">•</span>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[11px] bg-indigo-100 text-indigo-800 border border-indigo-300/80 shadow-2xs">
+                              {sc.discountPercent}% Treatment Disc
+                            </span>
+                          </p>
+                        </div>
 
                         <div className="space-y-1.5 border-t border-slate-100 pt-2 text-[11px]">
                           {/* Treatment Breakdown */}
@@ -895,7 +915,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           * This comparison sheet is generated for counseling and financial planning purposes only. Final charges depend on actual stay and prescribed therapies.
         </p>
 
-        <div className="flex justify-between text-[11px] text-slate-800 font-bold pt-2">
+        <div className="flex justify-between text-[11px] text-slate-800 font-bold pt-2 mb-4">
           <div className="text-center w-40 border-t border-slate-400 pt-1">
             Prepared By
           </div>
@@ -905,6 +925,16 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           <div className="text-center w-40 border-t border-slate-400 pt-1">
             Authorized Hospital Signature
           </div>
+        </div>
+
+        {/* System & Developer Footer */}
+        <div className="border-t border-slate-200 pt-2 text-center text-[8.5px] text-slate-500 space-y-0.5">
+          <p className="font-semibold text-slate-600">
+            Computer generated invoice comparison • SUO XI Hospital (Acupuncture) Billing System
+          </p>
+          <p className="text-slate-400 font-medium">
+            Developed &amp; Designed By SUOXI IT
+          </p>
         </div>
       </div>
     </div>
