@@ -156,13 +156,12 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
 
   const handlePaidAmountInputChange = (q: InvoiceQuotation, paidVal: number | '') => {
     const rateInfo = getQuotationDailyRateBreakdown(q);
-    const existingDays = paymentEditState[q.id]?.days ?? rateInfo.baseDays;
 
     if (paidVal === '') {
       setPaymentEditState(prev => ({
         ...prev,
         [q.id]: {
-          days: existingDays,
+          days: '',
           paidAmount: '',
           paymentStatus: 'Quotation'
         }
@@ -174,10 +173,25 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     const autoStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid' = 
       p >= q.grandTotal ? 'Fully Paid' : p > 0 ? 'Partial Paid' : 'Quotation';
 
+    // Calculate minimum days covered by the partial/full paid amount based on total daily rate
+    let autoCalculatedDays: number = rateInfo.baseDays;
+    if (rateInfo.totalDaily > 0) {
+      if (p >= q.grandTotal) {
+        autoCalculatedDays = rateInfo.baseDays;
+      } else if (p > 0) {
+        // Minimum days covered by this paid amount
+        autoCalculatedDays = Math.min(rateInfo.baseDays, Math.max(1, Math.floor(p / rateInfo.totalDaily)));
+      } else {
+        autoCalculatedDays = 0;
+      }
+    } else {
+      autoCalculatedDays = p >= q.grandTotal ? rateInfo.baseDays : 1;
+    }
+
     setPaymentEditState(prev => ({
       ...prev,
       [q.id]: {
-        days: existingDays,
+        days: autoCalculatedDays,
         paidAmount: p,
         paymentStatus: autoStatus
       }
@@ -187,19 +201,29 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   const handleStatusSelectChange = (q: InvoiceQuotation, newStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid') => {
     const rateInfo = getQuotationDailyRateBreakdown(q);
     const currentPaid = paymentEditState[q.id]?.paidAmount ?? (q.advancePaid || 0);
-    const currentDays = paymentEditState[q.id]?.days ?? rateInfo.baseDays;
 
     let adjustedPaid = currentPaid;
-    if (newStatus === 'Fully Paid' && (currentPaid === '' || currentPaid < q.grandTotal)) {
+    let adjustedDays: number | '' = paymentEditState[q.id]?.days ?? rateInfo.baseDays;
+
+    if (newStatus === 'Fully Paid') {
       adjustedPaid = q.grandTotal;
-    } else if (newStatus === 'Quotation' && currentPaid !== '') {
+      adjustedDays = rateInfo.baseDays;
+    } else if (newStatus === 'Quotation') {
       adjustedPaid = 0;
+      adjustedDays = 0;
+    } else if (newStatus === 'Partial Paid') {
+      if (typeof adjustedPaid !== 'number' || adjustedPaid <= 0 || adjustedPaid >= q.grandTotal) {
+        adjustedPaid = Math.round(q.grandTotal / 2);
+      }
+      if (rateInfo.totalDaily > 0 && typeof adjustedPaid === 'number') {
+        adjustedDays = Math.min(rateInfo.baseDays, Math.max(1, Math.floor(adjustedPaid / rateInfo.totalDaily)));
+      }
     }
 
     setPaymentEditState(prev => ({
       ...prev,
       [q.id]: {
-        days: currentDays,
+        days: adjustedDays,
         paidAmount: adjustedPaid,
         paymentStatus: newStatus
       }
@@ -328,6 +352,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   } | null>(null);
 
   const isAdmin = currentUser?.role === 'System Admin';
+  const canManageBilling = currentUser?.role === 'System Admin' || currentUser?.role === 'Billing Counter';
 
   const handleDeleteSingleQuotation = (q: InvoiceQuotation) => {
     if (!isAdmin) {
@@ -668,12 +693,19 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                         {group.quotations.map((q) => {
                           const rateInfo = getQuotationDailyRateBreakdown(q);
                           const editState = paymentEditState[q.id];
-                          const inputDays = editState?.days ?? rateInfo.baseDays;
                           const inputPaid = editState?.paidAmount ?? (q.advancePaid || 0);
                           const currentPaidNum = typeof inputPaid === 'number' ? inputPaid : 0;
                           const currentDue = Math.max(0, q.grandTotal - currentPaidNum);
                           const currentStatus = editState?.paymentStatus ?? (q.paymentStatus || (currentPaidNum >= q.grandTotal ? 'Fully Paid' : currentPaidNum > 0 ? 'Partial Paid' : 'Quotation'));
                           const isSaved = editState?.justSaved;
+
+                          let defaultDays: number = rateInfo.baseDays;
+                          if (currentPaidNum >= q.grandTotal) {
+                            defaultDays = rateInfo.baseDays;
+                          } else if (currentPaidNum > 0 && rateInfo.totalDaily > 0) {
+                            defaultDays = Math.min(rateInfo.baseDays, Math.max(1, Math.floor(currentPaidNum / rateInfo.totalDaily)));
+                          }
+                          const inputDays = editState?.days !== undefined ? editState.days : defaultDays;
 
                           return (
                             <div 
@@ -719,74 +751,89 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                                 </div>
                               </div>
 
-                              {/* Interactive Billing Adjustment Row */}
+                              {/* Billing Adjustment Row (Restricted to Admin & Billing Counter) */}
                               <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {/* Days Input */}
-                                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
-                                    <span className="text-[10px] font-black text-slate-600 uppercase">Day:</span>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      max="365"
-                                      value={inputDays}
-                                      placeholder="Days"
-                                      onChange={(e) => {
-                                        const val = e.target.value === '' ? '' : parseInt(e.target.value);
-                                        handleDaysInputChange(q, val);
-                                      }}
-                                      className="w-12 px-1 text-center font-bold text-slate-900 bg-white border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 text-xs"
-                                      title="Enter days to auto-calculate treatment cost for those days"
-                                    />
-                                    <span className="text-[10px] font-bold text-emerald-700">
-                                      (= BDT {Math.min(q.grandTotal, Math.round(rateInfo.totalDaily * (typeof inputDays === 'number' ? inputDays : 1))).toLocaleString()})
+                                {canManageBilling ? (
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {/* Days Input */}
+                                    <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
+                                      <span className="text-[10px] font-black text-slate-600 uppercase">Day:</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="365"
+                                        value={inputDays}
+                                        placeholder="Days"
+                                        onChange={(e) => {
+                                          const val = e.target.value === '' ? '' : parseInt(e.target.value);
+                                          handleDaysInputChange(q, val);
+                                        }}
+                                        className="w-12 px-1 text-center font-bold text-slate-900 bg-white border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 text-xs"
+                                        title="Enter days to auto-calculate treatment cost for those days"
+                                      />
+                                      <span className="text-[10px] font-bold text-emerald-700">
+                                        (= BDT {Math.min(q.grandTotal, Math.round(rateInfo.totalDaily * (typeof inputDays === 'number' ? inputDays : 1))).toLocaleString()})
+                                      </span>
+                                    </div>
+
+                                    {/* Paid Input */}
+                                    <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
+                                      <span className="text-[10px] font-black text-slate-600 uppercase">Paid:</span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={q.grandTotal * 2}
+                                        value={inputPaid}
+                                        placeholder="Paid BDT"
+                                        onChange={(e) => {
+                                          const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                          handlePaidAmountInputChange(q, val);
+                                        }}
+                                        className="w-20 px-1 text-right font-bold text-emerald-800 bg-white border border-emerald-300 rounded focus:ring-1 focus:ring-emerald-500 text-xs"
+                                        title="Enter payment received amount in BDT"
+                                      />
+                                      <span className="text-[10px] font-bold text-slate-500">BDT</span>
+                                    </div>
+
+                                    {/* Status Select */}
+                                    <select
+                                      value={currentStatus}
+                                      onChange={(e) => handleStatusSelectChange(q, e.target.value as any)}
+                                      className="text-[11px] font-bold px-2 py-1 rounded-lg border border-slate-300 bg-white cursor-pointer"
+                                    >
+                                      <option value="Quotation">Quotation</option>
+                                      <option value="Partial Paid">Partial Paid</option>
+                                      <option value="Fully Paid">Fully Paid</option>
+                                    </select>
+
+                                    {/* Save / Update Button */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveInvoicePayment(q)}
+                                      className={`px-3 py-1 rounded-lg font-bold text-xs transition shadow-xs flex items-center gap-1 cursor-pointer ${
+                                        isSaved
+                                          ? 'bg-emerald-700 text-white'
+                                          : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                      }`}
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>{isSaved ? 'Saved!' : 'Update'}</span>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
+                                    <span className="font-semibold text-slate-700">Payment Status:</span>
+                                    <span className={`font-bold px-2 py-0.5 rounded-md border ${
+                                      q.paymentStatus === 'Fully Paid'
+                                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                        : q.paymentStatus === 'Partial Paid'
+                                        ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                        : 'bg-slate-100 text-slate-700 border-slate-300'
+                                    }`}>
+                                      {q.paymentStatus || 'Quotation'}
                                     </span>
                                   </div>
-
-                                  {/* Paid Input */}
-                                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
-                                    <span className="text-[10px] font-black text-slate-600 uppercase">Paid:</span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={q.grandTotal * 2}
-                                      value={inputPaid}
-                                      placeholder="Paid BDT"
-                                      onChange={(e) => {
-                                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
-                                        handlePaidAmountInputChange(q, val);
-                                      }}
-                                      className="w-20 px-1 text-right font-bold text-emerald-800 bg-white border border-emerald-300 rounded focus:ring-1 focus:ring-emerald-500 text-xs"
-                                      title="Enter payment received amount in BDT"
-                                    />
-                                    <span className="text-[10px] font-bold text-slate-500">BDT</span>
-                                  </div>
-
-                                  {/* Status Select */}
-                                  <select
-                                    value={currentStatus}
-                                    onChange={(e) => handleStatusSelectChange(q, e.target.value as any)}
-                                    className="text-[11px] font-bold px-2 py-1 rounded-lg border border-slate-300 bg-white cursor-pointer"
-                                  >
-                                    <option value="Quotation">Quotation</option>
-                                    <option value="Partial Paid">Partial Paid</option>
-                                    <option value="Fully Paid">Fully Paid</option>
-                                  </select>
-
-                                  {/* Save / Update Button */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSaveInvoicePayment(q)}
-                                    className={`px-3 py-1 rounded-lg font-bold text-xs transition shadow-xs flex items-center gap-1 cursor-pointer ${
-                                      isSaved
-                                        ? 'bg-emerald-700 text-white'
-                                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                    }`}
-                                  >
-                                    <Check className="w-3.5 h-3.5" />
-                                    <span>{isSaved ? 'Saved!' : 'Update'}</span>
-                                  </button>
-                                </div>
+                                )}
 
                                 <div className="flex items-center gap-1.5 ml-auto">
                                   <button
@@ -1131,17 +1178,67 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                       </div>
                     </div>
 
-                    {/* Billing Counter Payment Entry & Status Update Bar */}
+                    {/* Billing Counter Payment Entry & Status Update Bar (Restricted to Admin & Billing Counter) */}
                     {(() => {
                       const rateInfo = getQuotationDailyRateBreakdown(q);
                       const editState = paymentEditState[q.id];
-                      const inputDays = editState?.days ?? rateInfo.baseDays;
                       const inputPaid = editState?.paidAmount ?? (q.advancePaid || 0);
                       const currentPaidNum = typeof inputPaid === 'number' ? inputPaid : 0;
                       const currentDue = Math.max(0, q.grandTotal - currentPaidNum);
                       const currentStatus = editState?.paymentStatus ?? (q.paymentStatus || (currentPaidNum >= q.grandTotal ? 'Fully Paid' : currentPaidNum > 0 ? 'Partial Paid' : 'Quotation'));
                       const isSaved = editState?.justSaved;
 
+                      let defaultDays: number = rateInfo.baseDays;
+                      if (currentPaidNum >= q.grandTotal) {
+                        defaultDays = rateInfo.baseDays;
+                      } else if (currentPaidNum > 0 && rateInfo.totalDaily > 0) {
+                        defaultDays = Math.min(rateInfo.baseDays, Math.max(1, Math.floor(currentPaidNum / rateInfo.totalDaily)));
+                      }
+                      const inputDays = editState?.days !== undefined ? editState.days : defaultDays;
+
+                      if (!canManageBilling) {
+                        // Read-only View for Doctors, Call Center, etc.
+                        return (
+                          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 mt-3 shadow-2xs">
+                            <div className="text-xs flex flex-wrap items-center gap-2">
+                              <span className="font-extrabold text-slate-900">Grand Total: BDT {q.grandTotal.toLocaleString()}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="font-bold text-emerald-800">
+                                Paid: BDT {q.advancePaid.toLocaleString()}
+                              </span>
+                              <span className="text-slate-300">•</span>
+                              <span className={`font-bold ${q.dueAmount > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                Due: BDT {q.dueAmount.toLocaleString()}
+                              </span>
+                              <span className="text-slate-300">•</span>
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${
+                                q.paymentStatus === 'Fully Paid'
+                                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  : q.paymentStatus === 'Partial Paid'
+                                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                  : 'bg-slate-200 text-slate-700 border-slate-300'
+                              }`}>
+                                {q.paymentStatus || 'Quotation'}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setSelectedPatientModal(null);
+                                  onViewPrintQuotation(q);
+                                }}
+                                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Print Invoice</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // Interactive Billing Management View for Admin & Billing Counter
                       return (
                         <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-3.5 space-y-2.5 mt-3 shadow-2xs">
                           <div className="flex flex-wrap items-center justify-between gap-2.5">

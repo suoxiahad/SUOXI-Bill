@@ -40,6 +40,18 @@ export default function App() {
   const [printQuotation, setPrintQuotation] = useState<InvoiceQuotation | null>(null);
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
 
+  // Global calculation view mode for Section 1 (Treatments) and Section 4 (Indoor Rooms)
+  const [showFullTreatmentCalculation, setShowFullTreatmentCalculation] = useState<boolean>(false);
+  const [showFullIndoorCalculation, setShowFullIndoorCalculation] = useState<boolean>(false);
+
+  const isAllCalculationsFull = showFullTreatmentCalculation && showFullIndoorCalculation;
+
+  const handleToggleAllCalculations = () => {
+    const nextVal = !isAllCalculationsFull;
+    setShowFullTreatmentCalculation(nextVal);
+    setShowFullIndoorCalculation(nextVal);
+  };
+
   const initializeAppData = useCallback(async () => {
     setIsLoading(true);
     const savedUser = getActiveUser();
@@ -160,6 +172,8 @@ export default function App() {
         currentUser={currentUser}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
+        isAllCalculationsFull={isAllCalculationsFull}
+        onToggleAllCalculations={handleToggleAllCalculations}
       />
 
       {/* Main Container */}
@@ -209,6 +223,10 @@ export default function App() {
                 currentUser={currentUser}
                 onSaveQuotation={handleSaveQuotation}
                 onPreviewPrint={handlePreviewPrint}
+                showFullTreatmentCalculation={showFullTreatmentCalculation}
+                setShowFullTreatmentCalculation={setShowFullTreatmentCalculation}
+                showFullIndoorCalculation={showFullIndoorCalculation}
+                setShowFullIndoorCalculation={setShowFullIndoorCalculation}
               />
             </div>
 

@@ -17,7 +17,10 @@ import {
   EyeOff,
   Calendar,
   CreditCard,
-  Clock
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  Lock
 } from 'lucide-react';
 import { PackageComparisonModal } from './PackageComparisonModal';
 import { 
@@ -114,6 +117,10 @@ interface QuotationBuilderProps {
   currentUser?: User | null;
   onSaveQuotation: (quotation: InvoiceQuotation) => void;
   onPreviewPrint: (quotation: InvoiceQuotation) => void;
+  showFullTreatmentCalculation?: boolean;
+  setShowFullTreatmentCalculation?: React.Dispatch<React.SetStateAction<boolean>>;
+  showFullIndoorCalculation?: boolean;
+  setShowFullIndoorCalculation?: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
@@ -123,7 +130,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   catalog,
   currentUser,
   onSaveQuotation,
-  onPreviewPrint
+  onPreviewPrint,
+  showFullTreatmentCalculation: externalShowFullTreatmentCalculation,
+  setShowFullTreatmentCalculation: externalSetShowFullTreatmentCalculation,
+  showFullIndoorCalculation: externalShowFullIndoorCalculation,
+  setShowFullIndoorCalculation: externalSetShowFullIndoorCalculation,
 }) => {
   // Search patient by phone inside builder
   const [phoneSearch, setPhoneSearch] = useState('');
@@ -169,8 +180,17 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [treatmentPackage, setTreatmentPackage] = useState<'30 Days' | '15 Days' | 'Per Day' | ''>('');
   const [treatmentDays, setTreatmentDays] = useState<number | ''>('');
   const [bulkDiscountPercent, setBulkDiscountPercent] = useState<number | ''>('');
-  const [showFullTreatmentCalculation, setShowFullTreatmentCalculation] = useState<boolean>(false);
-  const [showFullIndoorCalculation, setShowFullIndoorCalculation] = useState<boolean>(false);
+  const [internalShowFullTreatmentCalculation, internalSetShowFullTreatmentCalculation] = useState<boolean>(false);
+  const [internalShowFullIndoorCalculation, internalSetShowFullIndoorCalculation] = useState<boolean>(false);
+
+  const showFullTreatmentCalculation = externalShowFullTreatmentCalculation !== undefined ? externalShowFullTreatmentCalculation : internalShowFullTreatmentCalculation;
+  const setShowFullTreatmentCalculation = externalSetShowFullTreatmentCalculation || internalSetShowFullTreatmentCalculation;
+
+  const showFullIndoorCalculation = externalShowFullIndoorCalculation !== undefined ? externalShowFullIndoorCalculation : internalShowFullIndoorCalculation;
+  const setShowFullIndoorCalculation = externalSetShowFullIndoorCalculation || internalSetShowFullIndoorCalculation;
+
+  const [isIndoorSectionOpen, setIsIndoorSectionOpen] = useState<boolean>(true);
+  const [isOutdoorSectionOpen, setIsOutdoorSectionOpen] = useState<boolean>(true);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
 
   const toggleIndoorCalculationMode = () => {
@@ -221,10 +241,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   };
 
   const toggleTreatmentCalculationMode = () => {
-    const nextMode = !showFullTreatmentCalculation;
-    setShowFullTreatmentCalculation(nextMode);
-    recalculateTreatmentList(nextMode);
+    setShowFullTreatmentCalculation(prev => !prev);
   };
+
+  useEffect(() => {
+    recalculateTreatmentList(showFullTreatmentCalculation);
+  }, [showFullTreatmentCalculation]);
 
   const handleApplyPackageFromComparison = (
     patientType: 'outdoor' | 'indoor',
@@ -464,6 +486,30 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   const handlePatientModeChange = (newMode: 'outdoor' | 'indoor' | '') => {
     setPatientTreatmentMode(newMode);
+
+    if (newMode === 'outdoor') {
+      setIsIndoorSectionOpen(false);
+      setIsOutdoorSectionOpen(true);
+      setIncludeAdmissionFee(false);
+      setFoodChargeSelected(false);
+      setFoodChargeDays('');
+      setIndoorServiceList(prev => prev.map(item => ({
+        ...item,
+        selected: false,
+        days: '',
+        totalAmount: 0
+      })));
+    } else if (newMode === 'indoor') {
+      setIsIndoorSectionOpen(true);
+      setIsOutdoorSectionOpen(false);
+      setOutdoorPackageList(prev => prev.map(item => ({
+        ...item,
+        selected: false
+      })));
+    } else {
+      setIsOutdoorSectionOpen(true);
+      setIsIndoorSectionOpen(true);
+    }
 
     if (newMode === '') {
       setTreatmentPackage('');
@@ -775,6 +821,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   }, [catalog]);
 
   const toggleOutdoorPackageSelection = (id: string) => {
+    if (patientTreatmentMode === 'indoor') return;
     setOutdoorPackageList(prev => prev.map(item => {
       if (item.id === id) {
         return { ...item, selected: !item.selected };
@@ -784,6 +831,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   };
 
   const updateOutdoorPackageItem = (id: string, fields: Partial<OutdoorPackageListItem>) => {
+    if (patientTreatmentMode === 'indoor') return;
     setOutdoorPackageList(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, ...fields };
@@ -1923,9 +1971,21 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const foodChargePerDaySubtotal = foodChargeSelected ? (foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) : 0;
   const indoorPerDaySubtotal = indoorRoomPerDaySubtotal + foodChargePerDaySubtotal;
 
+  const effectiveIndoorRoomSubtotal = showFullIndoorCalculation
+    ? indoorRoomOnlySubtotal
+    : indoorRoomPerDaySubtotal;
+
+  const effectiveFoodChargeTotal = showFullIndoorCalculation
+    ? foodChargeTotal
+    : foodChargePerDaySubtotal;
+
+  const effectiveIndoorSubtotal = showFullIndoorCalculation
+    ? indoorSubtotal
+    : indoorPerDaySubtotal;
+
   const effectiveOutdoorSubtotal = patientTreatmentMode === 'outdoor' ? 0 : outdoorSubtotal;
-  const actualAdmissionFee = includeAdmissionFee ? Number(admissionFee || 0) : 0;
-  const grossTotal = treatmentsSubtotal + effectiveOutdoorSubtotal + indoorSubtotal + actualAdmissionFee;
+  const actualAdmissionFee = (patientTreatmentMode !== 'outdoor' && includeAdmissionFee) ? Number(admissionFee || 0) : 0;
+  const grossTotal = treatmentsSubtotal + effectiveOutdoorSubtotal + effectiveIndoorSubtotal + actualAdmissionFee;
 
   const overallDiscountAmount = Math.round((grossTotal * Number(overallDiscountPercent || 0)) / 100);
   const grandTotal = Math.max(0, grossTotal - overallDiscountAmount);
@@ -2217,25 +2277,69 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     });
   };
 
+  const distributeDaysEqually = (totalDays: number, count: number): number[] => {
+    if (count <= 0) return [];
+    if (totalDays <= 0) return new Array(count).fill(0);
+    const base = Math.floor(totalDays / count);
+    const rem = totalDays % count;
+    const daysArr = new Array(count).fill(base);
+    for (let i = 0; i < rem; i++) {
+      daysArr[count - 1 - i] += 1;
+    }
+    return daysArr;
+  };
+
   const addCustomPhase = () => {
     setPaymentPhases(prev => {
-      const nextNum = prev.length + 1;
-      const newPhase: PaymentPhase = {
-        id: `phase-custom-${Date.now()}`,
-        phaseName: `${nextNum}${nextNum === 1 ? 'st' : nextNum === 2 ? 'nd' : nextNum === 3 ? 'rd' : 'th'} Payment Cycle`,
-        daysOrSessions: 10,
-        amount: 0,
-        percentage: 0,
-        notes: 'Custom installment cycle'
-      };
-      return recalculatePhasesByDays([...prev, newPhase], grandTotal);
+      const newCount = prev.length + 1;
+      const totalCourseDays = (treatmentDays !== '' && Number(treatmentDays) > 0)
+        ? Number(treatmentDays)
+        : (prev.reduce((s, p) => s + (p.daysOrSessions || 0), 0) || 30);
+
+      const splitDaysArr = distributeDaysEqually(totalCourseDays, newCount);
+
+      const updatedPhases: PaymentPhase[] = [];
+      for (let i = 0; i < newCount; i++) {
+        const nextNum = i + 1;
+        const days = splitDaysArr[i];
+        if (i < prev.length) {
+          updatedPhases.push({
+            ...prev[i],
+            daysOrSessions: days,
+          });
+        } else {
+          updatedPhases.push({
+            id: `phase-custom-${Date.now()}`,
+            phaseName: `${nextNum}${nextNum === 1 ? 'st' : nextNum === 2 ? 'nd' : nextNum === 3 ? 'rd' : 'th'} Payment Cycle`,
+            daysOrSessions: days,
+            amount: 0,
+            percentage: 0,
+            notes: 'Custom installment cycle'
+          });
+        }
+      }
+
+      return recalculatePhasesByDays(updatedPhases, grandTotal);
     });
   };
 
   const removeCustomPhase = (id: string) => {
     setPaymentPhases(prev => {
       const filtered = prev.filter(p => p.id !== id);
-      return recalculatePhasesByDays(filtered, grandTotal);
+      if (filtered.length === 0) return [];
+
+      const totalCourseDays = (treatmentDays !== '' && Number(treatmentDays) > 0)
+        ? Number(treatmentDays)
+        : (prev.reduce((s, p) => s + (p.daysOrSessions || 0), 0) || 30);
+
+      const splitDaysArr = distributeDaysEqually(totalCourseDays, filtered.length);
+
+      const updatedPhases = filtered.map((p, idx) => ({
+        ...p,
+        daysOrSessions: splitDaysArr[idx]
+      }));
+
+      return recalculatePhasesByDays(updatedPhases, grandTotal);
     });
   };
 
@@ -2266,14 +2370,18 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       description: p.description || ''
     }));
 
-    const formattedIndoorServices: IndoorService[] = activeIndoorServices.map(i => ({
-      id: i.id,
-      roomType: i.roomType,
-      dailyRate: i.dailyRate,
-      days: i.days === '' ? 1 : Number(i.days),
-      totalAmount: i.totalAmount,
-      remarks: i.remarks || ''
-    }));
+    const formattedIndoorServices: IndoorService[] = activeIndoorServices.map(i => {
+      const iDays = showFullIndoorCalculation ? (i.days === '' ? 1 : Number(i.days)) : 1;
+      const iTotal = showFullIndoorCalculation ? (i.totalAmount || 0) : (i.dailyRate || 0);
+      return {
+        id: i.id,
+        roomType: i.roomType,
+        dailyRate: i.dailyRate,
+        days: iDays,
+        totalAmount: iTotal,
+        remarks: i.remarks || ''
+      };
+    });
 
     const formattedAdditionalTreatments: AdditionalTreatment[] = activeAdditionalTreatments.map(a => ({
       id: a.id,
@@ -2289,10 +2397,10 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }));
 
     if (foodChargeSelected) {
-      const fcDays = foodChargeDays === '' ? 1 : Number(foodChargeDays);
+      const fcDays = showFullIndoorCalculation ? (foodChargeDays === '' ? 1 : Number(foodChargeDays)) : 1;
       const fcRate = foodChargePerDay === '' ? 0 : Number(foodChargePerDay);
-      const fcTotal = fcRate * fcDays;
-      if (fcTotal > 0) {
+      const fcTotal = showFullIndoorCalculation ? (foodChargeTotal || 0) : fcRate;
+      if (fcTotal > 0 || fcRate > 0) {
         formattedIndoorServices.push({
           id: 'food-charge-3x',
           roomType: 'Food Charge 3 Times',
@@ -2341,7 +2449,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       outdoorSubtotal,
 
       indoorServices: formattedIndoorServices,
-      indoorSubtotal,
+      indoorSubtotal: effectiveIndoorSubtotal,
 
       additionalTreatments: formattedAdditionalTreatments,
       additionalTreatmentsSubtotal,
@@ -3233,12 +3341,20 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               3
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>3. Outdoor Packages</span>
-                <span className="text-[11px] font-semibold bg-teal-100 text-teal-800 px-2.5 py-0.5 rounded-full border border-teal-200">
-                  Catalog List Mode
-                </span>
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <span>3. Outdoor Packages</span>
+                  <span className="text-[11px] font-semibold bg-teal-100 text-teal-800 px-2.5 py-0.5 rounded-full border border-teal-200">
+                    Catalog List Mode
+                  </span>
+                </h3>
+                {patientTreatmentMode === 'indoor' && (
+                  <span className="text-[11px] font-bold bg-amber-50 text-amber-800 px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-amber-600" />
+                    <span>Indoor Mode (Locked)</span>
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500">
                 System admin catalog outdoor packages listed below. Select items and set discounts for invoice quotation.
               </p>
@@ -3246,180 +3362,217 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-60">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Filter outdoor package..."
-                value={outdoorSearch}
-                onChange={(e) => setOutdoorSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-teal-500"
-              />
-            </div>
+            {isOutdoorSectionOpen && (
+              <div className="relative flex-1 sm:w-60">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filter outdoor package..."
+                  value={outdoorSearch}
+                  onChange={(e) => setOutdoorSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsOutdoorSectionOpen(prev => !prev)}
+              className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 text-xs font-bold shrink-0"
+              title={isOutdoorSectionOpen ? 'Collapse Outdoor Section' : 'Expand Outdoor Section'}
+            >
+              {isOutdoorSectionOpen ? (
+                <>
+                  <span>Collapse</span>
+                  <ChevronUp className="w-4 h-4 text-slate-600" />
+                </>
+              ) : (
+                <>
+                  <span>Expand Section</span>
+                  <ChevronDown className="w-4 h-4 text-slate-600" />
+                </>
+              )}
+            </button>
           </div>
         </div>
 
-        {/* Package Table */}
-        <div className="overflow-x-auto border border-slate-200 rounded-xl">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                <th className="p-3 w-16 text-center">SELECT</th>
-                <th className="p-3">SL & Package Name</th>
-                <th className="p-3 w-32">Base Fee (BDT)</th>
-                <th className="p-3 w-28 text-center">Discount (%)</th>
-                <th className="p-3 w-32 text-center">Discount (BDT)</th>
-                <th className="p-3 w-36 text-right">Net Price (BDT)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredOutdoorPackageList.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-6 text-center text-slate-400 text-xs font-medium">
-                    No outdoor package matching "{outdoorSearch}".
-                  </td>
-                </tr>
-              ) : (
-                filteredOutdoorPackageList.map((item, idx) => {
-                  const isChecked = item.selected;
-                  return (
-                    <tr 
-                      key={item.id ? `${item.id}-${idx}` : `pkg-tr-${idx}`} 
-                      onClick={() => toggleOutdoorPackageSelection(item.id)}
-                      className={`transition-colors cursor-pointer ${
-                        isChecked 
-                          ? 'bg-teal-50/80 font-medium' 
-                          : 'bg-white hover:bg-slate-50 text-slate-600'
-                      }`}
-                    >
-                      {/* Checkbox */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleOutdoorPackageSelection(item.id)}
-                          className="w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500 cursor-pointer accent-teal-600"
-                        />
-                      </td>
-
-                      {/* SL & Package Name */}
-                      <td className="p-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-slate-500 text-xs w-6">
-                              {idx + 1}.
-                            </span>
-                            {item.isCustom ? (
-                              <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
-                                <input
-                                  type="text"
-                                  value={item.packageName}
-                                  onChange={(e) => updateOutdoorPackageItem(item.id, { packageName: e.target.value })}
-                                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-teal-500 w-full"
-                                />
-                                <button
-                                  onClick={() => removeOutdoorPackageItem(item.id)}
-                                  className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0"
-                                  title="Remove custom package"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ) : (
-                              <span className={`text-xs font-bold ${isChecked ? 'text-teal-950' : 'text-slate-800'}`}>
-                                {item.packageName}
-                              </span>
-                            )}
-                          </div>
-                          {item.isCustom ? (
-                            <input
-                              type="text"
-                              placeholder="Package details / description..."
-                              value={item.description || ''}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => updateOutdoorPackageItem(item.id, { description: e.target.value })}
-                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-teal-400"
-                            />
-                          ) : (
-                            item.description && (
-                              <p className="text-[11px] text-slate-500 font-medium pl-8">
-                                {item.description}
-                              </p>
-                            )
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Base Fee */}
-                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="space-y-0.5">
-                          <div className="relative">
-                            <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                            <input
-                              type="number"
-                              placeholder="0"
-                              value={item.totalBaseCost === '' ? '' : item.totalBaseCost}
-                              onChange={(e) => updateOutdoorPackageItem(item.id, { totalBaseCost: e.target.value === '' ? '' : Number(e.target.value) })}
-                              className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500"
-                            />
-                          </div>
-                          {item.rateNote && (
-                            <p className="text-[10px] text-slate-500 font-medium px-0.5">
-                              {item.rateNote}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Discount (%) */}
-                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            placeholder="0"
-                            value={item.discountPercent === '' ? '' : item.discountPercent}
-                            onChange={(e) => updateOutdoorPackageItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
-                            className="w-full pr-5 pl-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-amber-800 text-center focus:ring-2 focus:ring-teal-500 placeholder-slate-300"
-                          />
-                          <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
-                        </div>
-                      </td>
-
-                      {/* Discount Amount */}
-                      <td className="p-3 text-center">
-                        <span className={`text-xs font-semibold ${item.discountAmount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                          -BDT {(item.discountAmount || 0).toLocaleString()}
-                        </span>
-                      </td>
-
-                      {/* Net Price */}
-                      <td className="p-3 text-right">
-                        <span className={`text-xs font-black ${isChecked ? 'text-teal-700 text-sm' : 'text-slate-400'}`}>
-                          BDT {(item.netCost || 0).toLocaleString()}
-                        </span>
+        {isOutdoorSectionOpen && (
+          <>
+            {/* Package Table */}
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
+                    <th className="p-3 w-16 text-center">SELECT</th>
+                    <th className="p-3">SL & Package Name</th>
+                    <th className="p-3 w-32">Base Fee (BDT)</th>
+                    <th className="p-3 w-28 text-center">Discount (%)</th>
+                    <th className="p-3 w-32 text-center">Discount (BDT)</th>
+                    <th className="p-3 w-36 text-right">Net Price (BDT)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredOutdoorPackageList.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-slate-400 text-xs font-medium">
+                        No outdoor package matching "{outdoorSearch}".
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                  ) : (
+                    filteredOutdoorPackageList.map((item, idx) => {
+                      const isChecked = item.selected;
+                      const isLocked = patientTreatmentMode === 'indoor';
+                      return (
+                        <tr 
+                          key={item.id ? `${item.id}-${idx}` : `pkg-tr-${idx}`} 
+                          onClick={() => {
+                            if (!isLocked) toggleOutdoorPackageSelection(item.id);
+                          }}
+                          className={`transition-colors ${
+                            isLocked 
+                              ? 'bg-slate-50/70 text-slate-400 cursor-not-allowed opacity-75' 
+                              : isChecked 
+                                ? 'bg-teal-50/80 font-medium cursor-pointer' 
+                                : 'bg-white hover:bg-slate-50 text-slate-600 cursor-pointer'
+                          }`}
+                        >
+                          {/* Checkbox */}
+                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              disabled={isLocked}
+                              onChange={() => toggleOutdoorPackageSelection(item.id)}
+                              className={`w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500 accent-teal-600 ${
+                                isLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                              }`}
+                            />
+                          </td>
 
-        <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs">
-          <div className="text-slate-500 font-medium">
-            Selected outdoor packages: <span className="font-bold text-teal-800">{activeOutdoorPackages.length}</span> of {outdoorPackageList.length} items
-          </div>
+                          {/* SL & Package Name */}
+                          <td className="p-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-slate-500 text-xs w-6">
+                                  {idx + 1}.
+                                </span>
+                                {item.isCustom ? (
+                                  <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                      type="text"
+                                      disabled={isLocked}
+                                      value={item.packageName}
+                                      onChange={(e) => updateOutdoorPackageItem(item.id, { packageName: e.target.value })}
+                                      className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-teal-500 w-full disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                    />
+                                    <button
+                                      disabled={isLocked}
+                                      onClick={() => removeOutdoorPackageItem(item.id)}
+                                      className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      title="Remove custom package"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className={`text-xs font-bold ${isChecked ? 'text-teal-950' : 'text-slate-800'}`}>
+                                    {item.packageName}
+                                  </span>
+                                )}
+                              </div>
+                              {item.isCustom ? (
+                                <input
+                                  type="text"
+                                  disabled={isLocked}
+                                  placeholder="Package details / description..."
+                                  value={item.description || ''}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => updateOutdoorPackageItem(item.id, { description: e.target.value })}
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-teal-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                />
+                              ) : (
+                                item.description && (
+                                  <p className="text-[11px] text-slate-500 font-medium pl-8">
+                                    {item.description}
+                                  </p>
+                                )
+                              )}
+                            </div>
+                          </td>
 
-          <div className="text-right flex items-center gap-2">
-            <span className="text-slate-700 font-bold">Outdoor Packages Subtotal: </span>
-            <span className="text-teal-700 font-black text-base ml-2">
-              BDT {outdoorSubtotal.toLocaleString()}
-            </span>
-          </div>
-        </div>
+                          {/* Base Fee */}
+                          <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                            <div className="space-y-0.5">
+                              <div className="relative">
+                                <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
+                                <input
+                                  type="number"
+                                  disabled={isLocked}
+                                  placeholder="0"
+                                  value={item.totalBaseCost === '' ? '' : item.totalBaseCost}
+                                  onChange={(e) => updateOutdoorPackageItem(item.id, { totalBaseCost: e.target.value === '' ? '' : Number(e.target.value) })}
+                                  className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                />
+                              </div>
+                              {item.rateNote && (
+                                <p className="text-[10px] text-slate-500 font-medium px-0.5">
+                                  {item.rateNote}
+                                </p>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Discount (%) */}
+                          <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                disabled={isLocked}
+                                placeholder="0"
+                                value={item.discountPercent === '' ? '' : item.discountPercent}
+                                onChange={(e) => updateOutdoorPackageItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
+                                className="w-full pr-5 pl-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-amber-800 text-center focus:ring-2 focus:ring-teal-500 placeholder-slate-300 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                              />
+                              <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
+                            </div>
+                          </td>
+
+                          {/* Discount Amount */}
+                          <td className="p-3 text-center">
+                            <span className={`text-xs font-semibold ${item.discountAmount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                              -BDT {(item.discountAmount || 0).toLocaleString()}
+                            </span>
+                          </td>
+
+                          {/* Net Price */}
+                          <td className="p-3 text-right">
+                            <span className={`text-xs font-black ${isChecked ? 'text-teal-700 text-sm' : 'text-slate-400'}`}>
+                              BDT {(item.netCost || 0).toLocaleString()}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs">
+              <div className="text-slate-500 font-medium">
+                Selected outdoor packages: <span className="font-bold text-teal-800">{activeOutdoorPackages.length}</span> of {outdoorPackageList.length} items
+              </div>
+
+              <div className="text-right flex items-center gap-2">
+                <span className="text-slate-700 font-bold">Outdoor Packages Subtotal: </span>
+                <span className="text-teal-700 font-black text-base ml-2">
+                  BDT {outdoorSubtotal.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </>
+        )}
 
       </div>
 
@@ -3433,12 +3586,20 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               4
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>4. Indoor Room & Accommodation Services</span>
-                <span className="text-[11px] font-semibold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
-                  Catalog List Mode
-                </span>
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <span>4. Indoor Room & Accommodation Services</span>
+                  <span className="text-[11px] font-semibold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                    Catalog List Mode
+                  </span>
+                </h3>
+                {patientTreatmentMode === 'outdoor' && (
+                  <span className="text-[11px] font-bold bg-amber-50 text-amber-800 px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-amber-600" />
+                    <span>Outdoor Mode (Closed)</span>
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500">
                 System admin catalog room / cabin types listed below. Select items and enter stay duration (days) for invoice quotation.
               </p>
@@ -3446,327 +3607,354 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-60">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Filter room / cabin type..."
-                value={indoorSearch}
-                onChange={(e) => setIndoorSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
+            {isIndoorSectionOpen && (
+              <>
+                <div className="relative flex-1 sm:w-60">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Filter room / cabin type..."
+                    value={indoorSearch}
+                    onChange={(e) => setIndoorSearch(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleIndoorCalculationMode}
+                  className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
+                    showFullIndoorCalculation
+                      ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
+                      : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-300'
+                  }`}
+                  title={showFullIndoorCalculation ? 'Toggle Day View' : 'Toggle Full View'}
+                >
+                  {showFullIndoorCalculation ? (
+                    <Eye className="w-4 h-4 text-slate-600 shrink-0" />
+                  ) : (
+                    <EyeOff className="w-4 h-4 text-indigo-600 shrink-0" />
+                  )}
+                </button>
+              </>
+            )}
             <button
               type="button"
-              onClick={toggleIndoorCalculationMode}
-              className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
-                showFullIndoorCalculation
-                  ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
-                  : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-300'
-              }`}
-              title={showFullIndoorCalculation ? 'Toggle Day View' : 'Toggle Full View'}
+              onClick={() => setIsIndoorSectionOpen(prev => !prev)}
+              className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 text-xs font-bold"
+              title={isIndoorSectionOpen ? 'Collapse Indoor Section' : 'Expand Indoor Section'}
             >
-              {showFullIndoorCalculation ? (
-                <Eye className="w-4 h-4 text-slate-600 shrink-0" />
+              {isIndoorSectionOpen ? (
+                <>
+                  <span>Collapse</span>
+                  <ChevronUp className="w-4 h-4 text-slate-600" />
+                </>
               ) : (
-                <EyeOff className="w-4 h-4 text-indigo-600 shrink-0" />
+                <>
+                  <span>Expand Section</span>
+                  <ChevronDown className="w-4 h-4 text-slate-600" />
+                </>
               )}
             </button>
           </div>
         </div>
 
-        {/* Indoor Table */}
-        <div className="overflow-x-auto border border-slate-200 rounded-xl">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                <th className="p-3 w-16 text-center">
-                  <div className="flex items-center justify-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={isAllIndoorServicesSelected}
-                      onChange={toggleSelectAllIndoorServices}
-                      className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
-                      title="Select / Deselect All Indoor Rooms"
-                    />
-                  </div>
-                </th>
-                <th className="p-3">SL & Room / Cabin Type</th>
-                <th className="p-3 w-36">Daily Rate (BDT)</th>
-                <th className="p-3 w-28 text-center">Days Stay</th>
-                <th className="p-3 w-36 text-right">
-                  {showFullIndoorCalculation ? 'Total Amount (BDT)' : 'Per Day Amount (BDT)'}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredIndoorServiceList.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-6 text-center text-slate-400 text-xs font-medium">
-                    No room / cabin type matching "{indoorSearch}".
-                  </td>
-                </tr>
-              ) : (
-                filteredIndoorServiceList.map((item, idx) => {
-                  const isChecked = item.selected;
-                  return (
-                    <tr 
-                      key={item.id ? `${item.id}-${idx}` : `ind-tr-${idx}`} 
-                      onClick={() => toggleIndoorServiceSelection(item.id)}
-                      className={`transition-colors cursor-pointer ${
-                        isChecked 
-                          ? 'bg-indigo-50/80 font-medium' 
-                          : 'bg-white hover:bg-slate-50 text-slate-600'
-                      }`}
-                    >
-                      {/* Checkbox */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+        {isIndoorSectionOpen && (
+          <>
+            {/* Indoor Table */}
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
+                    <th className="p-3 w-16 text-center">
+                      <div className="flex items-center justify-center gap-1">
                         <input
                           type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleIndoorServiceSelection(item.id)}
+                          checked={isAllIndoorServicesSelected}
+                          onChange={toggleSelectAllIndoorServices}
                           className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                          title="Select / Deselect All Indoor Rooms"
                         />
-                      </td>
-
-                      {/* SL & Room Type */}
-                      <td className="p-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-slate-500 text-xs w-6">
-                              {idx + 1}.
-                            </span>
-                            {item.isCustom ? (
-                              <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
-                                <input
-                                  type="text"
-                                  value={item.roomType}
-                                  onChange={(e) => updateIndoorServiceItem(item.id, { roomType: e.target.value })}
-                                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-indigo-500 w-full"
-                                />
-                                <button
-                                  onClick={() => removeIndoorServiceItem(item.id)}
-                                  className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0"
-                                  title="Remove custom room"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ) : (
-                              <span className={`text-xs font-bold ${isChecked ? 'text-indigo-950' : 'text-slate-800'}`}>
-                                {item.roomType}
-                              </span>
-                            )}
-                          </div>
-                          {item.isCustom ? (
-                            <input
-                              type="text"
-                              placeholder="Room number / clinical remarks..."
-                              value={item.remarks || ''}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => updateIndoorServiceItem(item.id, { remarks: e.target.value })}
-                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-indigo-400"
-                            />
-                          ) : (
-                            item.remarks && (
-                              <p className="text-[11px] text-slate-500 font-medium pl-8">
-                                {item.remarks}
-                              </p>
-                            )
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Daily Rate */}
-                      <td className="p-3">
-                        {item.isCustom ? (
-                          <div className="relative" onClick={(e) => e.stopPropagation()}>
-                            <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                            <input
-                              type="number"
-                              value={item.dailyRate}
-                              onChange={(e) => updateIndoorServiceItem(item.id, { dailyRate: Number(e.target.value) })}
-                              className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
-                            />
-                          </div>
-                        ) : (
-                          <div className="space-y-0.5">
-                            <div className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 inline-flex items-center gap-1">
-                              <span className="text-[10px] text-slate-500 font-semibold">BDT</span>
-                              <span>{(item.dailyRate || 0).toLocaleString()} / day</span>
-                            </div>
-                            {item.rateNote && (
-                              <p className="text-[10px] text-slate-500 font-medium px-0.5">
-                                {item.rateNote}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Days Stay */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="number"
-                          min={1}
-                          placeholder="0"
-                          value={
-                            showFullIndoorCalculation
-                              ? (item.days === '' ? '' : item.days)
-                              : 1
-                          }
-                          onChange={(e) => updateIndoorServiceItem(item.id, { days: e.target.value === '' ? '' : Number(e.target.value) })}
-                          className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                            !showFullIndoorCalculation
-                              ? 'bg-slate-100 border-slate-200 text-indigo-900 font-extrabold'
-                              : isChecked
-                                ? 'bg-white border-slate-300 text-indigo-900 focus:ring-2 focus:ring-indigo-500'
-                                : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-indigo-500'
-                          }`}
-                        />
-                      </td>
-
-                      {/* Amount (Per Day vs Total) */}
-                      <td className="p-3 text-right">
-                        <span className={`text-xs font-black ${isChecked ? 'text-indigo-700 text-sm' : 'text-slate-400'}`}>
-                          BDT {(showFullIndoorCalculation ? (item.totalAmount || 0) : (item.dailyRate || 0)).toLocaleString()}
-                        </span>
+                      </div>
+                    </th>
+                    <th className="p-3">SL & Room / Cabin Type</th>
+                    <th className="p-3 w-36">Daily Rate (BDT)</th>
+                    <th className="p-3 w-28 text-center">Days Stay</th>
+                    <th className="p-3 w-36 text-right">
+                      {showFullIndoorCalculation ? 'Total Amount (BDT)' : 'Per Day Amount (BDT)'}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredIndoorServiceList.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-slate-400 text-xs font-medium">
+                        No room / cabin type matching "{indoorSearch}".
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                  ) : (
+                    filteredIndoorServiceList.map((item, idx) => {
+                      const isChecked = item.selected;
+                      return (
+                        <tr 
+                          key={item.id ? `${item.id}-${idx}` : `ind-tr-${idx}`} 
+                          onClick={() => toggleIndoorServiceSelection(item.id)}
+                          className={`transition-colors cursor-pointer ${
+                            isChecked 
+                              ? 'bg-indigo-50/80 font-medium' 
+                              : 'bg-white hover:bg-slate-50 text-slate-600'
+                          }`}
+                        >
+                          {/* Checkbox */}
+                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleIndoorServiceSelection(item.id)}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                            />
+                          </td>
 
-        {/* Additional Food Charge Table */}
-        <div className="overflow-x-auto border border-slate-200 rounded-xl">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                <th className="p-3 w-16 text-center">SELECT</th>
-                <th className="p-3">SL & SERVICE NAME</th>
-                <th className="p-3 w-36">PER DAY CHARGE (BDT)</th>
-                <th className="p-3 w-28 text-center">DAY STAY</th>
-                <th className="p-3 w-36 text-right">
-                  {showFullIndoorCalculation ? 'TOTAL AMOUNT (BDT)' : 'PER DAY AMOUNT (BDT)'}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr 
-                className={`transition-colors ${
-                  foodChargeSelected 
-                    ? 'bg-amber-50/80 font-medium' 
-                    : 'bg-white hover:bg-slate-50 text-slate-600'
-                }`}
-              >
-                {/* Checkbox */}
-                <td className="p-3 text-center">
-                  <input
-                    type="checkbox"
-                    checked={foodChargeSelected}
-                    onChange={toggleFoodChargeSelection}
-                    className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer accent-amber-600"
-                  />
-                </td>
+                          {/* SL & Room Type */}
+                          <td className="p-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-slate-500 text-xs w-6">
+                                  {idx + 1}.
+                                </span>
+                                {item.isCustom ? (
+                                  <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                      type="text"
+                                      value={item.roomType}
+                                      onChange={(e) => updateIndoorServiceItem(item.id, { roomType: e.target.value })}
+                                      className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-indigo-500 w-full"
+                                    />
+                                    <button
+                                      onClick={() => removeIndoorServiceItem(item.id)}
+                                      className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0"
+                                      title="Remove custom room"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className={`text-xs font-bold ${isChecked ? 'text-indigo-950' : 'text-slate-800'}`}>
+                                    {item.roomType}
+                                  </span>
+                                )}
+                              </div>
+                              {item.isCustom ? (
+                                <input
+                                  type="text"
+                                  placeholder="Room number / clinical remarks..."
+                                  value={item.remarks || ''}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => updateIndoorServiceItem(item.id, { remarks: e.target.value })}
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-indigo-400"
+                                />
+                              ) : (
+                                item.remarks && (
+                                  <p className="text-[11px] text-slate-500 font-medium pl-8">
+                                    {item.remarks}
+                                  </p>
+                                )
+                              )}
+                            </div>
+                          </td>
 
-                {/* Service Name */}
-                <td className="p-3">
-                  <div className="space-y-0.5">
-                    <span className={`text-xs font-bold ${foodChargeSelected ? 'text-amber-950' : 'text-slate-800'}`}>
-                      Food Charge 3 Times
-                    </span>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      Food & Meal Charges (3 Times Daily)
-                    </p>
-                  </div>
-                </td>
+                          {/* Daily Rate */}
+                          <td className="p-3">
+                            {item.isCustom ? (
+                              <div className="relative" onClick={(e) => e.stopPropagation()}>
+                                <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
+                                <input
+                                  type="number"
+                                  value={item.dailyRate}
+                                  onChange={(e) => updateIndoorServiceItem(item.id, { dailyRate: Number(e.target.value) })}
+                                  className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <div className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 inline-flex items-center gap-1">
+                                  <span className="text-[10px] text-slate-500 font-semibold">BDT</span>
+                                  <span>{(item.dailyRate || 0).toLocaleString()} / day</span>
+                                </div>
+                                {item.rateNote && (
+                                  <p className="text-[10px] text-slate-500 font-medium px-0.5">
+                                    {item.rateNote}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </td>
 
-                {/* Per Day Charge */}
-                <td className="p-3">
-                  <div className="relative">
-                    <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                    <input
-                      type="number"
-                      min={0}
-                      placeholder="500"
-                      value={foodChargePerDay === '' ? '' : foodChargePerDay}
-                      onChange={(e) => {
-                        const val = e.target.value === '' ? '' : Number(e.target.value);
-                        setFoodChargePerDay(val);
-                        if (val !== '' && !foodChargeSelected) {
-                          setFoodChargeSelected(true);
-                          if (foodChargeDays === '') {
-                            setFoodChargeDays(treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 1);
-                          }
-                        }
-                      }}
-                      className={`w-full pl-8 pr-1.5 py-1 border rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 ${
-                        foodChargeSelected ? 'bg-white border-slate-300' : 'bg-slate-50 border-slate-200'
-                      }`}
-                    />
-                  </div>
-                </td>
+                          {/* Days Stay */}
+                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="0"
+                              value={
+                                showFullIndoorCalculation
+                                  ? (item.days === '' ? '' : item.days)
+                                  : 1
+                              }
+                              onChange={(e) => updateIndoorServiceItem(item.id, { days: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
+                                !showFullIndoorCalculation
+                                  ? 'bg-slate-100 border-slate-200 text-indigo-900 font-extrabold'
+                                  : isChecked
+                                    ? 'bg-white border-slate-300 text-indigo-900 focus:ring-2 focus:ring-indigo-500'
+                                    : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-indigo-500'
+                              }`}
+                            />
+                          </td>
 
-                {/* Day Stay */}
-                <td className="p-3 text-center">
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="0"
-                    value={
-                      showFullIndoorCalculation
-                        ? (foodChargeDays === '' ? '' : foodChargeDays)
-                        : 1
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value === '' ? '' : Number(e.target.value);
-                      setFoodChargeDays(val);
-                      if (val !== '' && Number(val) > 0) {
-                        setFoodChargeSelected(true);
-                      } else if (val === '') {
-                        setFoodChargeSelected(false);
-                      }
-                    }}
-                    className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                      !showFullIndoorCalculation
-                        ? 'bg-slate-100 border-slate-200 text-amber-900 font-extrabold'
-                        : foodChargeSelected
-                          ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
-                          : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-amber-500'
+                          {/* Amount (Per Day vs Total) */}
+                          <td className="p-3 text-right">
+                            <span className={`text-xs font-black ${isChecked ? 'text-indigo-700 text-sm' : 'text-slate-400'}`}>
+                              BDT {(showFullIndoorCalculation ? (item.totalAmount || 0) : (item.dailyRate || 0)).toLocaleString()}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Additional Food Charge Table */}
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
+                    <th className="p-3 w-16 text-center">SELECT</th>
+                    <th className="p-3">SL & SERVICE NAME</th>
+                    <th className="p-3 w-36">PER DAY CHARGE (BDT)</th>
+                    <th className="p-3 w-28 text-center">DAY STAY</th>
+                    <th className="p-3 w-36 text-right">
+                      {showFullIndoorCalculation ? 'TOTAL AMOUNT (BDT)' : 'PER DAY AMOUNT (BDT)'}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr 
+                    onClick={toggleFoodChargeSelection}
+                    className={`transition-colors cursor-pointer ${
+                      foodChargeSelected 
+                        ? 'bg-amber-50/80 font-medium' 
+                        : 'bg-white hover:bg-slate-50 text-slate-600'
                     }`}
-                  />
-                </td>
+                  >
+                    {/* Checkbox */}
+                    <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={foodChargeSelected}
+                        onChange={toggleFoodChargeSelection}
+                        className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                      />
+                    </td>
 
-                {/* Amount (Per Day vs Total) */}
-                <td className="p-3 text-right">
-                  <span className={`text-xs font-black ${foodChargeSelected ? 'text-amber-700 text-sm' : 'text-slate-400'}`}>
-                    BDT {(showFullIndoorCalculation ? foodChargeTotal : (foodChargeSelected ? (foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) : 0)).toLocaleString()}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                    {/* Service Name */}
+                    <td className="p-3">
+                      <div className="space-y-0.5">
+                        <span className={`text-xs font-bold ${foodChargeSelected ? 'text-amber-950' : 'text-slate-800'}`}>
+                          Food Charge 3 Times
+                        </span>
+                        <p className="text-[11px] text-slate-500 font-medium">
+                          Food & Meal Charges (3 Times Daily)
+                        </p>
+                      </div>
+                    </td>
 
-        <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs gap-3">
-          <div className="text-slate-500 font-medium">
-            Selected room / accommodation: <span className="font-bold text-indigo-800">{activeIndoorServices.length + (foodChargeSelected ? 1 : 0)}</span> of {indoorServiceList.length + 1} items
-          </div>
+                    {/* Per Day Charge */}
+                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder="500"
+                          value={foodChargePerDay === '' ? '' : foodChargePerDay}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? '' : Number(e.target.value);
+                            setFoodChargePerDay(val);
+                            if (val !== '' && !foodChargeSelected) {
+                              setFoodChargeSelected(true);
+                              if (foodChargeDays === '') {
+                                setFoodChargeDays(treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 1);
+                              }
+                            }
+                          }}
+                          className={`w-full pl-8 pr-1.5 py-1 border rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 ${
+                            foodChargeSelected ? 'bg-white border-slate-300' : 'bg-slate-50 border-slate-200'
+                          }`}
+                        />
+                      </div>
+                    </td>
 
-          <div className="flex flex-col sm:flex-row justify-end items-stretch gap-3">
-            <div className="bg-white p-3 px-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
-              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-                {showFullIndoorCalculation ? `Indoor Accommodation Subtotal (${numTreatmentDays} Days)` : 'Per Day Subtotal'}
+                    {/* Day Stay */}
+                    <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="0"
+                        value={
+                          showFullIndoorCalculation
+                            ? (foodChargeDays === '' ? '' : foodChargeDays)
+                            : 1
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value === '' ? '' : Number(e.target.value);
+                          setFoodChargeDays(val);
+                          if (val !== '' && Number(val) > 0) {
+                            setFoodChargeSelected(true);
+                          } else if (val === '') {
+                            setFoodChargeSelected(false);
+                          }
+                        }}
+                        className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
+                          !showFullIndoorCalculation
+                            ? 'bg-slate-100 border-slate-200 text-amber-900 font-extrabold'
+                            : foodChargeSelected
+                              ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
+                              : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-amber-500'
+                        }`}
+                      />
+                    </td>
+
+                    {/* Amount (Per Day vs Total) */}
+                    <td className="p-3 text-right">
+                      <span className={`text-xs font-black ${foodChargeSelected ? 'text-amber-700 text-sm' : 'text-slate-400'}`}>
+                        BDT {(showFullIndoorCalculation ? foodChargeTotal : (foodChargeSelected ? (foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) : 0)).toLocaleString()}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs gap-3">
+              <div className="text-slate-500 font-medium">
+                Selected room / accommodation: <span className="font-bold text-indigo-800">{activeIndoorServices.length + (foodChargeSelected ? 1 : 0)}</span> of {indoorServiceList.length + 1} items
               </div>
-              <div className="text-sm sm:text-base font-black text-indigo-900 mt-1">
-                BDT {(showFullIndoorCalculation ? indoorSubtotal : indoorPerDaySubtotal).toLocaleString()}
+
+              <div className="flex flex-col sm:flex-row justify-end items-stretch gap-3">
+                <div className="bg-white p-3 px-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
+                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                    {showFullIndoorCalculation ? `Indoor Accommodation Subtotal (${numTreatmentDays} Days)` : 'Per Day Subtotal'}
+                  </div>
+                  <div className="text-sm sm:text-base font-black text-indigo-900 mt-1">
+                    BDT {(showFullIndoorCalculation ? indoorSubtotal : indoorPerDaySubtotal).toLocaleString()}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
 
       </div>
 
@@ -4043,25 +4231,35 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase mb-1 cursor-pointer">
+              <label className={`flex items-center gap-2 text-xs font-bold uppercase mb-1 ${patientTreatmentMode === 'outdoor' ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}>
                 <input
                   type="checkbox"
-                  checked={includeAdmissionFee}
-                  onChange={(e) => setIncludeAdmissionFee(e.target.checked)}
-                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                  disabled={patientTreatmentMode === 'outdoor'}
+                  checked={patientTreatmentMode === 'outdoor' ? false : includeAdmissionFee}
+                  onChange={(e) => {
+                    if (patientTreatmentMode !== 'outdoor') {
+                      setIncludeAdmissionFee(e.target.checked);
+                    }
+                  }}
+                  className={`w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 accent-emerald-600 ${patientTreatmentMode === 'outdoor' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                 />
                 <span>Admission Fee (One Time - Non Refundable)</span>
+                {patientTreatmentMode === 'outdoor' && (
+                  <span className="text-[10px] lowercase text-amber-600 font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                    (Indoor only - locked)
+                  </span>
+                )}
               </label>
               <div className="relative">
                 <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">BDT</span>
                 <input
                   type="number"
                   placeholder="1000"
-                  disabled={!includeAdmissionFee}
+                  disabled={patientTreatmentMode === 'outdoor' || !includeAdmissionFee}
                   value={admissionFee === '' ? '' : admissionFee}
                   onChange={(e) => setAdmissionFee(e.target.value === '' ? '' : Number(e.target.value))}
                   className={`w-full pl-10 pr-3 py-2 border rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-                    includeAdmissionFee ? 'bg-slate-50 border-slate-300' : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                    patientTreatmentMode !== 'outdoor' && includeAdmissionFee ? 'bg-slate-50 border-slate-300' : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
                   }`}
                 />
               </div>
@@ -4162,16 +4360,23 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 {activeIndoorServices.length > 0 ? (
                   <div className="space-y-1 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80">
                     <div className="flex justify-between items-center text-xs font-bold text-indigo-900">
-                      <span>Indoor Rooms ({activeIndoorServices.length}):</span>
-                      <span className="text-indigo-800">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
+                      <span>
+                        Indoor Rooms ({activeIndoorServices.length})
+                        {!showFullIndoorCalculation && <span className="text-[10px] font-normal text-indigo-600 ml-1">(Per Day)</span>}:
+                      </span>
+                      <span className="text-indigo-800">BDT {effectiveIndoorRoomSubtotal.toLocaleString()}</span>
                     </div>
                     <div className="space-y-1 pt-1 border-t border-indigo-200/60">
-                      {activeIndoorServices.map((room) => (
-                        <div key={room.id} className="flex justify-between items-center text-[11px] text-slate-700">
-                          <span className="truncate pr-1 text-slate-700" title={room.roomType}>• {room.roomType} ({room.days}d)</span>
-                          <span className="font-bold text-slate-900 shrink-0">BDT {(room.totalAmount || 0).toLocaleString()}</span>
-                        </div>
-                      ))}
+                      {activeIndoorServices.map((room) => {
+                        const roomDays = showFullIndoorCalculation ? (room.days === '' ? 1 : Number(room.days)) : 1;
+                        const roomAmt = showFullIndoorCalculation ? (room.totalAmount || 0) : (room.dailyRate || 0);
+                        return (
+                          <div key={room.id} className="flex justify-between items-center text-[11px] text-slate-700">
+                            <span className="truncate pr-1 text-slate-700" title={room.roomType}>• {room.roomType} ({roomDays}d)</span>
+                            <span className="font-bold text-slate-900 shrink-0">BDT {roomAmt.toLocaleString()}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
@@ -4182,8 +4387,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 )}
 
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-700">Food Charge:</span>
-                  <span className="font-bold text-slate-900">BDT {foodChargeTotal.toLocaleString()}</span>
+                  <span className="text-slate-700">
+                    Food Charge
+                    {!showFullIndoorCalculation && foodChargeSelected && <span className="text-[10px] text-slate-500 ml-1">(Per Day)</span>}:
+                  </span>
+                  <span className="font-bold text-slate-900">BDT {effectiveFoodChargeTotal.toLocaleString()}</span>
                 </div>
 
                 <div className="flex justify-between items-center">
