@@ -540,9 +540,9 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   return (
-    <div className="space-y-6 print:hidden">
-      
-      {/* Header & Stats Banner */}
+    <div className="space-y-6">
+      <div className="space-y-6 print:hidden">
+        {/* Header & Stats Banner */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
@@ -1616,6 +1616,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
           </div>
         </div>
       )}
+      </div>
 
       {/* Package Comparison Modal for Historical Saved Invoices */}
       {comparingQuotation && (() => {

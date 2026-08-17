@@ -779,13 +779,13 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     </div>
 
     {/* Printable Comparison Document Sheet (Visible ONLY during window.print()) */}
-    <div className="hidden print:block font-sans text-slate-900 bg-white p-0 m-0 w-full max-w-none">
+    <div className="hidden print:block font-sans text-slate-900 bg-white p-4 max-w-5xl mx-auto">
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
             @page {
               size: A4 portrait;
-              margin: 7mm 6mm 7mm 6mm;
+              margin: 10mm;
             }
             html, body {
               margin: 0 !important;
