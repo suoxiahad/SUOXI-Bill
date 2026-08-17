@@ -122,6 +122,19 @@ export interface InvoiceQuotation {
   paymentStatus: 'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid';
   notes?: string;
   createdBy: string;
+
+  // Saved Package Comparison snapshot
+  packageComparison?: {
+    showOutdoor?: boolean;
+    showIndoor?: boolean;
+    customDays?: Record<string, number>;
+    customDiscounts?: Record<string, number>;
+    foodChargeSelected?: boolean;
+    foodChargePerDay?: number;
+    includeAdmissionFee?: boolean;
+    admissionFee?: number;
+    comparedAt?: string;
+  };
 }
 
 export interface CatalogItem {

@@ -3,10 +3,12 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 10mm;
+    margin: 7mm 6mm 7mm 6mm;
   }
 
-  body {
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
     background-color: #ffffff !important;
     color: #000000 !important;
     -webkit-print-color-adjust: exact !important;

@@ -33,7 +33,29 @@ interface PackageComparisonModalProps {
   patientMobile?: string;
   consultingDoctor?: string;
   quotationNo?: string;
-  onApplyPackage: (
+  initialSavedComparison?: {
+    showOutdoor?: boolean;
+    showIndoor?: boolean;
+    customDays?: Record<string, number>;
+    customDiscounts?: Record<string, number>;
+    foodChargeSelected?: boolean;
+    foodChargePerDay?: number;
+    includeAdmissionFee?: boolean;
+    admissionFee?: number;
+    comparedAt?: string;
+  } | null;
+  onSaveComparison?: (comparisonData: {
+    showOutdoor: boolean;
+    showIndoor: boolean;
+    customDays: Record<string, number>;
+    customDiscounts: Record<string, number>;
+    foodChargeSelected: boolean;
+    foodChargePerDay: number;
+    includeAdmissionFee: boolean;
+    admissionFee: number;
+    comparedAt: string;
+  }) => void;
+  onApplyPackage?: (
     patientType: 'outdoor' | 'indoor',
     packageType: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string,
     days: number | '',
@@ -56,6 +78,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   patientMobile,
   consultingDoctor,
   quotationNo,
+  initialSavedComparison,
+  onSaveComparison,
   onApplyPackage,
 }) => {
   const [benchmarkDays, setBenchmarkDays] = useState<number>(30);
@@ -83,29 +107,53 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     indoor_7: 30,
   });
 
-  // Keep per-day package days synced when benchmarkDays changes
-  useEffect(() => {
-    setCustomDays(prev => ({
-      ...prev,
-      outdoor_perday: benchmarkDays,
-    }));
-  }, [benchmarkDays]);
-
-  // Auto-select Patient Type in "Show Comparison" based on currentMode selected in Individual Treatments & Therapies
+  // Load saved comparison configuration when modal opens if available
   useEffect(() => {
     if (isOpen) {
-      if (currentMode === 'outdoor') {
-        setShowOutdoor(true);
-        setShowIndoor(false);
-      } else if (currentMode === 'indoor') {
-        setShowOutdoor(false);
-        setShowIndoor(true);
+      if (initialSavedComparison) {
+        if (initialSavedComparison.showOutdoor !== undefined) {
+          setShowOutdoor(initialSavedComparison.showOutdoor);
+        }
+        if (initialSavedComparison.showIndoor !== undefined) {
+          setShowIndoor(initialSavedComparison.showIndoor);
+        }
+        if (initialSavedComparison.customDays) {
+          setCustomDays(prev => ({ ...prev, ...initialSavedComparison.customDays }));
+        }
+        if (initialSavedComparison.customDiscounts) {
+          setCustomDiscounts(prev => ({ ...prev, ...initialSavedComparison.customDiscounts }));
+        }
       } else {
-        setShowOutdoor(true);
-        setShowIndoor(true);
+        if (currentMode === 'outdoor') {
+          setShowOutdoor(true);
+          setShowIndoor(false);
+        } else if (currentMode === 'indoor') {
+          setShowOutdoor(false);
+          setShowIndoor(true);
+        } else {
+          setShowOutdoor(true);
+          setShowIndoor(true);
+        }
       }
     }
-  }, [isOpen, currentMode]);
+  }, [isOpen]);
+
+  const handleCloseModal = () => {
+    if (onSaveComparison) {
+      onSaveComparison({
+        showOutdoor,
+        showIndoor,
+        customDays,
+        customDiscounts,
+        foodChargeSelected: initialFoodChargeSelected,
+        foodChargePerDay: initialFoodChargePerDay,
+        includeAdmissionFee: initialIncludeAdmissionFee,
+        admissionFee: initialAdmissionFee,
+        comparedAt: new Date().toISOString()
+      });
+    }
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -294,7 +342,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                 <span>Print Comparison</span>
               </button>
               <button
-                onClick={onClose}
+                onClick={handleCloseModal}
                 className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer ml-1"
               >
                 <X className="w-5 h-5" />
@@ -483,13 +531,15 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          onApplyPackage(
-                            'outdoor',
-                            sc.packageType,
-                            sc.days,
-                            sc.discountPercent
-                          );
-                          onClose();
+                          if (onApplyPackage) {
+                            onApplyPackage(
+                              'outdoor',
+                              sc.packageType,
+                              sc.days,
+                              sc.discountPercent
+                            );
+                          }
+                          handleCloseModal();
                         }}
                         className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                           isCurrentActive
@@ -667,13 +717,15 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          onApplyPackage(
-                            'indoor',
-                            sc.packageType,
-                            sc.days,
-                            sc.discountPercent
-                          );
-                          onClose();
+                          if (onApplyPackage) {
+                            onApplyPackage(
+                              'indoor',
+                              sc.packageType,
+                              sc.days,
+                              sc.discountPercent
+                            );
+                          }
+                          handleCloseModal();
                         }}
                         className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                           isCurrentActive
@@ -716,7 +768,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               <span>Print Comparison</span>
             </button>
             <button
-              onClick={onClose}
+              onClick={handleCloseModal}
               className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-bold transition cursor-pointer"
             >
               Close Comparison
@@ -727,38 +779,60 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     </div>
 
     {/* Printable Comparison Document Sheet (Visible ONLY during window.print()) */}
-    <div className="hidden print:block font-sans text-slate-900 bg-white p-4 max-w-5xl mx-auto">
+    <div className="hidden print:block font-sans text-slate-900 bg-white p-0 m-0 w-full max-w-none">
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          @media print {
+            @page {
+              size: A4 portrait;
+              margin: 7mm 6mm 7mm 6mm;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background-color: #ffffff !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+          }
+        `
+      }} />
+
       {/* Header */}
-      <div className="border-b-2 border-slate-900 pb-3 mb-3 flex justify-between items-start">
+      <div className="border-b-2 border-slate-900 pb-2.5 mb-2.5 flex justify-between items-start">
         <div className="flex items-center gap-3">
           <SuoxiLogo size="md" />
           <div>
-            <h1 className="text-xl font-black text-slate-900 uppercase tracking-tight">SUO XI HOSPITAL (ACUPUNCTURE)</h1>
-            <p className="text-[10px] text-slate-500 font-semibold">Shaan Tower, 24/1, Chamelibagh, Shantinagar, Dhaka 1217 • Helpline: +88 09613 100 600</p>
+            <h1 className="text-[17px] font-black text-slate-900 uppercase tracking-tight leading-tight whitespace-nowrap">
+              SUO XI HOSPITAL (ACUPUNCTURE)
+            </h1>
+            <p className="text-[9.5px] text-slate-600 font-semibold whitespace-nowrap mt-0.5">
+              Shaan Tower, 24/1, Chamelibagh, Shantinagar, Dhaka 1217 • Helpline: +88 09613 100 600
+            </p>
           </div>
         </div>
         <div className="text-right">
-          <span className="inline-block bg-slate-900 text-white font-black text-xs px-3 py-1 uppercase tracking-wider rounded">
+          <span className="inline-block bg-slate-900 text-white font-black text-[10px] px-2.5 py-0.5 uppercase tracking-wider rounded shadow-xs">
             PACKAGE COST COMPARISON SHEET
           </span>
-          <p className="text-[11px] text-slate-700 font-bold mt-1">Date: {new Date().toLocaleDateString('en-GB')}</p>
-          {quotationNo && <p className="text-[10px] text-slate-500 font-semibold">Ref No: {quotationNo}</p>}
+          <p className="text-[10.5px] text-slate-700 font-bold mt-0.5">Date: {new Date().toLocaleDateString('en-GB')}</p>
+          {quotationNo && <p className="text-[9.5px] text-slate-500 font-semibold">Ref No: {quotationNo}</p>}
         </div>
       </div>
 
       {/* Patient & Doctor Details */}
-      <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-300 text-xs grid grid-cols-3 gap-2 mb-3 font-semibold">
-        <div><span className="text-slate-500">Patient Name:</span> <strong className="text-slate-900">{patientName || 'N/A'}</strong></div>
+      <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-300 text-xs grid grid-cols-3 gap-2 mb-2.5 font-semibold">
+        <div><span className="text-slate-500">Patient Name:</span> <strong className="text-slate-900">{patientName || 'Walk-in Patient'}</strong></div>
         <div><span className="text-slate-500">Mobile Number:</span> <strong className="text-slate-900">{patientMobile || 'N/A'}</strong></div>
         <div><span className="text-slate-500">Consulting Doctor:</span> <strong className="text-slate-900">{consultingDoctor || 'Hospital System Admin'}</strong></div>
       </div>
 
       {/* Selected Items Summary */}
-      <div className="mb-3 bg-emerald-50/60 p-2.5 rounded-lg border border-emerald-200 text-xs">
-        <span className="font-bold text-emerald-950 uppercase tracking-wider block mb-1">
+      <div className="mb-2.5 bg-emerald-50/60 p-2 rounded-lg border border-emerald-200 text-xs">
+        <span className="font-bold text-emerald-950 uppercase tracking-wider block mb-1 text-[11px]">
           Base Selected Treatments & Room Accommodation:
         </span>
-        <div className="flex flex-wrap gap-1.5 text-[11px]">
+        <div className="flex flex-wrap gap-1.5 text-[10.5px]">
           {selectedTreatments.length > 0 ? (
             selectedTreatments.map(t => (
               <span key={t.id} className="bg-white text-emerald-900 border border-emerald-300 px-2 py-0.5 rounded font-medium">
@@ -910,19 +984,19 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       )}
 
       {/* Footer Notes & Signatures */}
-      <div className="pt-4 mt-2 border-t border-slate-300">
-        <p className="text-[9px] text-slate-500 mb-6 italic text-center">
+      <div className="pt-3 mt-3 border-t border-slate-300">
+        <p className="text-[9px] text-slate-500 mb-8 italic text-center">
           * This comparison sheet is generated for counseling and financial planning purposes only. Final charges depend on actual stay and prescribed therapies.
         </p>
 
-        <div className="flex justify-between text-[11px] text-slate-800 font-bold pt-2 mb-4">
-          <div className="text-center w-40 border-t border-slate-400 pt-1">
+        <div className="flex justify-between text-[11px] text-slate-800 font-bold pt-10 mb-5">
+          <div className="text-center w-44 border-t-2 border-slate-700 pt-1.5">
             Prepared By
           </div>
-          <div className="text-center w-40 border-t border-slate-400 pt-1">
+          <div className="text-center w-48 border-t-2 border-slate-700 pt-1.5">
             Patient / Guardian Signature
           </div>
-          <div className="text-center w-40 border-t border-slate-400 pt-1">
+          <div className="text-center w-48 border-t-2 border-slate-700 pt-1.5">
             Authorized Hospital Signature
           </div>
         </div>

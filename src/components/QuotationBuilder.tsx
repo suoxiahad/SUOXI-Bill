@@ -115,6 +115,8 @@ interface QuotationBuilderProps {
   quotations?: InvoiceQuotation[];
   catalog: CatalogItem[];
   currentUser?: User | null;
+  editingQuotation?: InvoiceQuotation | null;
+  onCancelEdit?: () => void;
   onSaveQuotation: (quotation: InvoiceQuotation) => void;
   onPreviewPrint: (quotation: InvoiceQuotation) => void;
   showFullTreatmentCalculation?: boolean;
@@ -129,6 +131,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   quotations = [],
   catalog,
   currentUser,
+  editingQuotation,
+  onCancelEdit,
   onSaveQuotation,
   onPreviewPrint,
   showFullTreatmentCalculation: externalShowFullTreatmentCalculation,
@@ -147,19 +151,183 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   // Sync if initialPatient or currentUser changes
   useEffect(() => {
-    if (initialPatient) {
+    if (initialPatient && !editingQuotation) {
       setSelectedPatient(initialPatient);
       setPhoneSearch(initialPatient.phone);
     }
-  }, [initialPatient]);
+  }, [initialPatient, editingQuotation]);
 
   useEffect(() => {
-    if (currentUser?.name) {
+    if (currentUser?.name && !editingQuotation) {
       setBillingDoctor(currentUser.name);
-    } else if (selectedPatient?.doctorName) {
+    } else if (selectedPatient?.doctorName && !editingQuotation) {
       setBillingDoctor(selectedPatient.doctorName);
     }
-  }, [currentUser, selectedPatient]);
+  }, [currentUser, selectedPatient, editingQuotation]);
+
+  // Load editing quotation when passed
+  useEffect(() => {
+    if (!editingQuotation) return;
+
+    // Find or reconstruct patient
+    const foundPatient = patients.find(
+      p => (editingQuotation.patientPhone && p.phone === editingQuotation.patientPhone) ||
+           (editingQuotation.patientId && p.id === editingQuotation.patientId)
+    ) || {
+      id: editingQuotation.patientId || `patient-${Date.now()}`,
+      name: editingQuotation.patientName || 'Walk-in Patient',
+      phone: editingQuotation.patientPhone || '01700000000',
+      age: editingQuotation.patientAge || 0,
+      gender: editingQuotation.patientGender || 'Male',
+      doctorName: editingQuotation.doctorName || 'Dr. S.M. Shahidul Islam PhD',
+      status: 'Consulted',
+      serialNumber: 1,
+      appointmentTime: '',
+      department: 'Acupuncture'
+    };
+
+    setSelectedPatient(foundPatient);
+    setPhoneSearch(foundPatient.phone || '');
+    if (editingQuotation.doctorName) {
+      setBillingDoctor(editingQuotation.doctorName);
+    }
+
+    const mode = editingQuotation.patientTreatmentMode || (editingQuotation.indoorServices && editingQuotation.indoorServices.length > 0 ? 'indoor' : (editingQuotation.outdoorPackages && editingQuotation.outdoorPackages.length > 0 ? 'outdoor' : ''));
+    setPatientTreatmentMode(mode);
+    if (mode === 'indoor') {
+      setIsIndoorSectionOpen(true);
+      setIsOutdoorSectionOpen(false);
+    } else if (mode === 'outdoor') {
+      setIsIndoorSectionOpen(false);
+      setIsOutdoorSectionOpen(true);
+    }
+
+    // Set fees & discounts
+    setIncludeAdmissionFee((editingQuotation.admissionFee || 0) > 0);
+    setAdmissionFee(editingQuotation.admissionFee || 1000);
+    setOverallDiscountPercent(editingQuotation.overallDiscountPercent || '');
+    setAdvancePaid(editingQuotation.advancePaid || '');
+    setNotes(editingQuotation.notes || '');
+    if (editingQuotation.paymentPlanMode) {
+      setPaymentPlanMode(editingQuotation.paymentPlanMode);
+    }
+    if (editingQuotation.paymentPhases && editingQuotation.paymentPhases.length > 0) {
+      setPaymentPhases(editingQuotation.paymentPhases);
+    }
+    if (editingQuotation.packageComparison) {
+      setSavedComparisonSnapshot(editingQuotation.packageComparison);
+    }
+
+    // Populate Section 1: Treatments
+    const invoiceTreatmentsMap = new Map((editingQuotation.treatments || []).map(t => [t.treatmentName.toLowerCase().trim(), t]));
+    setTreatmentList(prev => prev.map(item => {
+      const match = invoiceTreatmentsMap.get(item.treatmentName.toLowerCase().trim()) ||
+                    (item.catalogId ? (editingQuotation.treatments || []).find(t => t.id === item.id || t.id === item.catalogId) : undefined);
+      if (match) {
+        return {
+          ...item,
+          selected: true,
+          unitCost: match.unitCost || item.unitCost,
+          sessions: match.sessions,
+          discountPercent: match.discountPercent,
+          discountAmount: match.discountAmount,
+          totalCost: match.totalCost
+        };
+      }
+      return {
+        ...item,
+        selected: false,
+        sessions: '',
+        discountPercent: '',
+        discountAmount: 0,
+        totalCost: 0
+      };
+    }));
+
+    // Populate Section 3: Outdoor Packages
+    const invoiceOutdoorMap = new Map((editingQuotation.outdoorPackages || []).map(p => [p.packageName.toLowerCase().trim(), p]));
+    setOutdoorPackageList(prev => prev.map(item => {
+      const match = invoiceOutdoorMap.get(item.packageName.toLowerCase().trim()) ||
+                    (item.catalogId ? (editingQuotation.outdoorPackages || []).find(p => p.id === item.id || p.id === item.catalogId) : undefined);
+      if (match) {
+        return {
+          ...item,
+          selected: true,
+          totalBaseCost: match.totalBaseCost,
+          discountPercent: match.discountPercent,
+          discountAmount: match.discountAmount,
+          netCost: match.netCost
+        };
+      }
+      return {
+        ...item,
+        selected: false,
+        discountPercent: '',
+        discountAmount: 0,
+        netCost: 0
+      };
+    }));
+
+    // Populate Section 4: Indoor Services & Food Charge
+    const invoiceIndoor = editingQuotation.indoorServices || [];
+    const foodItem = invoiceIndoor.find(i => i.id === 'food-charge-3x' || i.roomType.toLowerCase().includes('food charge'));
+    if (foodItem) {
+      setFoodChargeSelected(true);
+      setFoodChargePerDay(foodItem.dailyRate || 500);
+      setFoodChargeDays(foodItem.days || 30);
+    } else {
+      setFoodChargeSelected(false);
+      setFoodChargeDays('');
+    }
+
+    const nonFoodIndoor = invoiceIndoor.filter(i => i.id !== 'food-charge-3x' && !i.roomType.toLowerCase().includes('food charge'));
+    const indoorMap = new Map(nonFoodIndoor.map(i => [i.roomType.toLowerCase().trim(), i]));
+    setIndoorServiceList(prev => prev.map(item => {
+      const match = indoorMap.get(item.roomType.toLowerCase().trim()) ||
+                    (item.catalogId ? nonFoodIndoor.find(i => i.id === item.id || i.id === item.catalogId) : undefined);
+      if (match) {
+        return {
+          ...item,
+          selected: true,
+          dailyRate: match.dailyRate || item.dailyRate,
+          days: match.days,
+          totalAmount: match.totalAmount
+        };
+      }
+      return {
+        ...item,
+        selected: false,
+        days: '',
+        totalAmount: 0
+      };
+    }));
+
+    // Populate Section 5: Weekly Treatments
+    const invoiceAddlMap = new Map((editingQuotation.additionalTreatments || []).map(a => [a.treatmentName.toLowerCase().trim(), a]));
+    setAdditionalTreatmentList(prev => prev.map(item => {
+      const match = invoiceAddlMap.get(item.treatmentName.toLowerCase().trim()) ||
+                    (item.catalogId ? (editingQuotation.additionalTreatments || []).find(a => a.id === item.id || a.id === item.catalogId) : undefined);
+      if (match) {
+        return {
+          ...item,
+          selected: true,
+          unitCost: match.unitCost || item.unitCost,
+          sessions: match.sessions,
+          discountPercent: match.discountPercent,
+          discountAmount: match.discountAmount,
+          totalCost: match.totalCost
+        };
+      }
+      return {
+        ...item,
+        selected: false,
+        sessions: '',
+        discountPercent: '',
+        discountAmount: 0,
+        totalCost: 0
+      };
+    }));
+  }, [editingQuotation]);
 
   // Handle Phone Search
   const handlePhoneSearchSubmit = (e: React.FormEvent) => {
@@ -192,6 +360,17 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [isIndoorSectionOpen, setIsIndoorSectionOpen] = useState<boolean>(true);
   const [isOutdoorSectionOpen, setIsOutdoorSectionOpen] = useState<boolean>(true);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+  const [savedComparisonSnapshot, setSavedComparisonSnapshot] = useState<{
+    showOutdoor?: boolean;
+    showIndoor?: boolean;
+    customDays?: Record<string, number>;
+    customDiscounts?: Record<string, number>;
+    foodChargeSelected?: boolean;
+    foodChargePerDay?: number;
+    includeAdmissionFee?: boolean;
+    admissionFee?: number;
+    comparedAt?: string;
+  } | null>(null);
 
   const toggleIndoorCalculationMode = () => {
     setShowFullIndoorCalculation(prev => !prev);
@@ -1506,6 +1685,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         if (parsed.notes) setNotes(parsed.notes);
         if (parsed.paymentPlanMode) setPaymentPlanMode(parsed.paymentPlanMode);
         if (parsed.paymentPhases && Array.isArray(parsed.paymentPhases)) setPaymentPhases(parsed.paymentPhases);
+        if (parsed.savedComparisonSnapshot) setSavedComparisonSnapshot(parsed.savedComparisonSnapshot);
 
         setIsDraftRestored(true);
       } else {
@@ -1570,7 +1750,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           paymentStatus,
           notes,
           paymentPlanMode,
-          paymentPhases
+          paymentPhases,
+          savedComparisonSnapshot
         };
         localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftData));
       } catch (err) {
@@ -1603,7 +1784,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     paymentStatus,
     notes,
     paymentPlanMode,
-    paymentPhases
+    paymentPhases,
+    savedComparisonSnapshot
   ]);
 
   const clearFormAndDraftState = () => {
@@ -1637,6 +1819,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setNotes('Quotation validity is 7 days from the date of issue.');
     setPaymentPlanMode('10_day_cycles');
     setPaymentPhases([]);
+    setSavedComparisonSnapshot(null);
     setIsSaved(false);
     setIsDraftRestored(false);
 
@@ -2419,24 +2602,24 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       (q.patientName.toLowerCase() === selectedPatient?.name.toLowerCase())
     ).length;
 
-    const nextVisitNumber = existingCount + 1;
+    const nextVisitNumber = editingQuotation ? (editingQuotation.visitNumber || 1) : (existingCount + 1);
     const getOrdinalSuffix = (n: number) => {
       const s = ["th", "st", "nd", "rd"];
       const v = n % 100;
       return n + (s[(v - 20) % 10] || s[v] || s[0]);
     };
-    const visitLabel = `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`;
+    const visitLabel = editingQuotation ? (editingQuotation.visitLabel || `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`) : `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`;
 
     return {
-      id: `quot-${Date.now()}`,
-      quotationNumber: `SXH-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      id: editingQuotation ? editingQuotation.id : `quot-${Date.now()}`,
+      quotationNumber: editingQuotation ? editingQuotation.quotationNumber : `SXH-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
       patientId: selectedPatient?.id || 'walkin',
       patientName: selectedPatient?.name || 'Walk-in Patient',
       patientPhone: pPhone,
       patientAge: selectedPatient?.age,
       patientGender: selectedPatient?.gender,
       doctorName: billingDoctor.trim() || currentUser?.name || selectedPatient?.doctorName || 'Senior Consultant',
-      createdDate: dateStr,
+      createdDate: editingQuotation ? editingQuotation.createdDate : dateStr,
       validUntil: validUntilDate.toISOString().split('T')[0],
       visitNumber: nextVisitNumber,
       visitLabel: visitLabel,
@@ -2470,7 +2653,16 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
       paymentStatus,
       notes,
-      createdBy: currentUser?.name ? `${currentUser.name} (${currentUser.role})` : 'Billing Counter Staff'
+      createdBy: currentUser?.name ? `${currentUser.name} (${currentUser.role})` : 'Billing Counter Staff',
+      packageComparison: savedComparisonSnapshot || {
+        showOutdoor: patientTreatmentMode === 'outdoor' || patientTreatmentMode === '',
+        showIndoor: patientTreatmentMode === 'indoor' || patientTreatmentMode === '',
+        foodChargeSelected,
+        foodChargePerDay: Number(foodChargePerDay || 500),
+        includeAdmissionFee,
+        admissionFee: Number(admissionFee || 1000),
+        comparedAt: new Date().toISOString()
+      }
     };
   };
 
@@ -2481,6 +2673,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }
     const quot = generateQuotationData();
     onSaveQuotation(quot);
+    if (editingQuotation && onCancelEdit) {
+      onCancelEdit();
+    }
     clearFormAndDraftState();
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
@@ -2494,12 +2689,56 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     const quot = generateQuotationData();
     onSaveQuotation(quot);
     onPreviewPrint(quot);
+    if (editingQuotation && onCancelEdit) {
+      onCancelEdit();
+    }
     clearFormAndDraftState();
   };
 
   return (
     <>
       <div className="space-y-8 print:hidden">
+
+      {/* Editing Quotation Notification Banner */}
+      {editingQuotation && (
+        <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-amber-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center font-bold text-white shrink-0 shadow-xs">
+              <Sparkles className="w-5 h-5 text-amber-100" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black uppercase tracking-wider bg-black/25 px-2.5 py-0.5 rounded-full">
+                  Editing Mode
+                </span>
+                <span className="font-mono text-xs font-bold text-amber-100">
+                  {editingQuotation.quotationNumber}
+                </span>
+                {editingQuotation.visitLabel && (
+                  <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">
+                    {editingQuotation.visitLabel}
+                  </span>
+                )}
+              </div>
+              <h3 className="text-base font-extrabold text-white mt-0.5">
+                Editing Invoice for {editingQuotation.patientName} ({editingQuotation.patientPhone})
+              </h3>
+              <p className="text-xs text-amber-100 font-medium">
+                Make your modifications below. Clicking "Save Quotation" or "Preview & Print" will update this invoice.
+              </p>
+            </div>
+          </div>
+          {onCancelEdit && (
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="bg-white/90 hover:bg-white text-slate-900 text-xs font-bold px-3.5 py-2 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0"
+            >
+              Cancel Edit
+            </button>
+          )}
+        </div>
+      )}
       
       {/* Patient Selection Header Banner */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
@@ -2512,9 +2751,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-1">
               <h2 className="text-2xl font-black text-slate-900">
-                Invoice Quotation Builder
+                {editingQuotation ? 'Update Invoice & Quotation' : 'Invoice Quotation Builder'}
               </h2>
-              {isDraftRestored && (
+              {isDraftRestored && !editingQuotation && (
                 <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200">
                   Draft Restored
                 </span>
@@ -2525,7 +2764,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 title="Clear form inputs"
                 className="text-xs font-bold text-slate-600 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 px-2.5 py-1 rounded-lg border border-slate-200 transition-colors ml-1 cursor-pointer"
               >
-                Clear Form
+                {editingQuotation ? 'Reset Form' : 'Clear Form'}
               </button>
             </div>
           </div>
@@ -2627,18 +2866,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Quick Filter Search */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Filter treatment name..."
-                value={treatmentSearch}
-                onChange={(e) => setTreatmentSearch(e.target.value)}
-                className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-            </div>
-
             {/* Eye Icon Toggle Button for Full Package vs Per Day Cost mode */}
             <button
               type="button"
@@ -3362,18 +3589,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
-            {isOutdoorSectionOpen && (
-              <div className="relative flex-1 sm:w-60">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Filter outdoor package..."
-                  value={outdoorSearch}
-                  onChange={(e) => setOutdoorSearch(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-teal-500"
-                />
-              </div>
-            )}
             <button
               type="button"
               onClick={() => setIsOutdoorSectionOpen(prev => !prev)}
@@ -3608,34 +3823,22 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
             {isIndoorSectionOpen && (
-              <>
-                <div className="relative flex-1 sm:w-60">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Filter room / cabin type..."
-                    value={indoorSearch}
-                    onChange={(e) => setIndoorSearch(e.target.value)}
-                    className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={toggleIndoorCalculationMode}
-                  className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
-                    showFullIndoorCalculation
-                      ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
-                      : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-300'
-                  }`}
-                  title={showFullIndoorCalculation ? 'Toggle Day View' : 'Toggle Full View'}
-                >
-                  {showFullIndoorCalculation ? (
-                    <Eye className="w-4 h-4 text-slate-600 shrink-0" />
-                  ) : (
-                    <EyeOff className="w-4 h-4 text-indigo-600 shrink-0" />
-                  )}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={toggleIndoorCalculationMode}
+                className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
+                  showFullIndoorCalculation
+                    ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
+                    : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-300'
+                }`}
+                title={showFullIndoorCalculation ? 'Toggle Day View' : 'Toggle Full View'}
+              >
+                {showFullIndoorCalculation ? (
+                  <Eye className="w-4 h-4 text-slate-600 shrink-0" />
+                ) : (
+                  <EyeOff className="w-4 h-4 text-indigo-600 shrink-0" />
+                )}
+              </button>
             )}
             <button
               type="button"
@@ -3974,19 +4177,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               <p className="text-xs text-slate-500">
                 Weekly procedures (Ozon, ED, etc.). Supports automatic 10-day cycle ratio session calculation (3 sessions per 10 days).
               </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-60">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Filter weekly treatments..."
-                value={additionalTreatmentSearch}
-                onChange={(e) => setAdditionalTreatmentSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-sky-500"
-              />
             </div>
           </div>
         </div>
@@ -4503,9 +4693,13 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         initialAdmissionFee={admissionFee === '' ? 1000 : Number(admissionFee)}
         currentMode={patientTreatmentMode}
         currentPackage={treatmentPackage}
-        patientName={selectedPatient?.name}
-        patientMobile={selectedPatient?.mobile}
+        patientName={selectedPatient?.name || (phoneSearch ? `Patient (${phoneSearch})` : 'Walk-in Patient')}
+        patientMobile={selectedPatient?.phone || (selectedPatient as any)?.mobile || (selectedPatient as any)?.mobileNumber || (selectedPatient as any)?.patientPhone || (selectedPatient as any)?.patientMobile || phoneSearch || ''}
         consultingDoctor={billingDoctor}
+        initialSavedComparison={savedComparisonSnapshot}
+        onSaveComparison={(comp) => {
+          setSavedComparisonSnapshot(comp);
+        }}
         onApplyPackage={handleApplyPackageFromComparison}
       />
     </>

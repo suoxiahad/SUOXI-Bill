@@ -37,6 +37,7 @@ export default function App() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
 
   const [selectedPatientForQuotation, setSelectedPatientForQuotation] = useState<Patient | null>(null);
+  const [editingQuotation, setEditingQuotation] = useState<InvoiceQuotation | null>(null);
   const [printQuotation, setPrintQuotation] = useState<InvoiceQuotation | null>(null);
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
 
@@ -116,7 +117,14 @@ export default function App() {
   };
 
   const handleSelectPatientForQuotation = (patient: Patient) => {
+    setEditingQuotation(null);
     setSelectedPatientForQuotation(patient);
+    setActiveTab('quotation');
+  };
+
+  const handleEditQuotation = (quotation: InvoiceQuotation) => {
+    setEditingQuotation(quotation);
+    setSelectedPatientForQuotation(null);
     setActiveTab('quotation');
   };
 
@@ -129,6 +137,7 @@ export default function App() {
     const cleanPhone = phone.trim().toLowerCase();
     const found = patients.find(p => p.phone.includes(cleanPhone) || p.name.toLowerCase().includes(cleanPhone));
     if (found) {
+      setEditingQuotation(null);
       setSelectedPatientForQuotation(found);
       setActiveTab('quotation');
     } else {
@@ -221,6 +230,8 @@ export default function App() {
                 quotations={quotations}
                 catalog={catalog}
                 currentUser={currentUser}
+                editingQuotation={editingQuotation}
+                onCancelEdit={() => setEditingQuotation(null)}
                 onSaveQuotation={handleSaveQuotation}
                 onPreviewPrint={handlePreviewPrint}
                 showFullTreatmentCalculation={showFullTreatmentCalculation}
@@ -237,6 +248,7 @@ export default function App() {
                 currentUser={currentUser}
                 onViewPrintQuotation={(q) => setPrintQuotation(q)}
                 onUpdateQuotation={handleSaveQuotation}
+                onEditQuotation={handleEditQuotation}
                 onDeleteQuotations={handleDeleteQuotations}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
               />

@@ -16,9 +16,12 @@ import {
   ShieldAlert,
   Copy,
   Check,
-  FilePlus
+  FilePlus,
+  Scale,
+  Edit
 } from 'lucide-react';
 import { InvoiceQuotation, User, Patient } from '../types';
+import { PackageComparisonModal, TreatmentItemForComparison, IndoorServiceItemForComparison } from './PackageComparisonModal';
 
 interface QuotationHistoryProps {
   quotations: InvoiceQuotation[];
@@ -28,6 +31,7 @@ interface QuotationHistoryProps {
   onUpdateQuotation?: (quotation: InvoiceQuotation) => void;
   onDeleteQuotations?: (ids: string[]) => void;
   onSelectPatientForQuotation?: (patient: Patient) => void;
+  onEditQuotation?: (quotation: InvoiceQuotation) => void;
 }
 
 interface PatientHistoryGroup {
@@ -110,7 +114,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   onViewPrintQuotation,
   onUpdateQuotation,
   onDeleteQuotations,
-  onSelectPatientForQuotation
+  onSelectPatientForQuotation,
+  onEditQuotation
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -312,6 +317,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   const [viewMode, setViewMode] = useState<'patient_grouped' | 'flat_list'>('patient_grouped');
   const [expandedPatientKey, setExpandedPatientKey] = useState<string | null>(null);
   const [selectedPatientModal, setSelectedPatientModal] = useState<PatientHistoryGroup | null>(null);
+  const [comparingQuotation, setComparingQuotation] = useState<InvoiceQuotation | null>(null);
   const [selectedQuotationIds, setSelectedQuotationIds] = useState<string[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -353,6 +359,23 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
 
   const isAdmin = currentUser?.role === 'System Admin';
   const canManageBilling = currentUser?.role === 'System Admin' || currentUser?.role === 'Billing Counter';
+  const canEditAndCompare = currentUser?.role === 'System Admin' || currentUser?.role === 'Doctor';
+
+  const handleEditClick = (q: InvoiceQuotation) => {
+    if (!canEditAndCompare) {
+      alert('Invoice Edit permission is restricted to System Admin and Doctor only.');
+      return;
+    }
+    onEditQuotation?.(q);
+  };
+
+  const handleComparisonClick = (q: InvoiceQuotation) => {
+    if (!canEditAndCompare) {
+      alert('Package Comparison view is restricted to System Admin and Doctor only.');
+      return;
+    }
+    setComparingQuotation(q);
+  };
 
   const handleDeleteSingleQuotation = (q: InvoiceQuotation) => {
     if (!isAdmin) {
@@ -836,6 +859,28 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                                 )}
 
                                 <div className="flex items-center gap-1.5 ml-auto">
+                                  {canEditAndCompare && (
+                                    <>
+                                      <button
+                                        onClick={() => handleEditClick(q)}
+                                        className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs px-2.5 py-1 rounded-lg transition cursor-pointer shrink-0"
+                                        title="Edit this invoice in Quotation Builder (Admin & Doctor Only)"
+                                      >
+                                        <Edit className="w-3.5 h-3.5" />
+                                        <span>Edit</span>
+                                      </button>
+
+                                      <button
+                                        onClick={() => handleComparisonClick(q)}
+                                        className="inline-flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs px-2.5 py-1 rounded-lg transition cursor-pointer shrink-0"
+                                        title="View & Print Saved Package Comparison (Admin & Doctor Only)"
+                                      >
+                                        <Scale className="w-3.5 h-3.5" />
+                                        <span>Comparison</span>
+                                      </button>
+                                    </>
+                                  )}
+
                                   <button
                                     onClick={() => onViewPrintQuotation(q)}
                                     className="inline-flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-3 py-1 rounded-lg shadow-xs transition cursor-pointer shrink-0"
@@ -982,6 +1027,28 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
 
                       <td className="p-3.5 text-right">
                         <div className="inline-flex items-center gap-1.5 justify-end">
+                          {canEditAndCompare && (
+                            <>
+                              <button
+                                onClick={() => handleEditClick(q)}
+                                className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                                title="Edit this invoice in Quotation Builder (Admin & Doctor Only)"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                                <span>Edit</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleComparisonClick(q)}
+                                className="inline-flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                                title="View & Print Saved Package Comparison (Admin & Doctor Only)"
+                              >
+                                <Scale className="w-3.5 h-3.5" />
+                                <span>Comparison</span>
+                              </button>
+                            </>
+                          )}
+
                           <button
                             onClick={() => onViewPrintQuotation(q)}
                             className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition cursor-pointer"
@@ -1223,6 +1290,31 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                             </div>
 
                             <div className="flex items-center gap-2">
+                              {canEditAndCompare && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setSelectedPatientModal(null);
+                                      handleEditClick(q);
+                                    }}
+                                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                                    title="Edit this invoice in Quotation Builder (Admin & Doctor Only)"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                    <span>Edit</span>
+                                  </button>
+
+                                  <button
+                                    onClick={() => handleComparisonClick(q)}
+                                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                                    title="View & Print Saved Package Comparison (Admin & Doctor Only)"
+                                  >
+                                    <Scale className="w-3.5 h-3.5" />
+                                    <span>Comparison</span>
+                                  </button>
+                                </>
+                              )}
+
                               <button
                                 onClick={() => {
                                   setSelectedPatientModal(null);
@@ -1370,8 +1462,33 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                               </button>
                             </div>
 
-                            {/* Actions: Print Invoice & Delete */}
+                            {/* Actions: Edit, Comparison, Print Invoice & Delete */}
                             <div className="flex items-center gap-2 shrink-0">
+                              {canEditAndCompare && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setSelectedPatientModal(null);
+                                      handleEditClick(q);
+                                    }}
+                                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                                    title="Edit this invoice in Quotation Builder (Admin & Doctor Only)"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                    <span>Edit</span>
+                                  </button>
+
+                                  <button
+                                    onClick={() => handleComparisonClick(q)}
+                                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                                    title="View & Print Saved Package Comparison (Admin & Doctor Only)"
+                                  >
+                                    <Scale className="w-3.5 h-3.5" />
+                                    <span>Comparison</span>
+                                  </button>
+                                </>
+                              )}
+
                               <button
                                 onClick={() => {
                                   setSelectedPatientModal(null);
@@ -1499,6 +1616,50 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
           </div>
         </div>
       )}
+
+      {/* Package Comparison Modal for Historical Saved Invoices */}
+      {comparingQuotation && (() => {
+        const trItems: TreatmentItemForComparison[] = (comparingQuotation.treatments || []).map((t, idx) => ({
+          id: t.id || `tr-${idx}`,
+          treatmentName: t.treatmentName,
+          unitCost: t.unitCost || (t.sessions ? Math.round((t.totalCost + (t.discountAmount || 0)) / t.sessions) : 0),
+          outdoorSessions: t.sessions || 1,
+          indoorSessions: t.sessions || 1,
+        }));
+
+        const indoorItems: IndoorServiceItemForComparison[] = (comparingQuotation.indoorServices || []).map((s, idx) => ({
+          id: s.id || `in-${idx}`,
+          roomType: s.roomType,
+          dailyRate: s.dailyRate || (s.days ? Math.round(s.totalAmount / s.days) : 0),
+          selected: true,
+        }));
+
+        const savedComp = comparingQuotation.packageComparison;
+
+        return (
+          <PackageComparisonModal
+            isOpen={true}
+            onClose={() => setComparingQuotation(null)}
+            selectedTreatments={trItems}
+            allIndoorServices={indoorItems}
+            initialFoodChargeSelected={savedComp?.foodChargeSelected ?? (comparingQuotation.indoorServices && comparingQuotation.indoorServices.length > 0)}
+            initialFoodChargePerDay={savedComp?.foodChargePerDay ?? 500}
+            initialIncludeAdmissionFee={savedComp?.includeAdmissionFee ?? (comparingQuotation.admissionFee > 0)}
+            initialAdmissionFee={savedComp?.admissionFee ?? (comparingQuotation.admissionFee || 1000)}
+            currentMode={
+              comparingQuotation.indoorServices && comparingQuotation.indoorServices.length > 0 
+                ? 'indoor' 
+                : 'outdoor'
+            }
+            currentPackage=""
+            patientName={comparingQuotation.patientName || (patients.find(p => p.id === comparingQuotation.patientId)?.name) || 'Walk-in Patient'}
+            patientMobile={comparingQuotation.patientPhone || (comparingQuotation as any)?.phone || (comparingQuotation as any)?.mobile || (comparingQuotation as any)?.mobileNumber || (patients.find(p => p.id === comparingQuotation.patientId || p.name === comparingQuotation.patientName)?.phone) || ''}
+            consultingDoctor={comparingQuotation.doctorName}
+            quotationNo={comparingQuotation.quotationNumber}
+            initialSavedComparison={savedComp || null}
+          />
+        );
+      })()}
 
     </div>
   );
