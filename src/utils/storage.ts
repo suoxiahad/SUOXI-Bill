@@ -77,23 +77,21 @@ export const setActiveUser = (user: User | null): void => {
 function mergePatientsList(serverPatients: Patient[], localPatients: Patient[]): Patient[] {
   const map = new Map<string, Patient>();
 
-  // Insert server patients first
+  // Insert server patients first by unique ID
   for (const p of serverPatients) {
-    if (p && (p.id || p.phone)) {
-      const key = p.id || p.phone;
-      map.set(key, p);
+    if (p && p.id) {
+      map.set(p.id, p);
     }
   }
 
   // Overlay local patients so local records are preserved
   for (const p of localPatients) {
-    if (p && (p.id || p.phone)) {
-      const key = p.id || p.phone;
-      const existing = map.get(key);
+    if (p && p.id) {
+      const existing = map.get(p.id);
       if (!existing) {
-        map.set(key, p);
+        map.set(p.id, p);
       } else {
-        map.set(key, { ...existing, ...p });
+        map.set(p.id, { ...existing, ...p });
       }
     }
   }
@@ -229,11 +227,15 @@ export const savePatientsLocal = (patients: Patient[]): void => {
 export const addOrUpdatePatientApi = async (patient: Patient): Promise<Patient[]> => {
   // Optimistic local update
   const current = getPatientsLocal();
-  const existingIdx = current.findIndex(p => p.id === patient.id || (patient.phone && p.phone === patient.phone));
+  const existingIdx = patient.id ? current.findIndex(p => p.id === patient.id) : -1;
   if (existingIdx >= 0) {
     current[existingIdx] = { ...current[existingIdx], ...patient };
   } else {
-    current.unshift(patient);
+    const newRecord: Patient = {
+      ...patient,
+      id: patient.id || `pat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+    };
+    current.unshift(newRecord);
   }
   savePatientsLocal(current);
 
@@ -316,7 +318,9 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
     const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
     const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
 
-    const existingIdx = current.findIndex(x => x.phone === cleanPhone && cleanPhone !== '01700000000');
+    // Only update if explicit p.id matches an existing record.
+    // Every row in the uploaded Excel represents an appointment entry - duplicate phone numbers must ALL be saved as separate appointments!
+    const existingIdx = p.id ? current.findIndex(x => x.id === p.id) : -1;
 
     let cleanSerial = '';
     if (p.serialNo) {
@@ -327,8 +331,12 @@ export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]
       cleanSerial = String(idx + 1);
     }
 
+    const uniqueId = existingIdx >= 0
+      ? current[existingIdx].id
+      : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`);
+
     const formattedPatient: Patient = {
-      id: existingIdx >= 0 ? current[existingIdx].id : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`),
+      id: uniqueId,
       serialNo: cleanSerial,
       name: cleanName,
       phone: cleanPhone,

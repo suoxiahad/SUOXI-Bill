@@ -462,7 +462,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     setDeleteWarningModal(null);
   };
 
-  // Group quotations by Patient (using Phone or Patient Name)
+  // Group quotations by distinct Patient (combining patient name + phone number)
   const patientGroupsMap = new Map<string, InvoiceQuotation[]>();
 
   // Sort all quotations chronologically first (oldest first to accurately compute 1st, 2nd, 3rd visit order)
@@ -471,9 +471,12 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   );
 
   sortedQuotations.forEach((q) => {
-    const key = (q.patientPhone && q.patientPhone !== '01700000000') 
-      ? q.patientPhone.trim() 
-      : `${q.patientName.trim().toLowerCase()}-${q.patientId}`;
+    const cleanName = (q.patientName || 'Walk-in Patient').trim().toLowerCase();
+    const cleanPhone = (q.patientPhone || '').trim();
+    // Unique key per distinct patient entity (differentiated by patient name + phone)
+    // This ensures that different patients who share the same phone number (family members, etc.)
+    // get their own separate patient cards and their visit invoices are not merged or overwritten.
+    const key = `${cleanName}__${cleanPhone || q.patientId || 'unknown'}`;
 
     if (!patientGroupsMap.has(key)) {
       patientGroupsMap.set(key, []);
@@ -501,21 +504,21 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     const totalPaid = groupQuotations.reduce((sum, item) => sum + (item.advancePaid || 0), 0);
     const totalDue = groupQuotations.reduce((sum, item) => sum + (item.dueAmount || 0), 0);
     
-    const firstQuot = groupQuotations[groupQuotations.length - 1] || groupQuotations[0];
+    const latestQuot = newestFirst[0] || groupQuotations[0];
 
     return {
       patientKey: key,
-      patientName: firstQuot.patientName,
-      patientPhone: firstQuot.patientPhone,
-      doctorName: firstQuot.doctorName || 'Senior Consultant',
-      patientAge: firstQuot.patientAge,
-      patientGender: firstQuot.patientGender,
+      patientName: latestQuot.patientName || 'Walk-in Patient',
+      patientPhone: latestQuot.patientPhone || '',
+      doctorName: latestQuot.doctorName || 'Senior Consultant',
+      patientAge: latestQuot.patientAge,
+      patientGender: latestQuot.patientGender,
       quotations: newestFirst,
       totalInvoices: groupQuotations.length,
       totalBilled,
       totalPaid,
       totalDue,
-      lastVisitDate: newestFirst[0]?.createdDate || firstQuot.createdDate
+      lastVisitDate: newestFirst[0]?.createdDate || latestQuot.createdDate
     };
   });
 
@@ -1620,20 +1623,57 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
 
       {/* Package Comparison Modal for Historical Saved Invoices */}
       {comparingQuotation && (() => {
-        const trItems: TreatmentItemForComparison[] = (comparingQuotation.treatments || []).map((t, idx) => ({
-          id: t.id || `tr-${idx}`,
-          treatmentName: t.treatmentName,
-          unitCost: t.unitCost || (t.sessions ? Math.round((t.totalCost + (t.discountAmount || 0)) / t.sessions) : 0),
-          outdoorSessions: t.sessions || 1,
-          indoorSessions: t.sessions || 1,
-        }));
+        const trItems: TreatmentItemForComparison[] = [
+          ...(comparingQuotation.treatments || []).map((t, idx) => ({
+            id: t.id || `tr-${idx}`,
+            treatmentName: t.treatmentName,
+            unitCost: t.unitCost || (t.sessions ? Math.round(((t.totalCost || 0) + (t.discountAmount || 0)) / t.sessions) : 0),
+            outdoorSessions: t.sessions || 1,
+            indoorSessions: t.sessions || 1,
+            isIndoorFree: t.isIndoorFree,
+            fixedDiscountAmount: t.fixedDiscountAmount,
+            discountPercent: t.discountPercent,
+            discountAmount: t.discountAmount,
+            outdoorDiscountPercent: t.outdoorDiscountPercent,
+            totalCost: t.totalCost
+          })),
+          ...(comparingQuotation.additionalTreatments || []).map((t, idx) => ({
+            id: t.id || `addl-tr-${idx}`,
+            treatmentName: t.treatmentName,
+            unitCost: t.unitCost || (t.sessions ? Math.round(((t.totalCost || 0) + (t.discountAmount || 0)) / t.sessions) : 0),
+            outdoorSessions: t.sessions || 1,
+            indoorSessions: t.sessions || 1,
+            isIndoorFree: t.isIndoorFree,
+            fixedDiscountAmount: t.fixedDiscountAmount,
+            discountPercent: t.discountPercent,
+            discountAmount: t.discountAmount,
+            outdoorDiscountPercent: t.outdoorDiscountPercent,
+            totalCost: t.totalCost
+          }))
+        ];
 
-        const indoorItems: IndoorServiceItemForComparison[] = (comparingQuotation.indoorServices || []).map((s, idx) => ({
-          id: s.id || `in-${idx}`,
-          roomType: s.roomType,
-          dailyRate: s.dailyRate || (s.days ? Math.round(s.totalAmount / s.days) : 0),
-          selected: true,
-        }));
+        // If treatments are empty (e.g. created as an outdoor package), extract from outdoor packages
+        if (trItems.length === 0 && comparingQuotation.outdoorPackages && comparingQuotation.outdoorPackages.length > 0) {
+          comparingQuotation.outdoorPackages.forEach((pkg, idx) => {
+            trItems.push({
+              id: pkg.id || `pkg-${idx}`,
+              treatmentName: pkg.packageName || 'Comprehensive Acupuncture Treatment',
+              unitCost: pkg.netCost ? Math.round(pkg.netCost / 30) : 1000,
+              outdoorSessions: 1,
+              indoorSessions: 1,
+              totalCost: pkg.netCost
+            });
+          });
+        }
+
+        const indoorItems: IndoorServiceItemForComparison[] = (comparingQuotation.indoorServices || [])
+          .filter(s => s.id !== 'food-charge-3x' && !s.roomType.toLowerCase().includes('food charge'))
+          .map((s, idx) => ({
+            id: s.id || `in-${idx}`,
+            roomType: s.roomType,
+            dailyRate: s.dailyRate || (s.days ? Math.round(s.totalAmount / s.days) : 0),
+            selected: true,
+          }));
 
         const savedComp = comparingQuotation.packageComparison;
 
@@ -1643,7 +1683,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
             onClose={() => setComparingQuotation(null)}
             selectedTreatments={trItems}
             allIndoorServices={indoorItems}
-            initialFoodChargeSelected={savedComp?.foodChargeSelected ?? (comparingQuotation.indoorServices && comparingQuotation.indoorServices.length > 0)}
+            initialFoodChargeSelected={savedComp?.foodChargeSelected ?? (comparingQuotation.indoorServices && comparingQuotation.indoorServices.some(s => s.id === 'food-charge-3x' || s.roomType.toLowerCase().includes('food charge')))}
             initialFoodChargePerDay={savedComp?.foodChargePerDay ?? 500}
             initialIncludeAdmissionFee={savedComp?.includeAdmissionFee ?? (comparingQuotation.admissionFee > 0)}
             initialAdmissionFee={savedComp?.admissionFee ?? (comparingQuotation.admissionFee || 1000)}
@@ -1653,8 +1693,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
                 : 'outdoor'
             }
             currentPackage=""
-            patientName={comparingQuotation.patientName || (patients.find(p => p.id === comparingQuotation.patientId)?.name) || 'Walk-in Patient'}
-            patientMobile={comparingQuotation.patientPhone || (comparingQuotation as any)?.phone || (comparingQuotation as any)?.mobile || (comparingQuotation as any)?.mobileNumber || (patients.find(p => p.id === comparingQuotation.patientId || p.name === comparingQuotation.patientName)?.phone) || ''}
+            patientName={comparingQuotation.patientName || (patients?.find(p => p.id === comparingQuotation.patientId)?.name) || 'Walk-in Patient'}
+            patientMobile={comparingQuotation.patientPhone || (patients?.find(p => p.id === comparingQuotation.patientId || p.name === comparingQuotation.patientName)?.phone) || ''}
             consultingDoctor={comparingQuotation.doctorName}
             quotationNo={comparingQuotation.quotationNumber}
             initialSavedComparison={savedComp || null}

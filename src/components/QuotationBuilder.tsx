@@ -20,7 +20,11 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  Lock
+  Lock,
+  Users,
+  PhoneCall,
+  X,
+  Check
 } from 'lucide-react';
 import { PackageComparisonModal } from './PackageComparisonModal';
 import { 
@@ -329,15 +333,56 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }));
   }, [editingQuotation]);
 
-  // Handle Phone Search
+  // Handle Patient Phone/Name Search & Dropdown State
+  const [matchingPatients, setMatchingPatients] = useState<Patient[]>([]);
+  const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState<boolean>(false);
+
+  const handlePatientSearchChange = (val: string) => {
+    setPhoneSearch(val);
+    const clean = val.trim().toLowerCase();
+    if (!clean) {
+      setMatchingPatients([]);
+      setIsPatientDropdownOpen(false);
+      return;
+    }
+    const matched = patients.filter(p => 
+      (p.phone && p.phone.toLowerCase().includes(clean)) || 
+      (p.name && p.name.toLowerCase().includes(clean)) ||
+      (p.serialNo && p.serialNo.toLowerCase().includes(clean))
+    );
+    setMatchingPatients(matched);
+    setIsPatientDropdownOpen(matched.length > 0);
+  };
+
+  const handleSelectPatient = (pat: Patient) => {
+    setSelectedPatient(pat);
+    setPhoneSearch(pat.phone);
+    if (pat.doctorName) {
+      setBillingDoctor(pat.doctorName);
+    }
+    setIsPatientDropdownOpen(false);
+  };
+
   const handlePhoneSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = phoneSearch.trim().toLowerCase();
-    const found = patients.find(p => p.phone.includes(clean) || p.name.toLowerCase().includes(clean));
-    if (found) {
-      setSelectedPatient(found);
+    if (!clean) {
+      alert('Please enter a mobile number or patient name.');
+      return;
+    }
+    const matched = patients.filter(p => 
+      (p.phone && p.phone.toLowerCase().includes(clean)) || 
+      (p.name && p.name.toLowerCase().includes(clean)) ||
+      (p.serialNo && p.serialNo.toLowerCase().includes(clean))
+    );
+    setMatchingPatients(matched);
+    if (matched.length === 1) {
+      handleSelectPatient(matched[0]);
+    } else if (matched.length > 1) {
+      setIsPatientDropdownOpen(true);
     } else {
-      alert('No patient found with this phone number. You can register a new patient manually.');
+      setIsPatientDropdownOpen(false);
+      alert('No patient found with this mobile number or name. You can register a new patient manually.');
     }
   };
 
@@ -2769,32 +2814,138 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             </div>
           </div>
 
-          {/* Quick Phone Search Form */}
-          <form onSubmit={handlePhoneSearchSubmit} className="flex items-center gap-2 w-full md:w-auto">
-            <div className="relative flex-1 md:w-64">
-              <input
-                type="text"
-                placeholder="Search patient by mobile..."
-                value={phoneSearch}
-                onChange={(e) => setPhoneSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
-              />
-              <UserSearch className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            </div>
-            <button
-              type="submit"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow transition-all cursor-pointer"
-            >
-              Search
-            </button>
-          </form>
+          {/* Quick Phone Search Form with Multi-Patient Dropdown */}
+          <div className="relative w-full md:w-auto">
+            <form onSubmit={handlePhoneSearchSubmit} className="flex items-center gap-2 w-full md:w-auto">
+              <div className="relative flex-1 md:w-72">
+                <input
+                  type="text"
+                  placeholder="Search patient by mobile or name..."
+                  value={phoneSearch}
+                  onChange={(e) => handlePatientSearchChange(e.target.value)}
+                  onFocus={() => {
+                    if (phoneSearch.trim().length > 0 && matchingPatients.length > 0) {
+                      setIsPatientDropdownOpen(true);
+                    }
+                  }}
+                  className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
+                />
+                <UserSearch className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                {phoneSearch && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhoneSearch('');
+                      setMatchingPatients([]);
+                      setIsPatientDropdownOpen(false);
+                    }}
+                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow transition-all cursor-pointer flex items-center gap-1 shrink-0"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Search</span>
+              </button>
+            </form>
+
+            {/* Patient Selection Dropdown if multiple or matching appointments found */}
+            {isPatientDropdownOpen && matchingPatients.length > 0 && (
+              <div className="absolute right-0 top-full mt-2 w-full md:w-96 bg-white border border-slate-300 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                <div className="bg-slate-900 text-white px-3.5 py-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold">
+                      {matchingPatients.length} Patient Appointment{matchingPatients.length > 1 ? 's' : ''} Found
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsPatientDropdownOpen(false)}
+                    className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="p-2 text-[11px] text-slate-600 bg-slate-50 border-b border-slate-200">
+                  Select the specific patient/appointment to generate invoice quotation:
+                </div>
+                <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                  {matchingPatients.map((pat, idx) => {
+                    const isSelected = selectedPatient?.id === pat.id;
+                    return (
+                      <div
+                        key={pat.id || `pat-${idx}`}
+                        onClick={() => handleSelectPatient(pat)}
+                        className={`p-3 transition-colors cursor-pointer hover:bg-emerald-50/80 flex items-start justify-between gap-3 ${isSelected ? 'bg-emerald-50 border-l-4 border-emerald-600' : ''}`}
+                      >
+                        <div className="space-y-1 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-xs">{pat.name}</span>
+                            {pat.serialNo && (
+                              <span className="bg-slate-200 text-slate-700 text-[10px] font-mono px-1.5 py-0.2 rounded font-bold">
+                                #{pat.serialNo}
+                              </span>
+                            )}
+                            {pat.gender && (
+                              <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.2 rounded">
+                                {pat.gender}{pat.age ? `, ${pat.age}y` : ''}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                            <span className="font-semibold text-emerald-700">📱 {pat.phone}</span>
+                            {pat.doctorName && <span className="text-slate-600">🩺 {pat.doctorName}</span>}
+                            {pat.appointmentDate && (
+                              <span className="text-slate-500">📅 {pat.appointmentDate} {pat.appointmentTime || ''}</span>
+                            )}
+                          </div>
+                          {(pat.notes || pat.remark) && (
+                            <p className="text-[10px] text-slate-500 italic line-clamp-1">
+                              📝 {pat.notes || pat.remark}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectPatient(pat);
+                          }}
+                          className={`shrink-0 text-xs font-bold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-white hover:bg-emerald-600 hover:text-white text-emerald-700 border-emerald-300'
+                          }`}
+                        >
+                          {isSelected ? '✓ Selected' : 'Select'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Selected Patient Card */}
         {selectedPatient ? (
           <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-inner flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="space-y-1">
-              <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider">Active Patient Selected</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider">Active Patient Selected</p>
+                {selectedPatient.serialNo && (
+                  <span className="text-[10px] bg-slate-800 text-emerald-300 font-mono px-2 py-0.5 rounded border border-slate-700">
+                    Serial #{selectedPatient.serialNo}
+                  </span>
+                )}
+              </div>
               <h3 className="text-xl font-bold text-white flex items-center gap-2">
                 <span>{selectedPatient.name}</span>
                 {selectedPatient.gender && (
@@ -2806,6 +2957,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               <p className="text-xs text-slate-300 flex flex-wrap items-center gap-3">
                 <span className="font-bold text-emerald-300">Mobile: {selectedPatient.phone}</span>
                 {selectedPatient.age && <span>• Age: {selectedPatient.age} Yrs</span>}
+                {selectedPatient.appointmentDate && (
+                  <span className="text-slate-400">• Appt: {selectedPatient.appointmentDate} {selectedPatient.appointmentTime || ''}</span>
+                )}
               </p>
               <div className="flex items-center gap-2 pt-1">
                 <Stethoscope className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -2814,6 +2968,27 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   {billingDoctor || 'Hospital System Admin'}
                 </span>
               </div>
+
+              {/* Show multiple appointments badge if same phone has multiple appointments */}
+              {patients.filter(p => p.phone === selectedPatient.phone).length > 1 && (
+                <div className="pt-2 flex items-center gap-2">
+                  <span className="text-[11px] bg-amber-950 text-amber-300 border border-amber-800 px-2 py-0.5 rounded-md flex items-center gap-1 font-semibold">
+                    <Users className="w-3 h-3 text-amber-400" />
+                    {patients.filter(p => p.phone === selectedPatient.phone).length} appointments registered with this mobile
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allForPhone = patients.filter(p => p.phone === selectedPatient.phone);
+                      setMatchingPatients(allForPhone);
+                      setIsPatientDropdownOpen(true);
+                    }}
+                    className="text-[11px] text-emerald-300 hover:text-emerald-200 underline font-bold cursor-pointer"
+                  >
+                    Switch Patient / Appointment
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">

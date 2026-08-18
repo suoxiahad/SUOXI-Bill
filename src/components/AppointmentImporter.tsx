@@ -514,18 +514,20 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                       title="Select All"
                     />
                   </th>
-                  <th className="px-4 py-3 font-bold">SL No.</th>
+                  <th className="px-3 py-3 font-bold">SL No.</th>
+                  <th className="px-3 py-3 font-bold">Appt Date</th>
                   <th className="px-4 py-3 font-bold">Patient Name</th>
-                  <th className="px-4 py-3 font-bold">Phone</th>
-                  <th className="px-4 py-3 font-bold">Gender / Age</th>
+                  <th className="px-4 py-3 font-bold">Phone Number</th>
+                  <th className="px-3 py-3 font-bold">Gender / Age</th>
                   <th className="px-4 py-3 font-bold">Remark (Disease)</th>
-                  <th className="px-4 py-3 font-bold">Status</th>
+                  <th className="px-3 py-3 font-bold">Status</th>
                   <th className="px-4 py-3 font-bold text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredPatients.map((p, idx) => {
                   const isSelected = selectedPatientIds.includes(p.id);
+                  const phoneDuplicates = patients.filter(x => x.phone === p.phone && x.phone && x.phone !== '01700000000').length;
                   return (
                     <tr key={p.id ? `${p.id}-${idx}` : `pat-row-${idx}`} className={`hover:bg-emerald-50/40 transition-colors ${isSelected ? 'bg-emerald-50/50' : ''}`}>
                       <td className="px-3 py-3.5 w-10 text-center">
@@ -540,23 +542,35 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                           className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
                         />
                       </td>
-                      <td className="px-4 py-3.5 font-mono text-slate-500 font-bold">
+                      <td className="px-3 py-3.5 font-mono text-slate-500 font-bold">
                         {p.serialNo || idx + 1}
+                      </td>
+                      <td className="px-3 py-3.5 font-medium text-emerald-800 whitespace-nowrap text-[11px]">
+                        <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md font-semibold text-emerald-900">
+                          {p.appointmentDate ? formatDateDisplay(p.appointmentDate) : 'Today'}
+                        </span>
                       </td>
                       <td className="px-4 py-3.5 font-bold text-slate-900">
                         {p.name}
                       </td>
                       <td className="px-4 py-3.5 font-mono text-slate-700">
-                        {p.phone}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{p.phone}</span>
+                          {phoneDuplicates > 1 && (
+                            <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded-md border border-purple-200" title={`${phoneDuplicates} appointments registered under this mobile number`}>
+                              {phoneDuplicates} Appts
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600">
+                      <td className="px-3 py-3.5 text-slate-600 whitespace-nowrap">
                         {p.gender || 'Male'} • {p.age ? `${p.age} Yrs` : 'N/A'}
                       </td>
                       <td className="px-4 py-3.5 text-slate-600 max-w-xs truncate">
                         {p.remark || p.notes || 'General Assessment'}
                       </td>
-                      <td className="px-4 py-3.5">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                      <td className="px-3 py-3.5">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap ${
                           p.status === 'Quotation Created' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
                         }`}>
                           {p.status}
@@ -565,7 +579,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                       <td className="px-4 py-3.5 text-right">
                         <button
                           onClick={() => onSelectPatientForQuotation(p)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow transition cursor-pointer flex items-center gap-1 ml-auto"
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow transition cursor-pointer flex items-center gap-1 ml-auto whitespace-nowrap"
                         >
                           <span>Create Quotation</span>
                           <ArrowRight className="w-3.5 h-3.5" />

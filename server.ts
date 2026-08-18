@@ -317,6 +317,7 @@ async function initDatabase() {
       await pool.query(`
         CREATE TABLE IF NOT EXISTS patients (
           id VARCHAR(64) PRIMARY KEY,
+          serialNo VARCHAR(32) DEFAULT '',
           name VARCHAR(128) NOT NULL,
           phone VARCHAR(32) NOT NULL,
           age VARCHAR(16) DEFAULT '',
@@ -333,6 +334,13 @@ async function initDatabase() {
           INDEX idx_patients_phone (phone)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
+
+      // Safe check to add serialNo column if patients table already exists
+      try {
+        await pool.query(`ALTER TABLE patients ADD COLUMN serialNo VARCHAR(32) DEFAULT '' AFTER id;`);
+      } catch {
+        // column may already exist
+      }
 
       await pool.query(`
         CREATE TABLE IF NOT EXISTS quotations (
@@ -672,10 +680,21 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
   }
 
   const cleanPhone = String(p.phone).trim();
-  const existingIdx = localData.patients.findIndex(x => x.id === p.id || x.phone === cleanPhone);
+  // ONLY match by id, NEVER overwrite different appointments of the same phone number
+  const existingIdx = p.id ? localData.patients.findIndex(x => x.id === p.id) : -1;
+
+  let cleanSerial = '';
+  if (p.serialNo) {
+    const match = String(p.serialNo).match(/\b\d+\b/);
+    if (match) cleanSerial = match[0];
+  }
+  if (!cleanSerial) {
+    cleanSerial = String(localData.patients.length + 1);
+  }
 
   const formattedPatient = {
     id: existingIdx >= 0 ? localData.patients[existingIdx].id : (p.id || `pat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`),
+    serialNo: cleanSerial,
     name: String(p.name).trim(),
     phone: cleanPhone,
     age: p.age || '',
@@ -701,11 +720,11 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
   if (isMySqlActive && mysqlPool) {
     try {
       await mysqlPool.execute(
-        `INSERT INTO patients (id, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
-        [formattedPatient.id, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark, formattedPatient.createdAt,
-         formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark]
+        `INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE serialNo=?, name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
+        [formattedPatient.id, formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark, formattedPatient.createdAt,
+         formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark]
       );
     } catch (err) {
       console.error('MySQL patient save error:', err);
@@ -1142,7 +1161,9 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
     const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
 
-    const existingIdx = localData.patients.findIndex(x => x.phone === cleanPhone && cleanPhone !== '01700000000');
+    // Only update if explicit p.id matches an existing record.
+    // Every row in the uploaded Excel represents an appointment entry - multiple appointments with the same phone must ALL be saved!
+    const existingIdx = p.id ? localData.patients.findIndex(x => x.id === p.id) : -1;
 
     let cleanSerial = '';
     if (p.serialNo) {
@@ -1153,8 +1174,12 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       cleanSerial = String(idx + 1);
     }
 
+    const uniqueId = existingIdx >= 0
+      ? localData.patients[existingIdx].id
+      : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`);
+
     const formattedPatient = {
-      id: existingIdx >= 0 ? localData.patients[existingIdx].id : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`),
+      id: uniqueId,
       serialNo: cleanSerial,
       name: cleanName,
       phone: cleanPhone,

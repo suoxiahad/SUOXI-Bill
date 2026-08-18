@@ -9,6 +9,11 @@ export interface TreatmentItemForComparison {
   outdoorSessions?: number;
   indoorSessions?: number;
   isIndoorFree?: boolean;
+  fixedDiscountAmount?: number;
+  discountPercent?: number | '';
+  discountAmount?: number;
+  outdoorDiscountPercent?: number;
+  totalCost?: number;
 }
 
 export interface IndoorServiceItemForComparison {
@@ -161,15 +166,43 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     window.print();
   };
 
+  // Helper to compute effective unit cost for a treatment item (taking into account FREE items, 100% discount, fixed discounts)
+  const getEffectiveTreatmentUnitCost = (item: TreatmentItemForComparison, isIndoor: boolean = false): number => {
+    const nameLower = (item.treatmentName || '').toLowerCase().trim();
+    // 1. Explicit FREE in name or 0 unitCost
+    if (nameLower.includes('(free)') || nameLower.includes(' free') || nameLower.endsWith(' free') || item.unitCost === 0) {
+      return 0;
+    }
+    // 2. Indoor free flag
+    if (isIndoor && item.isIndoorFree) {
+      return 0;
+    }
+    // 3. 100% discount or 0 total cost when selected
+    if (item.discountPercent === 100) {
+      return 0;
+    }
+    // 4. Fixed discount amount (if fixed discount covers the whole unit cost, it is FREE 0 BDT)
+    if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
+      return Math.max(0, item.unitCost - Number(item.fixedDiscountAmount));
+    }
+    // 5. Outdoor discount 100%
+    if (!isIndoor && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) === 100) {
+      return 0;
+    }
+    return Number(item.unitCost) || 0;
+  };
+
   // Compute daily gross cost per day for Outdoor and Indoor treatments
   const outdoorDailyGross = selectedTreatments.reduce((sum, item) => {
     const dailySessions = item.outdoorSessions !== undefined ? item.outdoorSessions : 1;
-    return sum + (item.unitCost * dailySessions);
+    const effectiveCost = getEffectiveTreatmentUnitCost(item, false);
+    return sum + (effectiveCost * dailySessions);
   }, 0);
 
   const indoorDailyGross = selectedTreatments.reduce((sum, item) => {
     const dailySessions = item.indoorSessions !== undefined ? item.indoorSessions : 1;
-    return sum + (item.unitCost * dailySessions);
+    const effectiveCost = getEffectiveTreatmentUnitCost(item, true);
+    return sum + (effectiveCost * dailySessions);
   }, 0);
 
   const selectedRooms = allIndoorServices.filter(r => r.selected);
@@ -283,7 +316,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
       selectedTreatments.forEach(item => {
         const dailySessions = item.indoorSessions !== undefined ? item.indoorSessions : 1;
-        const itemGross = item.unitCost * dailySessions * sc.days;
+        const effectiveUnitCost = getEffectiveTreatmentUnitCost(item, true);
+        const itemGross = effectiveUnitCost * dailySessions * sc.days;
         treatmentGross += itemGross;
         treatmentDiscount += Math.round((itemGross * sc.discountPercent) / 100);
       });
@@ -408,11 +442,16 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           {/* List of selected treatment names and selected rooms */}
           {(selectedTreatments.length > 0 || selectedRooms.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-emerald-100/80">
-              {selectedTreatments.map(t => (
-                <span key={t.id} className="bg-white text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md text-[11px] font-medium shadow-2xs">
-                  ✓ {t.treatmentName} ({t.unitCost} BDT)
-                </span>
-              ))}
+              {selectedTreatments.map(t => {
+                const effCost = getEffectiveTreatmentUnitCost(t, false);
+                const isFree = effCost === 0;
+                const nameHasFree = (t.treatmentName || '').toLowerCase().includes('free');
+                return (
+                  <span key={t.id} className="bg-white text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md text-[11px] font-medium shadow-2xs">
+                    ✓ {t.treatmentName} {isFree ? (nameHasFree ? '(0 BDT)' : '(FREE)') : `(${effCost} BDT)`}
+                  </span>
+                );
+              })}
               {selectedRooms.map(r => (
                 <span key={r.id} className="bg-indigo-50 text-indigo-900 border border-indigo-200 px-2 py-0.5 rounded-md text-[11px] font-bold shadow-2xs">
                   🏠 {r.roomType} (BDT {r.dailyRate}/day)
@@ -779,20 +818,29 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     </div>
 
     {/* Printable Comparison Document Sheet (Visible ONLY during window.print()) */}
-    <div className="hidden print:block font-sans text-slate-900 bg-white p-4 max-w-5xl mx-auto">
+    <div id="suoxi-comparison-print-sheet" className="hidden print:block font-sans text-slate-900 bg-white p-2 max-w-5xl mx-auto">
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
             @page {
               size: A4 portrait;
-              margin: 10mm;
+              margin: 8mm;
             }
             html, body {
               margin: 0 !important;
               padding: 0 !important;
-              background-color: #ffffff !important;
+              background: #ffffff !important;
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
+            }
+            #suoxi-comparison-print-sheet {
+              display: block !important;
+              visibility: visible !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              margin: 0 auto !important;
+              padding: 4mm !important;
+              background-color: #ffffff !important;
             }
           }
         `
@@ -834,11 +882,16 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
         </span>
         <div className="flex flex-wrap gap-1.5 text-[10.5px]">
           {selectedTreatments.length > 0 ? (
-            selectedTreatments.map(t => (
-              <span key={t.id} className="bg-white text-emerald-900 border border-emerald-300 px-2 py-0.5 rounded font-medium">
-                ✓ {t.treatmentName} ({t.unitCost} BDT/session)
-              </span>
-            ))
+            selectedTreatments.map(t => {
+              const effCost = getEffectiveTreatmentUnitCost(t, false);
+              const isFree = effCost === 0;
+              const nameHasFree = (t.treatmentName || '').toLowerCase().includes('free');
+              return (
+                <span key={t.id} className="bg-white text-emerald-900 border border-emerald-300 px-2 py-0.5 rounded font-medium">
+                  ✓ {t.treatmentName} {isFree ? (nameHasFree ? '(0 BDT/session)' : '(FREE)') : `(${effCost} BDT/session)`}
+                </span>
+              );
+            })
           ) : (
             <span className="text-slate-500 italic">No treatments selected</span>
           )}
