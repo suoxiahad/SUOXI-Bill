@@ -215,7 +215,7 @@ const DEMO_PATIENTS = [
   }
 ];
 
-const INITIAL_PATIENTS = (IS_PRODUCTION || FORCE_CLEAR_DEMO) ? [] : DEMO_PATIENTS;
+const INITIAL_PATIENTS: any[] = [];
 
 // Local JSON DB Helper
 let localData = {

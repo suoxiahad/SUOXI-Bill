@@ -93,20 +93,10 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
       }));
       setParsedPreview(recordsWithDate);
       setSelectedPreviewIndexes(recordsWithDate.map((_, idx) => idx));
-
-      try {
-        const summary = await importPatientsFromExcelApi(recordsWithDate);
-        onRefreshPatients();
-        setUploadMessage({
-          type: 'success',
-          text: `Successfully imported ${summary.added} new patients and updated ${summary.updated} existing records for appointment date (${targetDate}) into database permanently!`
-        });
-      } catch (saveErr) {
-        setUploadMessage({
-          type: 'success',
-          text: `Extracted ${result.data.length} patient records from ${file.name} for ${targetDate}. Review the preview below and click "Confirm & Import to Database".`
-        });
-      }
+      setUploadMessage({
+        type: 'info',
+        text: `Extracted ${result.data.length} appointment records from "${file.name}" for Appointment Date: ${formatDateDisplay(targetDate)}. Please review the preview table below and click "Confirm & Import to Database" to save.`
+      });
     } else {
       setParsedPreview([]);
       setUploadMessage({
@@ -152,17 +142,36 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     }
   };
 
+  const handleCancelPreview = () => {
+    setParsedPreview([]);
+    setSelectedPreviewIndexes([]);
+    setSelectedFile(null);
+    setUploadMessage({
+      type: 'info',
+      text: 'Import preview cleared.'
+    });
+  };
+
   const handleSaveParsedRecords = async () => {
     if (parsedPreview.length === 0) return;
+
+    const selectedRecords = parsedPreview.filter((_, idx) => selectedPreviewIndexes.includes(idx));
+    if (selectedRecords.length === 0) {
+      setUploadMessage({
+        type: 'error',
+        text: 'No patient records selected from preview to import. Please check at least one record.'
+      });
+      return;
+    }
 
     setIsProcessing(true);
     setUploadMessage({
       type: 'info',
-      text: `Importing ${parsedPreview.length} patients for appointment date ${selectedDate} into database... Please wait.`
+      text: `Importing ${selectedRecords.length} appointment records for date ${formatDateDisplay(selectedDate)} into database... Please wait.`
     });
 
     try {
-      const recordsToSave = parsedPreview.map(p => ({
+      const recordsToSave = selectedRecords.map(p => ({
         ...p,
         appointmentDate: selectedDate
       }));
@@ -172,10 +181,12 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
       setUploadMessage({
         type: 'success',
-        text: `Successfully imported ${summary.added} new patients and updated ${summary.updated} existing records for appointment date (${selectedDate}) into database.`
+        text: `Successfully imported ${summary.added} appointment records into database for appointment date (${formatDateDisplay(selectedDate)})!`
       });
 
+      // Clear preview after saving to prevent accidental re-imports
       setParsedPreview([]);
+      setSelectedPreviewIndexes([]);
       setSelectedFile(null);
     } catch (err: any) {
       console.error('Import error:', err);
@@ -345,18 +356,28 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         {/* Parsed Excel Preview Table */}
         {parsedPreview.length > 0 && (
           <div className="space-y-3 pt-4 border-t border-slate-100">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <h4 className="font-bold text-slate-900 text-xs text-emerald-800 flex items-center gap-1.5">
                 <CheckCircle className="w-4 h-4 text-emerald-600" />
-                Preview Extracted Records ({parsedPreview.length} Patients for Date: {formatDateDisplay(selectedDate)})
+                Preview Extracted Records ({selectedPreviewIndexes.length} of {parsedPreview.length} selected for Date: {formatDateDisplay(selectedDate)})
               </h4>
-              <button
-                onClick={handleSaveParsedRecords}
-                disabled={isProcessing}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-              >
-                {isProcessing ? 'Importing to Database...' : 'Confirm & Import to Database'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCancelPreview}
+                  disabled={isProcessing}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer disabled:opacity-50"
+                >
+                  Cancel / Clear Preview
+                </button>
+                <button
+                  onClick={handleSaveParsedRecords}
+                  disabled={isProcessing || selectedPreviewIndexes.length === 0}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>{isProcessing ? 'Importing...' : `Confirm & Import Selected (${selectedPreviewIndexes.length})`}</span>
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-xl">

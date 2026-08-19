@@ -16,6 +16,23 @@ export interface TreatmentItemForComparison {
   totalCost?: number;
 }
 
+export interface AdditionalTreatmentItemForComparison {
+  id: string;
+  treatmentName: string;
+  unitCost: number;
+  sessions?: number | '';
+  discountPercent?: number | '';
+  discountAmount?: number;
+  totalCost?: number;
+  isRatioBased?: boolean;
+  sessionsPer10Days?: number;
+  isIndoorFree?: boolean;
+  fixedDiscountAmount?: number;
+  outdoorDiscountPercent?: number;
+  outdoorDiscountAmount?: number;
+  defaultDiscountPercent?: number;
+}
+
 export interface IndoorServiceItemForComparison {
   id: string;
   roomType: string;
@@ -27,6 +44,7 @@ interface PackageComparisonModalProps {
   isOpen: boolean;
   onClose: () => void;
   selectedTreatments: TreatmentItemForComparison[];
+  selectedAdditionalTreatments?: AdditionalTreatmentItemForComparison[];
   allIndoorServices?: IndoorServiceItemForComparison[];
   initialFoodChargeSelected?: boolean;
   initialFoodChargePerDay?: number;
@@ -72,6 +90,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   isOpen,
   onClose,
   selectedTreatments,
+  selectedAdditionalTreatments = [],
   allIndoorServices = [],
   initialFoodChargeSelected = false,
   initialFoodChargePerDay = 500,
@@ -207,6 +226,45 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
   const selectedRooms = allIndoorServices.filter(r => r.selected);
   const totalRoomDailyRate = selectedRooms.reduce((sum, r) => sum + (Number(r.dailyRate) || 0), 0);
+
+  // Helper to calculate Weekly Treatment per-session regular rate and discounted rate
+  const calculateWeeklyTreatmentPerSession = (item: AdditionalTreatmentItemForComparison, patientType: 'outdoor' | 'indoor') => {
+    const isIndoor = patientType === 'indoor';
+    const unitCost = Number(item.unitCost) || 0;
+
+    let discountAmount = 0;
+    let discountPercent: number | '' = item.discountPercent ?? '';
+
+    if (isIndoor && item.isIndoorFree) {
+      discountPercent = 100;
+      discountAmount = unitCost;
+    } else if (!isIndoor && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
+      discountAmount = Math.min(unitCost, Number(item.outdoorDiscountAmount));
+      if (unitCost > 0) discountPercent = Math.round((discountAmount / unitCost) * 100);
+    } else if (!isIndoor && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+      discountPercent = Number(item.outdoorDiscountPercent);
+      discountAmount = Math.round((unitCost * discountPercent) / 100);
+    } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
+      const fixedVal = Number(item.fixedDiscountAmount);
+      discountAmount = Math.min(unitCost, fixedVal);
+      discountPercent = unitCost > 0 ? Math.round((discountAmount / unitCost) * 100) : 0;
+    } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+      discountPercent = Number(item.defaultDiscountPercent);
+      discountAmount = Math.round((unitCost * discountPercent) / 100);
+    } else {
+      const pct = discountPercent === '' ? 0 : Number(discountPercent);
+      discountAmount = Math.round((unitCost * pct) / 100);
+    }
+
+    const perSessionNet = Math.max(0, unitCost - discountAmount);
+
+    return {
+      unitCost,
+      discountPercent: discountPercent === '' ? 0 : Number(discountPercent),
+      discountAmount,
+      perSessionNet,
+    };
+  };
 
   // Define the scenarios
   interface Scenario {
@@ -387,13 +445,20 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
         {/* Selected Treatments Summary Bar */}
         <div className="bg-emerald-50/80 px-6 py-3 border-b border-emerald-100 flex flex-col gap-2 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Info className="w-4 h-4 text-emerald-700 shrink-0" />
               <span className="text-emerald-900 font-medium">
                 {selectedTreatments.length > 0 ? (
-                  <>Comparing based on <strong>{selectedTreatments.length} selected treatment(s)</strong></>
+                  <>
+                    Comparing based on <strong>{selectedTreatments.length} selected daily treatment(s)</strong>
+                    {selectedAdditionalTreatments.length > 0 && (
+                      <span className="text-sky-900 font-semibold"> + <strong>{selectedAdditionalTreatments.length} weekly therapy item(s)</strong></span>
+                    )}
+                  </>
+                ) : selectedAdditionalTreatments.length > 0 ? (
+                  <>Comparing based on <strong>{selectedAdditionalTreatments.length} weekly therapy item(s)</strong></>
                 ) : (
-                  <span className="text-slate-600 font-medium">No treatments selected in Step 1</span>
+                  <span className="text-slate-600 font-medium">No treatments selected</span>
                 )}
               </span>
             </div>
@@ -439,8 +504,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             )}
           </div>
 
-          {/* List of selected treatment names and selected rooms */}
-          {(selectedTreatments.length > 0 || selectedRooms.length > 0) && (
+          {/* List of selected treatment names, selected rooms, and weekly treatments */}
+          {(selectedTreatments.length > 0 || selectedRooms.length > 0 || selectedAdditionalTreatments.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-emerald-100/80">
               {selectedTreatments.map(t => {
                 const effCost = getEffectiveTreatmentUnitCost(t, false);
@@ -455,6 +520,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               {selectedRooms.map(r => (
                 <span key={r.id} className="bg-indigo-50 text-indigo-900 border border-indigo-200 px-2 py-0.5 rounded-md text-[11px] font-bold shadow-2xs">
                   🏠 {r.roomType} (BDT {r.dailyRate}/day)
+                </span>
+              ))}
+              {selectedAdditionalTreatments.map(w => (
+                <span key={w.id} className="bg-sky-50 text-sky-900 border border-sky-200 px-2 py-0.5 rounded-md text-[11px] font-bold shadow-2xs">
+                  🗓️ {w.treatmentName} (BDT {w.unitCost}/sess)
                 </span>
               ))}
             </div>
@@ -564,6 +634,51 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                             <span>Effective Rate / Day:</span>
                             <span className="font-semibold text-slate-700">BDT {details.perDayNet.toLocaleString()} / Day</span>
                           </div>
+
+                          {/* Weekly Treatments (Optional / Separate - Pay Per Session) */}
+                          {selectedAdditionalTreatments.length > 0 && (
+                            <div className="mt-2.5 pt-2 border-t border-dashed border-slate-200">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-sky-950 mb-1.5">
+                                <span className="flex items-center gap-1">
+                                  <span>🗓️</span>
+                                  <span>Weekly Therapies:</span>
+                                </span>
+                                <span className="text-[9.5px] font-bold text-sky-700 bg-sky-100/80 px-1.5 py-0.5 rounded border border-sky-200">
+                                  Separate Bill
+                                </span>
+                              </div>
+                              <div className="space-y-1.5 bg-sky-50/70 p-2 rounded-xl border border-sky-100">
+                                {selectedAdditionalTreatments.map(item => {
+                                  const wtRate = calculateWeeklyTreatmentPerSession(item, sc.patientType);
+                                  return (
+                                    <div key={item.id} className="text-[11px] border-b border-sky-100/80 last:border-0 pb-1 last:pb-0">
+                                      <div className="flex justify-between items-center text-slate-800 font-semibold">
+                                        <span className="truncate pr-1">• {item.treatmentName}</span>
+                                        <span className={`shrink-0 font-medium ${wtRate.discountPercent > 0 ? 'text-slate-400 line-through text-[10px]' : 'text-slate-700'}`}>
+                                          BDT {wtRate.unitCost.toLocaleString()}
+                                        </span>
+                                      </div>
+                                      <div className="flex justify-between items-center text-[10.5px] text-sky-900 font-bold mt-0.5">
+                                        <span className="text-sky-800 font-medium pl-2">
+                                          Pay Per Session {wtRate.discountPercent > 0 ? `(${wtRate.discountPercent}%)` : ''}
+                                        </span>
+                                        <span className="text-sky-950 font-black shrink-0">
+                                          {wtRate.perSessionNet === 0 ? (
+                                            <span className="text-emerald-700 font-bold">FREE</span>
+                                          ) : (
+                                            `BDT ${wtRate.perSessionNet.toLocaleString()}`
+                                          )}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[9.5px] text-slate-400 italic mt-1 px-0.5">
+                                * Not included in package net bill (pay per session)
+                              </p>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -737,6 +852,51 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                             <span className="font-extrabold text-slate-900">BDT {details.perDayNet.toLocaleString()} / Day</span>
                           </div>
 
+                          {/* Weekly Treatments (Optional / Separate - Pay Per Session) */}
+                          {selectedAdditionalTreatments.length > 0 && (
+                            <div className="my-1.5 pt-1.5 border-t border-dashed border-slate-200">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-sky-950 mb-1">
+                                <span className="flex items-center gap-1">
+                                  <span>🗓️</span>
+                                  <span>Weekly Therapies:</span>
+                                </span>
+                                <span className="text-[9.5px] font-bold text-sky-700 bg-sky-100/80 px-1.5 py-0.5 rounded border border-sky-200">
+                                  Separate Bill
+                                </span>
+                              </div>
+                              <div className="space-y-1.5 bg-sky-50/70 p-2 rounded-xl border border-sky-100">
+                                {selectedAdditionalTreatments.map(item => {
+                                  const wtRate = calculateWeeklyTreatmentPerSession(item, sc.patientType);
+                                  return (
+                                    <div key={item.id} className="text-[11px] border-b border-sky-100/80 last:border-0 pb-1 last:pb-0">
+                                      <div className="flex justify-between items-center text-slate-800 font-semibold">
+                                        <span className="truncate pr-1">• {item.treatmentName}</span>
+                                        <span className={`shrink-0 font-medium ${wtRate.discountPercent > 0 ? 'text-slate-400 line-through text-[10px]' : 'text-slate-700'}`}>
+                                          BDT {wtRate.unitCost.toLocaleString()}
+                                        </span>
+                                      </div>
+                                      <div className="flex justify-between items-center text-[10.5px] text-sky-900 font-bold mt-0.5">
+                                        <span className="text-sky-800 font-medium pl-2">
+                                          Pay Per Session {wtRate.discountPercent > 0 ? `(${wtRate.discountPercent}%)` : ''}
+                                        </span>
+                                        <span className="text-sky-950 font-black shrink-0">
+                                          {wtRate.perSessionNet === 0 ? (
+                                            <span className="text-emerald-700 font-bold">FREE</span>
+                                          ) : (
+                                            `BDT ${wtRate.perSessionNet.toLocaleString()}`
+                                          )}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[9.5px] text-slate-400 italic mt-1 px-0.5">
+                                * Not included in indoor net estimate (pay per session)
+                              </p>
+                            </div>
+                          )}
+
                           {/* Admission Fee (1-Time, added below Effective Rate) */}
                           <div className="flex justify-between text-slate-600 text-[11px] pt-0.5">
                             <span>Admission Fee (1-Time):</span>
@@ -900,6 +1060,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               🏠 {r.roomType} (BDT {r.dailyRate}/day)
             </span>
           ))}
+          {selectedAdditionalTreatments.map(w => (
+            <span key={w.id} className="bg-sky-50 text-sky-900 border border-sky-300 px-2 py-0.5 rounded font-medium">
+              🗓️ {w.treatmentName} (BDT {w.unitCost}/session)
+            </span>
+          ))}
         </div>
       </div>
 
@@ -947,6 +1112,38 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                         <span>Rate / Day:</span>
                         <span className="font-bold text-slate-700">BDT {details.perDayNet.toLocaleString()}/d</span>
                       </div>
+
+                      {/* Weekly Therapies Breakdown (Pay Per Session) */}
+                      {selectedAdditionalTreatments.length > 0 && (
+                        <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200 text-[8.5px]">
+                          <div className="flex justify-between font-bold text-sky-950 mb-0.5">
+                            <span>Weekly Therapies (Pay Per Session):</span>
+                          </div>
+                          <div className="space-y-1 bg-slate-50 p-1 rounded border border-slate-200">
+                            {selectedAdditionalTreatments.map(item => {
+                              const wtRate = calculateWeeklyTreatmentPerSession(item, sc.patientType);
+                              return (
+                                <div key={item.id} className="border-b border-slate-200/60 last:border-0 pb-0.5 last:pb-0">
+                                  <div className="flex justify-between text-slate-800 font-semibold">
+                                    <span className="truncate pr-1">• {item.treatmentName}</span>
+                                    <span className={wtRate.discountPercent > 0 ? 'text-slate-400 line-through text-[8px]' : 'text-slate-700'}>
+                                      BDT {wtRate.unitCost.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between font-bold text-sky-900 mt-0.5">
+                                    <span className="text-slate-600 font-medium pl-1">
+                                      Pay Per Session {wtRate.discountPercent > 0 ? `(${wtRate.discountPercent}%)` : ''}
+                                    </span>
+                                    <span className="text-slate-900 font-black">
+                                      {wtRate.perSessionNet === 0 ? 'FREE' : `BDT ${wtRate.perSessionNet.toLocaleString()}`}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1015,6 +1212,38 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                         <span>Effective Rate / Day:</span>
                         <span className="text-slate-900">BDT {details.perDayNet.toLocaleString()}/d</span>
                       </div>
+
+                      {/* Weekly Therapies Breakdown (Pay Per Session) */}
+                      {selectedAdditionalTreatments.length > 0 && (
+                        <div className="mt-1 pt-1 border-t border-dashed border-slate-200 text-[8.5px]">
+                          <div className="flex justify-between font-bold text-sky-950 mb-0.5">
+                            <span>Weekly Therapies (Pay Per Session):</span>
+                          </div>
+                          <div className="space-y-1 bg-slate-50 p-1 rounded border border-slate-200">
+                            {selectedAdditionalTreatments.map(item => {
+                              const wtRate = calculateWeeklyTreatmentPerSession(item, sc.patientType);
+                              return (
+                                <div key={item.id} className="border-b border-slate-200/60 last:border-0 pb-0.5 last:pb-0">
+                                  <div className="flex justify-between text-slate-800 font-semibold">
+                                    <span className="truncate pr-1">• {item.treatmentName}</span>
+                                    <span className={wtRate.discountPercent > 0 ? 'text-slate-400 line-through text-[8px]' : 'text-slate-700'}>
+                                      BDT {wtRate.unitCost.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between font-bold text-sky-900 mt-0.5">
+                                    <span className="text-slate-600 font-medium pl-1">
+                                      Pay Per Session {wtRate.discountPercent > 0 ? `(${wtRate.discountPercent}%)` : ''}
+                                    </span>
+                                    <span className="text-slate-900 font-black">
+                                      {wtRate.perSessionNet === 0 ? 'FREE' : `BDT ${wtRate.perSessionNet.toLocaleString()}`}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       <div className="flex justify-between text-slate-600 pt-0.5">
                         <span>Admission (1-Time):</span>

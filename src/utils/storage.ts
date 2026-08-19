@@ -40,7 +40,7 @@ const DEMO_PATIENTS_LIST: Patient[] = [
   }
 ];
 
-const INITIAL_PATIENTS: Patient[] = import.meta.env.PROD ? [] : DEMO_PATIENTS_LIST;
+const INITIAL_PATIENTS: Patient[] = [];
 
 // Helper to get auth header
 function getAuthHeader(): Record<string, string> {

@@ -574,17 +574,17 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       let effectiveDiscPct = discPct;
       let discountAmount = 0;
 
-      if (targetMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-        effectiveDiscPct = Number(item.outdoorDiscountPercent);
-        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
-      } else if (targetMode === 'indoor' && item.isIndoorFree) {
+      if (targetMode === 'indoor' && item.isIndoorFree) {
         effectiveDiscPct = 100;
         discountAmount = gross;
-      } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && !discPct) {
+      } else if (targetMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+        effectiveDiscPct = Number(item.outdoorDiscountPercent);
+        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
         const fixedVal = Number(item.fixedDiscountAmount);
         discountAmount = Math.min(gross, fixedVal);
         effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && !discPct) {
+      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
         effectiveDiscPct = Number(item.defaultDiscountPercent);
         discountAmount = Math.round((gross * effectiveDiscPct) / 100);
       } else {
@@ -693,15 +693,41 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           totalCost: 0
         };
       }
+
+      const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
+      const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
+      const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
+      const isFixedPct = item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0;
+
       const unitCost = Number(item.unitCost) || 0;
       const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
-      const discPct = newVal === '' ? 0 : Number(newVal);
       const gross = unitCost * sessions;
-      const discountAmount = Math.round((gross * discPct) / 100);
+
+      let effectiveDiscPct = newVal;
+      let discountAmount = 0;
+
+      if (isIndoorFree) {
+        effectiveDiscPct = 100;
+        discountAmount = gross;
+      } else if (isOutdoorDisc) {
+        effectiveDiscPct = Number(item.outdoorDiscountPercent);
+        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else if (isFixedAmt) {
+        const fixedVal = Number(item.fixedDiscountAmount);
+        discountAmount = Math.min(gross, fixedVal);
+        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+      } else if (isFixedPct) {
+        effectiveDiscPct = Number(item.defaultDiscountPercent);
+        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else {
+        const discPct = newVal === '' ? 0 : Number(newVal);
+        discountAmount = Math.round((gross * discPct) / 100);
+      }
+
       const totalCost = Math.max(0, gross - discountAmount);
       return {
         ...item,
-        discountPercent: newVal,
+        discountPercent: effectiveDiscPct,
         discountAmount,
         totalCost
       };
@@ -3342,6 +3368,14 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                                     🏷️ Fixed BDT {item.fixedDiscountAmount.toLocaleString()} Off
                                   </span>
                                 )}
+                                {isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && (!item.fixedDiscountAmount || Number(item.fixedDiscountAmount) === 0) && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
+                                    title={`Fixed Discount: ${item.defaultDiscountPercent}% Off`}
+                                  >
+                                    🏷️ Fixed {item.defaultDiscountPercent}% Off
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -3426,6 +3460,14 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                           >
                             <span>🏷️</span>
                             <span>Fixed BDT {Number(item.fixedDiscountAmount).toLocaleString()}</span>
+                          </div>
+                        ) : isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 ? (
+                          <div
+                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
+                            title={`Fixed Discount Tag: ${Number(item.defaultDiscountPercent)}%`}
+                          >
+                            <span>🏷️</span>
+                            <span>Fixed {Number(item.defaultDiscountPercent)}%</span>
                           </div>
                         ) : (
                           <div className="relative">
@@ -4469,6 +4511,14 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                                     🏷️ Fixed BDT {item.fixedDiscountAmount.toLocaleString()} Off
                                   </span>
                                 )}
+                                {isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && (!item.fixedDiscountAmount || Number(item.fixedDiscountAmount) === 0) && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
+                                    title={`Fixed Discount: ${item.defaultDiscountPercent}% Off`}
+                                  >
+                                    🏷️ Fixed {item.defaultDiscountPercent}% Off
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -4528,6 +4578,14 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                           >
                             <span>🏷️</span>
                             <span>Fixed BDT {Number(item.fixedDiscountAmount).toLocaleString()}</span>
+                          </div>
+                        ) : isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 ? (
+                          <div
+                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
+                            title={`Fixed Discount Tag: ${Number(item.defaultDiscountPercent)}%`}
+                          >
+                            <span>🏷️</span>
+                            <span>Fixed {Number(item.defaultDiscountPercent)}%</span>
                           </div>
                         ) : (
                           <div className="relative">
@@ -4861,6 +4919,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         isOpen={isCompareModalOpen}
         onClose={() => setIsCompareModalOpen(false)}
         selectedTreatments={treatmentList.filter(t => t.selected)}
+        selectedAdditionalTreatments={additionalTreatmentList.filter(t => t.selected)}
         allIndoorServices={indoorServiceList}
         initialFoodChargeSelected={foodChargeSelected}
         initialFoodChargePerDay={foodChargePerDay === '' ? 500 : Number(foodChargePerDay)}

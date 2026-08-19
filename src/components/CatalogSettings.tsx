@@ -271,7 +271,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                             <span className="text-[11px] font-bold text-slate-700 block">🏷️ Discounts & Rates Rules:</span>
                             <div className="grid grid-cols-2 gap-2 text-xs">
                               <div>
-                                <span className="text-[10px] text-slate-500 block font-medium">Default Discount (%):</span>
+                                <span className="text-[10px] text-slate-500 block font-medium">Fixed Discount (%):</span>
                                 <div className="relative">
                                   <input
                                     type="number"
@@ -728,7 +728,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                           <span className="text-[11px] font-bold text-slate-700 block">🏷️ Discounts & Rates Rules:</span>
                           <div className="grid grid-cols-2 gap-2 text-xs">
                             <div>
-                              <span className="text-[10px] text-slate-500 block font-medium">Default Discount (%):</span>
+                              <span className="text-[10px] text-slate-500 block font-medium">Fixed Discount (%):</span>
                               <div className="relative">
                                 <input
                                   type="number"

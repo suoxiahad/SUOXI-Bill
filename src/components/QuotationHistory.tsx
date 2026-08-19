@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Search, 
   Printer, 
@@ -18,7 +18,11 @@ import {
   Check,
   FilePlus,
   Scale,
-  Edit
+  Edit,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  RotateCcw
 } from 'lucide-react';
 import { InvoiceQuotation, User, Patient } from '../types';
 import { PackageComparisonModal, TreatmentItemForComparison, IndoorServiceItemForComparison } from './PackageComparisonModal';
@@ -47,6 +51,37 @@ interface PatientHistoryGroup {
   totalPaid: number;
   totalDue: number;
   lastVisitDate: string;
+}
+
+// Robust helper to parse arbitrary date string to YYYY-MM-DD for accurate comparison
+export function parseDateToYMD(dateStr?: string): string {
+  if (!dateStr) return '';
+  const str = dateStr.trim();
+  // If format is YYYY-MM-DD or starts with YYYY-MM-DD
+  const ymdMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (ymdMatch) {
+    const y = ymdMatch[1];
+    const m = ymdMatch[2].padStart(2, '0');
+    const d = ymdMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  // If format is DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+  if (dmyMatch) {
+    const d = dmyMatch[1].padStart(2, '0');
+    const m = dmyMatch[2].padStart(2, '0');
+    const y = dmyMatch[3];
+    return `${y}-${m}-${d}`;
+  }
+  // Standard JS Date parsing fallback
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return '';
 }
 
 // English ordinal invoice label generator (1ST INVOICE, 2ND INVOICE, 3RD INVOICE...)
@@ -118,6 +153,16 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   onEditQuotation
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last7' | 'thisMonth' | 'custom'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 15;
+
+  // Reset pagination to page 1 whenever filters or view mode change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, startDate, endDate, datePreset]);
 
   // Payment state for inline billing calculation & updating in Full Details Modal
   const [paymentEditState, setPaymentEditState] = useState<{
@@ -129,6 +174,78 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
       justSaved?: boolean;
     };
   }>({});
+
+  const handleApplyDatePreset = (preset: 'all' | 'today' | 'yesterday' | 'last7' | 'thisMonth') => {
+    setDatePreset(preset);
+    setCurrentPage(1);
+    const today = new Date();
+    const format = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    if (preset === 'all') {
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'today') {
+      const todayStr = format(today);
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === 'yesterday') {
+      const yest = new Date(today);
+      yest.setDate(yest.getDate() - 1);
+      const yestStr = format(yest);
+      setStartDate(yestStr);
+      setEndDate(yestStr);
+    } else if (preset === 'last7') {
+      const d7 = new Date(today);
+      d7.setDate(d7.getDate() - 6);
+      setStartDate(format(d7));
+      setEndDate(format(today));
+    } else if (preset === 'thisMonth') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      setStartDate(format(firstDay));
+      setEndDate(format(today));
+    }
+  };
+
+  const handleCustomStartDate = (val: string) => {
+    setStartDate(val);
+    setDatePreset('custom');
+    setCurrentPage(1);
+  };
+
+  const handleCustomEndDate = (val: string) => {
+    setEndDate(val);
+    setDatePreset('custom');
+    setCurrentPage(1);
+  };
+
+  const handleClearDateFilter = () => {
+    setStartDate('');
+    setEndDate('');
+    setDatePreset('all');
+    setCurrentPage(1);
+  };
+
+  const isQuotationInDateRange = (qDateStr?: string) => {
+    if (!startDate && !endDate) return true;
+    const qYmd = parseDateToYMD(qDateStr);
+    if (!qYmd) return true;
+
+    if (startDate && endDate) {
+      return qYmd >= startDate && qYmd <= endDate;
+    }
+    if (startDate) {
+      return qYmd >= startDate;
+    }
+    if (endDate) {
+      return qYmd <= endDate;
+    }
+    return true;
+  };
 
   const handleDaysInputChange = (q: InvoiceQuotation, daysVal: number | '') => {
     const rateInfo = getQuotationDailyRateBreakdown(q);
@@ -522,31 +639,156 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     };
   });
 
-  // Filter groups according to search term
-  const filteredGroups = patientGroups.filter(g => 
-    g.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    g.patientPhone.includes(searchTerm) ||
-    g.doctorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    g.quotations.some(q => q.quotationNumber.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  // Filter groups according to search term and date range
+  const filteredGroups = patientGroups.filter(g => {
+    const matchesSearch = 
+      g.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      g.patientPhone.includes(searchTerm) ||
+      g.doctorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      g.quotations.some(q => q.quotationNumber.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    if (!matchesSearch) return false;
+
+    if (startDate || endDate) {
+      return g.quotations.some(q => isQuotationInDateRange(q.createdDate));
+    }
+
+    return true;
+  });
 
   // Flat list enriched with visit ordinal labels
   const flatEnrichedQuotations = patientGroups.flatMap(g => g.quotations);
-  const filteredFlatQuotations = flatEnrichedQuotations.filter(q =>
-    q.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    q.patientPhone.includes(searchTerm) ||
-    q.quotationNumber.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredFlatQuotations = flatEnrichedQuotations.filter(q => {
+    const matchesSearch = 
+      q.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      q.patientPhone.includes(searchTerm) ||
+      q.quotationNumber.toLowerCase().includes(searchTerm.toLowerCase());
+
+    if (!matchesSearch) return false;
+
+    if (startDate || endDate) {
+      return isQuotationInDateRange(q.createdDate);
+    }
+
+    return true;
+  });
+
+  // Pagination calculation for Patient Groups view
+  const totalPatientPages = Math.max(1, Math.ceil(filteredGroups.length / PAGE_SIZE));
+  const safePatientPage = Math.min(Math.max(1, currentPage), totalPatientPages);
+  const paginatedGroups = filteredGroups.slice((safePatientPage - 1) * PAGE_SIZE, safePatientPage * PAGE_SIZE);
+
+  // Pagination calculation for Flat List view
+  const totalFlatPages = Math.max(1, Math.ceil(filteredFlatQuotations.length / PAGE_SIZE));
+  const safeFlatPage = Math.min(Math.max(1, currentPage), totalFlatPages);
+  const paginatedFlatQuotations = filteredFlatQuotations.slice((safeFlatPage - 1) * PAGE_SIZE, safeFlatPage * PAGE_SIZE);
 
   const toggleExpand = (key: string) => {
     setExpandedPatientKey(prev => prev === key ? null : key);
+  };
+
+  // Reusable Pagination Controller
+  const renderPagination = (
+    totalItems: number,
+    currentPageNum: number,
+    totalPagesNum: number,
+    onPageChange: (page: number) => void,
+    itemLabel: string
+  ) => {
+    if (totalItems === 0) return null;
+
+    const startItem = (currentPageNum - 1) * PAGE_SIZE + 1;
+    const endItem = Math.min(totalItems, currentPageNum * PAGE_SIZE);
+
+    const getPageNumbers = () => {
+      const pages: (number | string)[] = [];
+      if (totalPagesNum <= 7) {
+        for (let i = 1; i <= totalPagesNum; i++) pages.push(i);
+      } else {
+        pages.push(1);
+        if (currentPageNum > 3) pages.push('...');
+        const start = Math.max(2, currentPageNum - 1);
+        const end = Math.min(totalPagesNum - 1, currentPageNum + 1);
+        for (let i = start; i <= end; i++) pages.push(i);
+        if (currentPageNum < totalPagesNum - 2) pages.push('...');
+        pages.push(totalPagesNum);
+      }
+      return pages;
+    };
+
+    return (
+      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 mt-5">
+        <div className="text-xs text-slate-600 font-medium">
+          Showing <span className="font-bold text-slate-900">{startItem}</span> to{' '}
+          <span className="font-bold text-slate-900">{endItem}</span> of{' '}
+          <span className="font-bold text-emerald-800">{totalItems}</span> {itemLabel}
+          {(startDate || endDate || searchTerm) && (
+            <span className="text-slate-400 ml-1.5">(Filtered)</span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => onPageChange(Math.max(1, currentPageNum - 1))}
+            disabled={currentPageNum === 1}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+              currentPageNum === 1
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 shadow-2xs'
+            }`}
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+            <span>Prev</span>
+          </button>
+
+          <div className="flex items-center gap-1">
+            {getPageNumbers().map((p, idx) => {
+              if (p === '...') {
+                return (
+                  <span key={`dots-${idx}`} className="px-1.5 text-xs text-slate-400 font-bold">
+                    ...
+                  </span>
+                );
+              }
+              const isCurrent = p === currentPageNum;
+              return (
+                <button
+                  key={`page-${p}`}
+                  onClick={() => onPageChange(Number(p))}
+                  className={`min-w-[32px] h-8 rounded-xl text-xs font-bold transition cursor-pointer flex items-center justify-center ${
+                    isCurrent
+                      ? 'bg-emerald-600 text-white shadow-xs font-black'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  {p}
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => onPageChange(Math.min(totalPagesNum, currentPageNum + 1))}
+            disabled={currentPageNum === totalPagesNum}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+              currentPageNum === totalPagesNum
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 shadow-2xs'
+            }`}
+          >
+            <span>Next</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
     <div className="space-y-6">
       <div className="space-y-6 print:hidden">
         {/* Header & Stats Banner */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-extrabold text-slate-900 flex items-center gap-2">
@@ -561,7 +803,10 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
           {/* View Switcher Tabs */}
           <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 self-stretch md:self-auto">
             <button
-              onClick={() => setViewMode('patient_grouped')}
+              onClick={() => {
+                setViewMode('patient_grouped');
+                setCurrentPage(1);
+              }}
               className={`flex-1 md:flex-none px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                 viewMode === 'patient_grouped' 
                   ? 'bg-emerald-600 text-white shadow-sm' 
@@ -569,10 +814,13 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>By Patient ({patientGroups.length})</span>
+              <span>By Patient ({filteredGroups.length})</span>
             </button>
             <button
-              onClick={() => setViewMode('flat_list')}
+              onClick={() => {
+                setViewMode('flat_list');
+                setCurrentPage(1);
+              }}
               className={`flex-1 md:flex-none px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                 viewMode === 'flat_list' 
                   ? 'bg-emerald-600 text-white shadow-sm' 
@@ -580,21 +828,93 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
               }`}
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>All Invoices ({quotations.length})</span>
+              <span>All Invoices ({filteredFlatQuotations.length})</span>
             </button>
           </div>
         </div>
 
-        {/* Search Bar */}
-        <div className="mt-5 relative">
-          <input
-            type="text"
-            placeholder="Search by patient name, mobile number, doctor, or invoice # (e.g. SXH-2026-1700)..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+        {/* Search & Date Filter Section */}
+        <div className="space-y-3 pt-2 border-t border-slate-100">
+          {/* Search Input */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search by patient name, mobile number, doctor, or invoice # (e.g. SXH-2026-1700)..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+          </div>
+
+          {/* Date Filter Bar */}
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 bg-slate-50/80 p-3 rounded-xl border border-slate-200">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0">
+                <Calendar className="w-4 h-4 text-emerald-600" />
+                <span>Date Filter:</span>
+              </span>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { key: 'all', label: 'All Time' },
+                  { key: 'today', label: 'Today' },
+                  { key: 'yesterday', label: 'Yesterday' },
+                  { key: 'last7', label: 'Last 7 Days' },
+                  { key: 'thisMonth', label: 'This Month' }
+                ].map(p => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => handleApplyDatePreset(p.key as any)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                      datePreset === p.key && (p.key !== 'all' || (!startDate && !endDate))
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom Date Range Inputs */}
+            <div className="flex flex-wrap items-center gap-2 self-stretch lg:self-auto">
+              <div className="flex items-center gap-1 text-xs">
+                <span className="text-slate-500 font-medium text-[11px]">From:</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => handleCustomStartDate(e.target.value)}
+                  className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-1 text-xs">
+                <span className="text-slate-500 font-medium text-[11px]">To:</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => handleCustomEndDate(e.target.value)}
+                  className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              {(startDate || endDate || datePreset !== 'all') && (
+                <button
+                  type="button"
+                  onClick={handleClearDateFilter}
+                  className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                  title="Clear Date Filter"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -608,8 +928,9 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
               <p className="text-xs text-slate-500">No matching billing or quotation records created yet.</p>
             </div>
           ) : (
-            filteredGroups.map((group) => {
-              const isExpanded = expandedPatientKey === group.patientKey;
+            <>
+              {paginatedGroups.map((group) => {
+                const isExpanded = expandedPatientKey === group.patientKey;
 
               return (
                 <div 
@@ -912,10 +1233,19 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
 
                 </div>
               );
-            })
-          )}
-        </div>
-      )}
+            })}
+
+            {renderPagination(
+              filteredGroups.length,
+              safePatientPage,
+              totalPatientPages,
+              setCurrentPage,
+              'Patients'
+            )}
+          </>
+        )}
+      </div>
+    )}
 
       {/* VIEW 2: FLAT ALL INVOICES LIST */}
       {viewMode === 'flat_list' && (
@@ -939,145 +1269,160 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
             <div className="p-12 text-center text-slate-500 space-y-3">
               <FileText className="w-12 h-12 text-slate-300 mx-auto" />
               <p className="font-bold text-sm text-slate-700">No Quotations Found</p>
+              <p className="text-xs text-slate-500">No matching quotation invoices found for selected date and search filters.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-900 text-white font-bold text-xs uppercase">
-                    <th className="p-3.5 w-10 text-center">
-                      <input
-                        type="checkbox"
-                        checked={filteredFlatQuotations.length > 0 && selectedQuotationIds.length === filteredFlatQuotations.length}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedQuotationIds(filteredFlatQuotations.map(q => q.id));
-                          } else {
-                            setSelectedQuotationIds([]);
-                          }
-                        }}
-                        className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                        title="Select All"
-                      />
-                    </th>
-                    <th className="p-3.5">Visit Order</th>
-                    <th className="p-3.5">Quotation #</th>
-                    <th className="p-3.5">Patient Name & Mobile</th>
-                    <th className="p-3.5">Created Date</th>
-                    <th className="p-3.5">Grand Total</th>
-                    <th className="p-3.5">Paid / Due</th>
-                    <th className="p-3.5 text-center">Status</th>
-                    <th className="p-3.5 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredFlatQuotations.map((q) => {
-                    const isSelected = selectedQuotationIds.includes(q.id);
-                    return (
-                      <tr key={q.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-emerald-50/40' : ''}`}>
-                        <td className="p-3.5 w-10 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {
-                              setSelectedQuotationIds(prev =>
-                                prev.includes(q.id) ? prev.filter(id => id !== q.id) : [...prev, q.id]
-                              );
-                            }}
-                            className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                          />
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-900 text-white font-bold text-xs uppercase">
+                      <th className="p-3.5 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={paginatedFlatQuotations.length > 0 && paginatedFlatQuotations.every(q => selectedQuotationIds.includes(q.id))}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedQuotationIds(prev => Array.from(new Set([...prev, ...paginatedFlatQuotations.map(q => q.id)])));
+                            } else {
+                              const pageIds = paginatedFlatQuotations.map(q => q.id);
+                              setSelectedQuotationIds(prev => prev.filter(id => !pageIds.includes(id)));
+                            }
+                          }}
+                          className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                          title="Select / Deselect Page"
+                        />
+                      </th>
+                      <th className="p-3.5">Visit Order</th>
+                      <th className="p-3.5">Quotation #</th>
+                      <th className="p-3.5">Patient Name & Mobile</th>
+                      <th className="p-3.5">Created Date</th>
+                      <th className="p-3.5">Grand Total</th>
+                      <th className="p-3.5">Paid / Due</th>
+                      <th className="p-3.5 text-center">Status</th>
+                      <th className="p-3.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {paginatedFlatQuotations.map((q) => {
+                      const isSelected = selectedQuotationIds.includes(q.id);
+                      return (
+                        <tr key={q.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-emerald-50/40' : ''}`}>
+                          <td className="p-3.5 w-10 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {
+                                setSelectedQuotationIds(prev =>
+                                  prev.includes(q.id) ? prev.filter(id => id !== q.id) : [...prev, q.id]
+                                );
+                              }}
+                              className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                            />
+                          </td>
+                          <td className="p-3.5">
+                            <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2 py-0.5 rounded-full border border-emerald-200">
+                              {q.visitLabel}
+                            </span>
+                          </td>
+
+                        <td className="p-3.5 font-bold text-emerald-900">
+                          {q.quotationNumber}
                         </td>
+
                         <td className="p-3.5">
-                          <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2 py-0.5 rounded-full border border-emerald-200">
-                            {q.visitLabel}
+                          <div className="font-bold text-slate-900">{q.patientName}</div>
+                          <div className="text-xs font-semibold text-emerald-700">{q.patientPhone}</div>
+                        </td>
+
+                        <td className="p-3.5 text-xs text-slate-600">
+                          <div className="font-medium">{q.createdDate}</div>
+                          <div className="text-[11px] text-slate-400">Valid: {q.validUntil}</div>
+                        </td>
+
+                        <td className="p-3.5 font-black text-slate-900 text-sm">
+                          BDT {q.grandTotal.toLocaleString()}
+                        </td>
+
+                        <td className="p-3.5 text-xs">
+                          <div className="text-emerald-700 font-medium">Paid: BDT {q.advancePaid.toLocaleString()}</div>
+                          <div className="text-rose-600 font-bold">Due: BDT {q.dueAmount.toLocaleString()}</div>
+                        </td>
+
+                        <td className="p-3.5 text-center">
+                          <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                            q.paymentStatus === 'Fully Paid' 
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                              : q.paymentStatus === 'Partial Paid'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                              : 'bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}>
+                            {q.paymentStatus}
                           </span>
                         </td>
 
-                      <td className="p-3.5 font-bold text-emerald-900">
-                        {q.quotationNumber}
-                      </td>
+                        <td className="p-3.5 text-right">
+                          <div className="inline-flex items-center gap-1.5 justify-end">
+                            {canEditAndCompare && (
+                              <>
+                                <button
+                                  onClick={() => handleEditClick(q)}
+                                  className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                                  title="Edit this invoice in Quotation Builder (Admin & Doctor Only)"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                  <span>Edit</span>
+                                </button>
 
-                      <td className="p-3.5">
-                        <div className="font-bold text-slate-900">{q.patientName}</div>
-                        <div className="text-xs font-semibold text-emerald-700">{q.patientPhone}</div>
-                      </td>
+                                <button
+                                  onClick={() => handleComparisonClick(q)}
+                                  className="inline-flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                                  title="View & Print Saved Package Comparison (Admin & Doctor Only)"
+                                >
+                                  <Scale className="w-3.5 h-3.5" />
+                                  <span>Comparison</span>
+                                </button>
+                              </>
+                            )}
 
-                      <td className="p-3.5 text-xs text-slate-600">
-                        <div className="font-medium">{q.createdDate}</div>
-                        <div className="text-[11px] text-slate-400">Valid: {q.validUntil}</div>
-                      </td>
-
-                      <td className="p-3.5 font-black text-slate-900 text-sm">
-                        BDT {q.grandTotal.toLocaleString()}
-                      </td>
-
-                      <td className="p-3.5 text-xs">
-                        <div className="text-emerald-700 font-medium">Paid: BDT {q.advancePaid.toLocaleString()}</div>
-                        <div className="text-rose-600 font-bold">Due: BDT {q.dueAmount.toLocaleString()}</div>
-                      </td>
-
-                      <td className="p-3.5 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          q.paymentStatus === 'Fully Paid' 
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
-                            : q.paymentStatus === 'Partial Paid'
-                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                            : 'bg-slate-100 text-slate-700 border border-slate-200'
-                        }`}>
-                          {q.paymentStatus}
-                        </span>
-                      </td>
-
-                      <td className="p-3.5 text-right">
-                        <div className="inline-flex items-center gap-1.5 justify-end">
-                          {canEditAndCompare && (
-                            <>
-                              <button
-                                onClick={() => handleEditClick(q)}
-                                className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
-                                title="Edit this invoice in Quotation Builder (Admin & Doctor Only)"
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                                <span>Edit</span>
-                              </button>
-
-                              <button
-                                onClick={() => handleComparisonClick(q)}
-                                className="inline-flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs px-2.5 py-1.5 rounded-lg transition cursor-pointer"
-                                title="View & Print Saved Package Comparison (Admin & Doctor Only)"
-                              >
-                                <Scale className="w-3.5 h-3.5" />
-                                <span>Comparison</span>
-                              </button>
-                            </>
-                          )}
-
-                          <button
-                            onClick={() => onViewPrintQuotation(q)}
-                            className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition cursor-pointer"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                            <span>Print Invoice</span>
-                          </button>
-
-                          {isAdmin && (
                             <button
-                              onClick={() => handleDeleteSingleQuotation(q)}
-                              className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs p-1.5 sm:px-2.5 py-1.5 rounded-lg transition cursor-pointer"
-                              title="Delete Invoice (System Admin Only)"
+                              onClick={() => onViewPrintQuotation(q)}
+                              className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs transition cursor-pointer"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span className="hidden sm:inline">Delete</span>
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Print Invoice</span>
                             </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                </tbody>
-              </table>
-            </div>
+
+                            {isAdmin && (
+                              <button
+                                onClick={() => handleDeleteSingleQuotation(q)}
+                                className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs p-1.5 sm:px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                                title="Delete Invoice (System Admin Only)"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">Delete</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination for Flat Invoices List */}
+              <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+                {renderPagination(
+                  filteredFlatQuotations.length,
+                  safeFlatPage,
+                  totalFlatPages,
+                  setCurrentPage,
+                  'Invoices'
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
