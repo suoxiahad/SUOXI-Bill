@@ -450,14 +450,37 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       const unitCost = Number(item.unitCost) || 0;
       const sessionsNum = Number(computedSessions) || 0;
       const gross = unitCost * sessionsNum;
-      const effectiveDiscPct = discVal !== '' ? Number(discVal) : (item.discountPercent !== '' ? Number(item.discountPercent) : 0);
-      const discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+
+      let effectiveDiscPct: number | '' = discVal !== '' ? discVal : item.discountPercent;
+      let discountAmount = 0;
+
+      if (modeVal === 'indoor' && item.isIndoorFree) {
+        effectiveDiscPct = 100;
+        discountAmount = gross;
+      } else if (modeVal === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+        effectiveDiscPct = Number(item.outdoorDiscountPercent);
+        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else if (modeVal === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
+        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
+        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+      } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
+        const fixedVal = Number(item.fixedDiscountAmount);
+        discountAmount = Math.min(gross, fixedVal * sessionsNum);
+        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+        effectiveDiscPct = Number(item.defaultDiscountPercent);
+        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else {
+        const pctNum = effectiveDiscPct !== '' ? Number(effectiveDiscPct) : 0;
+        discountAmount = Math.round((gross * pctNum) / 100);
+      }
+
       const totalCost = Math.max(0, gross - discountAmount);
 
       return {
         ...item,
         sessions: computedSessions,
-        discountPercent: discVal !== '' ? discVal : item.discountPercent,
+        discountPercent: effectiveDiscPct,
         discountAmount,
         totalCost
       };
@@ -580,9 +603,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       } else if (targetMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
         effectiveDiscPct = Number(item.outdoorDiscountPercent);
         discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else if (targetMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
+        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
+        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
       } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
         const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal);
+        discountAmount = Math.min(gross, fixedVal * sessionsNum);
         effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
       } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
         effectiveDiscPct = Number(item.defaultDiscountPercent);
@@ -696,6 +722,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
       const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
       const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
+      const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
       const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
       const isFixedPct = item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0;
 
@@ -712,9 +739,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       } else if (isOutdoorDisc) {
         effectiveDiscPct = Number(item.outdoorDiscountPercent);
         discountAmount = Math.round((gross * effectiveDiscPct) / 100);
+      } else if (isOutdoorAmt) {
+        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessions);
+        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
       } else if (isFixedAmt) {
         const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal);
+        discountAmount = Math.min(gross, fixedVal * sessions);
         effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
       } else if (isFixedPct) {
         effectiveDiscPct = Number(item.defaultDiscountPercent);
@@ -949,10 +979,16 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
           discountPctNum = Number(item.outdoorDiscountPercent);
           discountAmount = Math.round((gross * discountPctNum) / 100);
+        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
+          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
+          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
         } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (newDiscountPercent === '' || newDiscountPercent === 0)) {
           const fixedVal = Number(item.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal);
+          discountAmount = Math.min(gross, fixedVal * sessionsNum);
           discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && (newDiscountPercent === '' || newDiscountPercent === 0)) {
+          discountPctNum = Number(item.defaultDiscountPercent);
+          discountAmount = Math.round((gross * discountPctNum) / 100);
         } else {
           const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
           discountAmount = Math.round((gross * pctNum) / 100);
@@ -986,6 +1022,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
         const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(updated.isIndoorFree);
         const isOutdoorDisc = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountPercent !== undefined && Number(updated.outdoorDiscountPercent) > 0;
+        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountAmount !== undefined && Number(updated.outdoorDiscountAmount) > 0;
         const isFixedAmt = updated.fixedDiscountAmount !== undefined && Number(updated.fixedDiscountAmount) > 0;
 
         if (isIndoorFree) {
@@ -994,9 +1031,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         } else if (isOutdoorDisc && fields.discountPercent === undefined) {
           discountPercent = Number(updated.outdoorDiscountPercent);
           discountAmount = Math.round((gross * discountPercent) / 100);
+        } else if (isOutdoorAmt && fields.discountPercent === undefined) {
+          discountAmount = Math.min(gross, Number(updated.outdoorDiscountAmount) * sessions);
+          discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
         } else if (isFixedAmt && fields.discountPercent === undefined) {
           const fixedVal = Number(updated.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal);
+          discountAmount = Math.min(gross, fixedVal * sessions);
           discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
         } else if (updated.defaultDiscountPercent !== undefined && Number(updated.defaultDiscountPercent) > 0 && fields.discountPercent === undefined) {
           discountPercent = Number(updated.defaultDiscountPercent);
@@ -1414,7 +1454,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         discPct = Number(item.outdoorDiscountPercent);
       } else if (isFixedAmt && (discPct === '' || discPct === 0)) {
         const fixedVal = Number(item.fixedDiscountAmount);
-        const tempAmt = Math.min(gross, fixedVal);
+        const tempAmt = Math.min(gross, fixedVal * sessions);
         discPct = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
       } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
         if (discPct === '' || discPct === 0) {
@@ -1433,7 +1473,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         discountAmount = Math.round((gross * discPct) / 100);
       } else if (isFixedAmt && (item.discountPercent === '' || item.discountPercent === 0 || discPct !== '')) {
         const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal);
+        discountAmount = Math.min(gross, fixedVal * sessions);
         discPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
       } else {
         const pctNum = discPct === '' ? 0 : Number(discPct);
@@ -1568,7 +1608,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           discountAmount = Math.round((gross * discountPctNum) / 100);
         } else if (isFixedAmt && (newDiscountPercent === '' || newDiscountPercent === 0)) {
           const fixedVal = Number(item.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal);
+          discountAmount = Math.min(gross, fixedVal * sessionsNum);
           discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
         } else {
           const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
@@ -1611,7 +1651,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             discountPercent = Number(updated.outdoorDiscountPercent);
           } else if (isFixedAmt) {
             const fixedVal = Number(updated.fixedDiscountAmount);
-            const tempAmt = Math.min(gross, fixedVal);
+            const tempAmt = Math.min(gross, fixedVal * sessions);
             discountPercent = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
           } else if (updated.defaultDiscountPercent !== undefined && Number(updated.defaultDiscountPercent) > 0 && (discountPercent === '' || discountPercent === 0)) {
             discountPercent = Number(updated.defaultDiscountPercent);
@@ -1629,7 +1669,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           if (gross > 0) discountPercent = Math.round((discountAmount / gross) * 100);
         } else if (isFixedAmt && fields.discountPercent === undefined) {
           const fixedVal = Number(updated.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal);
+          discountAmount = Math.min(gross, fixedVal * sessions);
           discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
         } else {
           const discPctNum = discountPercent === '' ? 0 : Number(discountPercent);
@@ -1972,22 +2012,51 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           newSessions = dailySessions * calcDays;
         }
 
-        if (item.discountPercent === '' && bulkDiscountPercent !== '') {
+        if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
+          newDiscountPercent = 100;
+        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+          newDiscountPercent = Number(item.outdoorDiscountPercent);
+        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+          newDiscountPercent = Number(item.defaultDiscountPercent);
+        } else if (item.discountPercent === '' && bulkDiscountPercent !== '') {
           newDiscountPercent = bulkDiscountPercent;
         }
 
         const unitCost = Number(item.unitCost) || 0;
         const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-        const discountPctNum = newDiscountPercent === '' ? 0 : (Number(newDiscountPercent) || 0);
         const gross = unitCost * sessionsNum;
-        const discountAmount = Math.round((gross * discountPctNum) / 100);
+
+        let discountPctNum: number | '' = newDiscountPercent;
+        let discountAmount = 0;
+
+        if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
+          discountPctNum = 100;
+          discountAmount = gross;
+        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+          discountPctNum = Number(item.outdoorDiscountPercent);
+          discountAmount = Math.round((gross * discountPctNum) / 100);
+        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
+          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
+          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
+          const fixedVal = Number(item.fixedDiscountAmount);
+          discountAmount = Math.min(gross, fixedVal * sessionsNum);
+          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
+        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+          discountPctNum = Number(item.defaultDiscountPercent);
+          discountAmount = Math.round((gross * discountPctNum) / 100);
+        } else {
+          const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
+          discountAmount = Math.round((gross * pctNum) / 100);
+        }
+
         const totalCost = Math.max(0, gross - discountAmount);
 
         return {
           ...item,
           selected: true,
           sessions: newSessions,
-          discountPercent: newDiscountPercent,
+          discountPercent: discountPctNum,
           discountAmount,
           totalCost
         };
@@ -2072,6 +2141,22 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
       : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
     const perDayGross = u * dailyS;
+
+    if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
+      return sum + perDayGross;
+    }
+    if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+      return sum + Math.round((perDayGross * Number(item.outdoorDiscountPercent)) / 100);
+    }
+    if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
+      return sum + Math.min(perDayGross, Number(item.outdoorDiscountAmount) * dailyS);
+    }
+    if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
+      return sum + Math.min(perDayGross, Number(item.fixedDiscountAmount) * dailyS);
+    }
+    if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
+      return sum + Math.round((perDayGross * Number(item.defaultDiscountPercent)) / 100);
+    }
     const discPct = item.discountPercent !== '' ? Number(item.discountPercent) : (bulkDiscountPercent !== '' ? Number(bulkDiscountPercent) : 0);
     return sum + Math.round((perDayGross * discPct) / 100);
   }, 0);
@@ -2201,7 +2286,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         discountAmount = Math.round((gross * discountPctNum) / 100);
       } else if (isFixedAmt) {
         const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal);
+        discountAmount = Math.min(gross, fixedVal * sessionsNum);
         discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
       } else {
         const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
