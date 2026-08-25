@@ -38,7 +38,7 @@ import {
   CatalogItem,
   User 
 } from '../types';
-import { matchSearchQuery } from '../utils/searchHelper';
+import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
 
 interface TreatmentListItem {
   id: string;
@@ -345,9 +345,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       setIsPatientDropdownOpen(false);
       return;
     }
-    const matched = patients.filter(p => 
-      matchSearchQuery(val, [p.phone, p.name, p.serialNo, p.notes, p.remark])
-    );
+    const matched = patients.filter(p => matchPatient(val, p));
     setMatchingPatients(matched);
     setIsPatientDropdownOpen(matched.length > 0);
   };
@@ -367,9 +365,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       alert('Please enter a mobile number or patient name.');
       return;
     }
-    const matched = patients.filter(p => 
-      matchSearchQuery(phoneSearch, [p.phone, p.name, p.serialNo, p.notes, p.remark])
-    );
+    const matched = patients.filter(p => matchPatient(phoneSearch, p));
     setMatchingPatients(matched);
     if (matched.length === 1) {
       handleSelectPatient(matched[0]);

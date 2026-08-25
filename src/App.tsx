@@ -24,7 +24,7 @@ import {
   getCatalogLocal,
   saveCatalogApi
 } from './utils/storage';
-import { matchSearchQuery } from './utils/searchHelper';
+import { matchPatient, matchSearchQuery } from './utils/searchHelper';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'appointments' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
@@ -138,9 +138,7 @@ export default function App() {
     if (!query || !query.trim()) return;
 
     // 1. Search in Patients list
-    const foundPatient = patients.find(p => 
-      matchSearchQuery(query, [p.phone, p.name, p.serialNo, p.notes, p.remark])
-    );
+    const foundPatient = patients.find(p => matchPatient(query, p));
 
     if (foundPatient) {
       if (currentUser?.role === 'Call Center') {

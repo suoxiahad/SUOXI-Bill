@@ -22,7 +22,7 @@ import {
 import { Patient } from '../types';
 import { parseExcelAppointmentFile, downloadSampleExcelTemplate, ParsedExcelPatient } from '../utils/excelHelper';
 import { importPatientsFromExcelApi, deletePatientsApi } from '../utils/storage';
-import { matchSearchQuery } from '../utils/searchHelper';
+import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
 
 interface AppointmentImporterProps {
   patients: Patient[];
@@ -215,7 +215,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   };
 
   const filteredPatients = patients.filter(p => {
-    const matchesText = matchSearchQuery(filterText, [p.name, p.phone, p.serialNo, p.notes, p.remark, p.doctorName, p.department]);
+    const matchesText = matchPatient(filterText, p);
 
     const matchesDate = 
       selectedDateFilter === 'all' || 
