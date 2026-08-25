@@ -153,6 +153,7 @@ export interface CatalogItem {
   isIndoorFree?: boolean;
   isRatioBased?: boolean;
   sessionsPer10Days?: number;
+  orderIndex?: number;
 }
 
 export type UserRole = 'System Admin' | 'Doctor' | 'Call Center' | 'Billing Counter';

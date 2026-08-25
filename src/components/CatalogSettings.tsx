@@ -1,6 +1,100 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Save, Trash2, CheckCircle2, ArrowUp, ArrowDown, Hash } from 'lucide-react';
+import { Settings, Plus, Save, Trash2, CheckCircle2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Hash } from 'lucide-react';
 import { CatalogItem } from '../types';
+
+interface ItemPositionControllerProps {
+  currentPosition: number;
+  totalCount: number;
+  onMove: (direction: 'up' | 'down' | 'top' | 'bottom' | number) => void;
+  accentColor?: string;
+}
+
+const ItemPositionController: React.FC<ItemPositionControllerProps> = ({
+  currentPosition,
+  totalCount,
+  onMove,
+  accentColor = 'emerald'
+}) => {
+  const [posInput, setPosInput] = useState(String(currentPosition));
+
+  useEffect(() => {
+    setPosInput(String(currentPosition));
+  }, [currentPosition]);
+
+  const commitPosition = () => {
+    const val = parseInt(posInput, 10);
+    if (!isNaN(val) && val >= 1 && val <= totalCount && val !== currentPosition) {
+      onMove(val);
+    } else {
+      setPosInput(String(currentPosition));
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        disabled={currentPosition === 1}
+        onClick={() => onMove('top')}
+        className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 rounded disabled:opacity-25 cursor-pointer transition-colors"
+        title="Move to Top (#1)"
+      >
+        <ChevronsUp className="w-3.5 h-3.5" />
+      </button>
+
+      <button
+        type="button"
+        disabled={currentPosition === 1}
+        onClick={() => onMove('up')}
+        className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 rounded disabled:opacity-25 cursor-pointer transition-colors"
+        title="Move Up (1 step)"
+      >
+        <ArrowUp className="w-3.5 h-3.5" />
+      </button>
+
+      <button
+        type="button"
+        disabled={currentPosition === totalCount}
+        onClick={() => onMove('down')}
+        className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 rounded disabled:opacity-25 cursor-pointer transition-colors"
+        title="Move Down (1 step)"
+      >
+        <ArrowDown className="w-3.5 h-3.5" />
+      </button>
+
+      <button
+        type="button"
+        disabled={currentPosition === totalCount}
+        onClick={() => onMove('bottom')}
+        className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 rounded disabled:opacity-25 cursor-pointer transition-colors"
+        title={`Move to Bottom (#${totalCount})`}
+      >
+        <ChevronsDown className="w-3.5 h-3.5" />
+      </button>
+
+      <div className="flex items-center gap-1 ml-1 pl-1.5 border-l border-slate-300">
+        <span className="text-[10px] text-slate-500 font-medium">Serial/Pos:</span>
+        <input
+          type="number"
+          min={1}
+          max={totalCount}
+          value={posInput}
+          onChange={(e) => setPosInput(e.target.value)}
+          onBlur={commitPosition}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitPosition();
+            }
+          }}
+          className="w-12 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-emerald-500"
+          title="Type serial/position number & press Enter"
+        />
+        <span className="text-[10px] text-slate-400">/{totalCount}</span>
+      </div>
+    </div>
+  );
+};
 
 interface CatalogSettingsProps {
   catalog: CatalogItem[];
@@ -47,7 +141,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const moveItem = (itemId: string, direction: 'up' | 'down' | number) => {
+  const moveItem = (itemId: string, direction: 'up' | 'down' | 'top' | 'bottom' | number) => {
     const target = items.find(i => i.id === itemId);
     if (!target) return;
 
@@ -64,6 +158,10 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
       targetIdx = Math.max(0, currentIdx - 1);
     } else if (direction === 'down') {
       targetIdx = Math.min(group.length - 1, currentIdx + 1);
+    } else if (direction === 'top') {
+      targetIdx = 0;
+    } else if (direction === 'bottom') {
+      targetIdx = group.length - 1;
     } else if (typeof direction === 'number') {
       targetIdx = Math.max(0, Math.min(group.length - 1, direction - 1));
     }
@@ -91,7 +189,11 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
   };
 
   const handleSave = () => {
-    onSaveCatalog(items);
+    const enriched = items.map((item, idx) => ({
+      ...item,
+      orderIndex: idx
+    }));
+    onSaveCatalog(enriched);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
   };
@@ -161,43 +263,12 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                         <span className="text-[11px] text-slate-600 font-semibold">Listing Serial</span>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={catIdx === 0}
-                          onClick={() => moveItem(item.id, 'up')}
-                          className="p-1 text-slate-700 hover:text-emerald-800 hover:bg-emerald-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Up"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={catIdx === treatmentGroup.length - 1}
-                          onClick={() => moveItem(item.id, 'down')}
-                          className="p-1 text-slate-700 hover:text-emerald-800 hover:bg-emerald-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-
-                        <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-slate-300">
-                          <span className="text-[10px] text-slate-500 font-medium">Position:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={treatmentGroup.length}
-                            value={catIdx + 1}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10);
-                              if (!isNaN(val) && val >= 1 && val <= treatmentGroup.length) {
-                                moveItem(item.id, val);
-                              }
-                            }}
-                            className="w-11 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-emerald-500"
-                          />
-                        </div>
-                      </div>
+                      <ItemPositionController
+                        currentPosition={catIdx + 1}
+                        totalCount={treatmentGroup.length}
+                        onMove={(dir) => moveItem(item.id, dir)}
+                        accentColor="emerald"
+                      />
                     </div>
 
                     <div className="p-3 space-y-2">
@@ -371,43 +442,12 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                         <span className="text-[11px] text-slate-600 font-semibold">Listing Serial</span>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={catIdx === 0}
-                          onClick={() => moveItem(item.id, 'up')}
-                          className="p-1 text-slate-700 hover:text-teal-800 hover:bg-teal-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Up"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={catIdx === packageGroup.length - 1}
-                          onClick={() => moveItem(item.id, 'down')}
-                          className="p-1 text-slate-700 hover:text-teal-800 hover:bg-teal-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-
-                        <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-slate-300">
-                          <span className="text-[10px] text-slate-500 font-medium">Position:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={packageGroup.length}
-                            value={catIdx + 1}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10);
-                              if (!isNaN(val) && val >= 1 && val <= packageGroup.length) {
-                                moveItem(item.id, val);
-                              }
-                            }}
-                            className="w-11 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-teal-500"
-                          />
-                        </div>
-                      </div>
+                      <ItemPositionController
+                        currentPosition={catIdx + 1}
+                        totalCount={packageGroup.length}
+                        onMove={(dir) => moveItem(item.id, dir)}
+                        accentColor="teal"
+                      />
                     </div>
 
                     <div className="p-3 space-y-2">
@@ -487,43 +527,12 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                         <span className="text-[11px] text-slate-600 font-semibold">Listing Serial</span>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={catIdx === 0}
-                          onClick={() => moveItem(item.id, 'up')}
-                          className="p-1 text-slate-700 hover:text-indigo-800 hover:bg-indigo-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Up"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={catIdx === roomGroup.length - 1}
-                          onClick={() => moveItem(item.id, 'down')}
-                          className="p-1 text-slate-700 hover:text-indigo-800 hover:bg-indigo-100 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-
-                        <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-slate-300">
-                          <span className="text-[10px] text-slate-500 font-medium">Position:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={roomGroup.length}
-                            value={catIdx + 1}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10);
-                              if (!isNaN(val) && val >= 1 && val <= roomGroup.length) {
-                                moveItem(item.id, val);
-                              }
-                            }}
-                            className="w-11 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-indigo-500"
-                          />
-                        </div>
-                      </div>
+                      <ItemPositionController
+                        currentPosition={catIdx + 1}
+                        totalCount={roomGroup.length}
+                        onMove={(dir) => moveItem(item.id, dir)}
+                        accentColor="indigo"
+                      />
                     </div>
 
                     <div className="p-3 space-y-2">
@@ -615,43 +624,12 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
                         <span className="text-[11px] text-sky-900 font-semibold">Weekly Treatment</span>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={catIdx === 0}
-                          onClick={() => moveItem(item.id, 'up')}
-                          className="p-1 text-slate-700 hover:text-sky-800 hover:bg-sky-200 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Up"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={catIdx === addGroup.length - 1}
-                          onClick={() => moveItem(item.id, 'down')}
-                          className="p-1 text-slate-700 hover:text-sky-800 hover:bg-sky-200 rounded disabled:opacity-25 cursor-pointer transition-colors"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-
-                        <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-sky-300">
-                          <span className="text-[10px] text-slate-500 font-medium">Pos:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={addGroup.length}
-                            value={catIdx + 1}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10);
-                              if (!isNaN(val) && val >= 1 && val <= addGroup.length) {
-                                moveItem(item.id, val);
-                              }
-                            }}
-                            className="w-11 px-1 py-0.5 bg-white border border-slate-300 rounded text-center text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-sky-500"
-                          />
-                        </div>
-                      </div>
+                      <ItemPositionController
+                        currentPosition={catIdx + 1}
+                        totalCount={addGroup.length}
+                        onMove={(dir) => moveItem(item.id, dir)}
+                        accentColor="sky"
+                      />
                     </div>
 
                     <div className="p-3 space-y-2">

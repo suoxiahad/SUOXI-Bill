@@ -367,7 +367,18 @@ async function initDatabase() {
         "ALTER TABLE quotations ADD COLUMN createdDate VARCHAR(64) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN notes TEXT",
         "ALTER TABLE users ADD COLUMN phone VARCHAR(32) DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN is_active TINYINT DEFAULT 1"
+        "ALTER TABLE users ADD COLUMN is_active TINYINT DEFAULT 1",
+        "ALTER TABLE catalog ADD COLUMN fixedDiscountAmount DOUBLE DEFAULT NULL",
+        "ALTER TABLE catalog ADD COLUMN outdoorDiscountPercent DOUBLE DEFAULT NULL",
+        "ALTER TABLE catalog ADD COLUMN outdoorDiscountAmount DOUBLE DEFAULT NULL",
+        "ALTER TABLE catalog ADD COLUMN rateNote TEXT",
+        "ALTER TABLE catalog ADD COLUMN outdoorSessions INT DEFAULT NULL",
+        "ALTER TABLE catalog ADD COLUMN indoorSessions INT DEFAULT NULL",
+        "ALTER TABLE catalog ADD COLUMN isIndoorFree TINYINT DEFAULT 0",
+        "ALTER TABLE catalog ADD COLUMN isRatioBased TINYINT DEFAULT 0",
+        "ALTER TABLE catalog ADD COLUMN sessionsPer10Days INT DEFAULT NULL",
+        "ALTER TABLE catalog ADD COLUMN orderIndex INT DEFAULT 0",
+        "ALTER TABLE catalog ADD COLUMN details_json LONGTEXT"
       ];
 
       for (const mig of migrations) {
@@ -400,11 +411,22 @@ async function initDatabase() {
       await pool.query(`
         CREATE TABLE IF NOT EXISTS catalog (
           id VARCHAR(64) PRIMARY KEY,
-          name VARCHAR(128) NOT NULL,
+          name VARCHAR(200) NOT NULL,
           category VARCHAR(64) NOT NULL,
           defaultPrice DOUBLE DEFAULT 0,
           defaultDiscountPercent DOUBLE DEFAULT 0,
-          description TEXT
+          fixedDiscountAmount DOUBLE DEFAULT NULL,
+          outdoorDiscountPercent DOUBLE DEFAULT NULL,
+          outdoorDiscountAmount DOUBLE DEFAULT NULL,
+          description TEXT,
+          rateNote TEXT,
+          outdoorSessions INT DEFAULT NULL,
+          indoorSessions INT DEFAULT NULL,
+          isIndoorFree TINYINT DEFAULT 0,
+          isRatioBased TINYINT DEFAULT 0,
+          sessionsPer10Days INT DEFAULT NULL,
+          orderIndex INT DEFAULT 0,
+          details_json LONGTEXT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
 
@@ -491,6 +513,34 @@ app.get('/api/system/status', (req, res) => {
   });
 });
 
+function formatCatalogRow(r: any): any {
+  let parsedDetails: any = {};
+  if (r.details_json) {
+    try {
+      parsedDetails = typeof r.details_json === 'string' ? JSON.parse(r.details_json) : r.details_json;
+    } catch {}
+  }
+  return {
+    id: r.id,
+    name: r.name,
+    category: r.category,
+    defaultPrice: r.defaultPrice !== null && r.defaultPrice !== undefined ? Number(r.defaultPrice) : (r.default_price !== null && r.default_price !== undefined ? Number(r.default_price) : 0),
+    defaultDiscountPercent: r.defaultDiscountPercent !== null && r.defaultDiscountPercent !== undefined ? Number(r.defaultDiscountPercent) : (r.default_discount_percent !== null && r.default_discount_percent !== undefined ? Number(r.default_discount_percent) : 0),
+    fixedDiscountAmount: r.fixedDiscountAmount !== null && r.fixedDiscountAmount !== undefined ? Number(r.fixedDiscountAmount) : (parsedDetails.fixedDiscountAmount !== undefined ? Number(parsedDetails.fixedDiscountAmount) : undefined),
+    outdoorDiscountPercent: r.outdoorDiscountPercent !== null && r.outdoorDiscountPercent !== undefined ? Number(r.outdoorDiscountPercent) : (parsedDetails.outdoorDiscountPercent !== undefined ? Number(parsedDetails.outdoorDiscountPercent) : undefined),
+    outdoorDiscountAmount: r.outdoorDiscountAmount !== null && r.outdoorDiscountAmount !== undefined ? Number(r.outdoorDiscountAmount) : (parsedDetails.outdoorDiscountAmount !== undefined ? Number(parsedDetails.outdoorDiscountAmount) : undefined),
+    description: r.description || parsedDetails.description || '',
+    rateNote: r.rateNote || parsedDetails.rateNote || '',
+    outdoorSessions: r.outdoorSessions !== null && r.outdoorSessions !== undefined ? Number(r.outdoorSessions) : (parsedDetails.outdoorSessions !== undefined ? Number(parsedDetails.outdoorSessions) : undefined),
+    indoorSessions: r.indoorSessions !== null && r.indoorSessions !== undefined ? Number(r.indoorSessions) : (parsedDetails.indoorSessions !== undefined ? Number(parsedDetails.indoorSessions) : undefined),
+    isIndoorFree: Boolean(r.isIndoorFree ?? parsedDetails.isIndoorFree),
+    isRatioBased: Boolean(r.isRatioBased ?? parsedDetails.isRatioBased),
+    sessionsPer10Days: r.sessionsPer10Days !== null && r.sessionsPer10Days !== undefined ? Number(r.sessionsPer10Days) : (parsedDetails.sessionsPer10Days !== undefined ? Number(parsedDetails.sessionsPer10Days) : undefined),
+    orderIndex: r.orderIndex !== null && r.orderIndex !== undefined ? Number(r.orderIndex) : (parsedDetails.orderIndex !== undefined ? Number(parsedDetails.orderIndex) : 0),
+    ...parsedDetails
+  };
+}
+
 app.get('/api/init', authenticateToken, async (req: any, res) => {
   const user = req.user;
   let patients: any[] = [...localData.patients];
@@ -516,8 +566,10 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
         quotations = [...parsedQRows, ...localData.quotations.filter((q: any) => q && q.id && !dbQIds.has(q.id))];
       }
 
-      const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
-      if (Array.isArray(cRows) && cRows.length > 0) catalog = cRows;
+      const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY orderIndex ASC, id ASC');
+      if (Array.isArray(cRows) && cRows.length > 0) {
+        catalog = cRows.map(formatCatalogRow);
+      }
 
       const [uRows]: any = await mysqlPool.execute('SELECT id, username, name, role, phone, is_active FROM users ORDER BY id ASC');
       if (Array.isArray(uRows) && uRows.length > 0) users = uRows;
@@ -1526,9 +1578,9 @@ app.post('/api/quotations/delete', authenticateToken, requireRole('System Admin'
 app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   if (isMySqlActive && mysqlPool) {
     try {
-      const [rows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
+      const [rows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY orderIndex ASC, id ASC');
       if (rows.length > 0) {
-        return res.json(rows);
+        return res.json(rows.map(formatCatalogRow));
       }
     } catch (err) {
       console.error('MySQL catalog fetch error:', err);
@@ -1540,17 +1592,47 @@ app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor',
 app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   const { catalog } = req.body;
   if (Array.isArray(catalog)) {
-    localData.catalog = catalog;
+    const enrichedCatalog = catalog.map((item: any, idx: number) => ({
+      ...item,
+      orderIndex: typeof item.orderIndex === 'number' ? item.orderIndex : idx
+    }));
+
+    localData.catalog = enrichedCatalog;
     saveLocalDb();
 
     if (isMySqlActive && mysqlPool) {
       try {
         await mysqlPool.execute('DELETE FROM catalog');
-        for (const item of catalog) {
+        for (let idx = 0; idx < enrichedCatalog.length; idx++) {
+          const item = enrichedCatalog[idx];
+          const orderIdx = typeof item.orderIndex === 'number' ? item.orderIndex : idx;
+          const detailsJson = JSON.stringify(item);
           await mysqlPool.execute(
-            `INSERT INTO catalog (id, name, category, defaultPrice, defaultDiscountPercent, description)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [item.id, item.name, item.category, item.defaultPrice || 0, item.defaultDiscountPercent || 0, item.description || '']
+            `INSERT INTO catalog (
+              id, name, category, defaultPrice, defaultDiscountPercent,
+              fixedDiscountAmount, outdoorDiscountPercent, outdoorDiscountAmount,
+              description, rateNote, outdoorSessions, indoorSessions,
+              isIndoorFree, isRatioBased, sessionsPer10Days, orderIndex, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              item.id,
+              item.name || '',
+              item.category || 'treatment',
+              item.defaultPrice || 0,
+              item.defaultDiscountPercent || 0,
+              item.fixedDiscountAmount ?? null,
+              item.outdoorDiscountPercent ?? null,
+              item.outdoorDiscountAmount ?? null,
+              item.description || '',
+              item.rateNote || '',
+              item.outdoorSessions ?? null,
+              item.indoorSessions ?? null,
+              item.isIndoorFree ? 1 : 0,
+              item.isRatioBased ? 1 : 0,
+              item.sessionsPer10Days ?? null,
+              orderIdx,
+              detailsJson
+            ]
           );
         }
       } catch (err) {

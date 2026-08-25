@@ -49,10 +49,22 @@ CREATE TABLE IF NOT EXISTS catalog (
     id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(200) NOT NULL,
     category VARCHAR(50) NOT NULL,
-    default_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    default_discount_percent DECIMAL(5,2) DEFAULT 0.00,
+    defaultPrice DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    defaultDiscountPercent DECIMAL(5,2) DEFAULT 0.00,
+    fixedDiscountAmount DECIMAL(10,2) DEFAULT NULL,
+    outdoorDiscountPercent DECIMAL(5,2) DEFAULT NULL,
+    outdoorDiscountAmount DECIMAL(10,2) DEFAULT NULL,
     description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    rateNote TEXT,
+    outdoorSessions INT DEFAULT NULL,
+    indoorSessions INT DEFAULT NULL,
+    isIndoorFree TINYINT(1) DEFAULT 0,
+    isRatioBased TINYINT(1) DEFAULT 0,
+    sessionsPer10Days INT DEFAULT NULL,
+    orderIndex INT DEFAULT 0,
+    details_json LONGTEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_category_order (category, orderIndex)
 );
 
 -- 4. Invoice Quotations Table
