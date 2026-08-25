@@ -16,6 +16,8 @@ import {
   getActiveUser,
   setActiveUser,
   fetchInitApi,
+  fetchPatientsApi,
+  searchPatientsLiveApi,
   getPatientsLocal,
   addOrUpdatePatientApi,
   getQuotationsLocal,
@@ -83,6 +85,24 @@ export default function App() {
     initializeAppData();
   }, [initializeAppData]);
 
+  // Periodic background sync so doctor & billing counter always have the latest appointments without refreshing
+  useEffect(() => {
+    if (!currentUser || !currentUser.token) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await fetchPatientsApi();
+        if (Array.isArray(fresh) && fresh.length > 0) {
+          setPatients(fresh);
+        }
+      } catch (err) {
+        // silent background sync
+      }
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [currentUser]);
+
   // Guard tabs based on role
   useEffect(() => {
     if (!currentUser) return;
@@ -133,11 +153,24 @@ export default function App() {
     setPatients(updated);
   };
 
-  const handleSearchPhoneInNavbar = (query: string) => {
+  const handleSearchPhoneInNavbar = async (query: string) => {
     if (!query || !query.trim()) return;
 
     // 1. Search in Patients list
-    const foundPatient = patients.find(p => matchPatient(query, p));
+    let foundPatient = patients.find(p => matchPatient(query, p));
+
+    // If not found locally, query live backend immediately
+    if (!foundPatient) {
+      const serverMatches = await searchPatientsLiveApi(query);
+      if (serverMatches.length > 0) {
+        foundPatient = serverMatches[0];
+        setPatients(prev => {
+          const map = new Map(prev.map(p => [p.id, p]));
+          serverMatches.forEach(p => map.set(p.id, p));
+          return Array.from(map.values());
+        });
+      }
+    }
 
     if (foundPatient) {
       setEditingQuotation(null);

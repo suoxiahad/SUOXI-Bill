@@ -192,6 +192,27 @@ export const fetchPatientsApi = async (): Promise<Patient[]> => {
   return getPatientsLocal();
 };
 
+export const searchPatientsLiveApi = async (query: string): Promise<Patient[]> => {
+  if (!query || !query.trim()) return [];
+  try {
+    const res = await fetch(`/api/patients/search?q=${encodeURIComponent(query.trim())}`, {
+      headers: getAuthHeader()
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const current = getPatientsLocal();
+        const merged = mergePatientsList(data, current);
+        savePatientsLocal(merged);
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Live patient search API error:', err);
+  }
+  return [];
+};
+
 export const getPatientsLocal = (): Patient[] => {
   try {
     const data = localStorage.getItem(PATIENTS_KEY);

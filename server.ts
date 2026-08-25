@@ -669,6 +669,58 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Doctor'
   res.json(localData.patients);
 });
 
+app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+  const query = String(req.query.q || '').trim();
+  let allPatients: any[] = localData.patients;
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [rows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
+      if (Array.isArray(rows)) allPatients = rows;
+    } catch (err) {
+      console.error('Error searching patients MySQL:', err);
+    }
+  }
+
+  if (!query) {
+    return res.json(allPatients);
+  }
+
+  const bnToEnMap: Record<string, string> = {
+    '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
+    '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
+  };
+  const convertBnToEn = (s: string) => s.replace(/[০-৯]/g, (char) => bnToEnMap[char] || char);
+
+  const cleanQuery = convertBnToEn(query.toLowerCase());
+  const queryDigits = convertBnToEn(query).replace(/\D/g, '');
+  const queryNoZero = queryDigits.replace(/^0+/, '');
+
+  const matched = allPatients.filter((p: any) => {
+    if (!p) return false;
+    const name = convertBnToEn(String(p.name || '').toLowerCase());
+    const phone = convertBnToEn(String(p.phone || '').toLowerCase());
+    const phoneDigits = phone.replace(/\D/g, '');
+    const phoneNoZero = phoneDigits.replace(/^0+/, '');
+    const serial = String(p.serialNo || '').toLowerCase();
+    const notes = convertBnToEn(String(p.notes || p.remark || '').toLowerCase());
+    const doctor = convertBnToEn(String(p.doctorName || '').toLowerCase());
+
+    if (name.includes(cleanQuery) || phone.includes(cleanQuery) || serial === cleanQuery || notes.includes(cleanQuery) || doctor.includes(cleanQuery)) {
+      return true;
+    }
+    if (queryDigits.length >= 3) {
+      if (phoneDigits.includes(queryDigits) || (queryNoZero.length >= 3 && phoneDigits.includes(queryNoZero))) return true;
+      if (phoneNoZero.length >= 3 && queryDigits.includes(phoneNoZero)) return true;
+      if (phoneNoZero.length >= 3 && queryNoZero.length >= 3 && (phoneNoZero.includes(queryNoZero) || queryNoZero.includes(phoneNoZero))) return true;
+      if (notes.replace(/\D/g, '').includes(queryDigits)) return true;
+    }
+    return false;
+  });
+
+  res.json(matched);
+});
+
 app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Billing Counter'), async (req, res) => {
   const p = req.body;
   if (!p.name || !p.phone) {

@@ -38,6 +38,7 @@ import {
   CatalogItem,
   User 
 } from '../types';
+import { searchPatientsLiveApi, fetchPatientsApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery, normalizePhoneDigits, normalizeSearchText } from '../utils/searchHelper';
 
 interface TreatmentListItem {
@@ -374,6 +375,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   // Handle Patient Phone/Name Search & Dropdown State
   const [matchingPatients, setMatchingPatients] = useState<Patient[]>([]);
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState<boolean>(false);
+  const [isSearchingLive, setIsSearchingLive] = useState<boolean>(false);
+  const searchDebounceTimer = useRef<any>(null);
 
   const handlePatientSearchChange = (val: string) => {
     setPhoneSearch(val);
@@ -382,9 +385,36 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       setIsPatientDropdownOpen(false);
       return;
     }
-    const matched = allKnownPatients.filter(p => matchPatient(val, p));
-    setMatchingPatients(matched);
-    setIsPatientDropdownOpen(matched.length > 0);
+
+    // 1. Instant local search
+    const localMatches = allKnownPatients.filter(p => matchPatient(val, p));
+    setMatchingPatients(localMatches);
+    setIsPatientDropdownOpen(localMatches.length > 0);
+
+    // 2. Debounced background live server search for newly imported patients
+    if (searchDebounceTimer.current) {
+      clearTimeout(searchDebounceTimer.current);
+    }
+
+    if (val.trim().length >= 3) {
+      searchDebounceTimer.current = setTimeout(async () => {
+        try {
+          const liveResults = await searchPatientsLiveApi(val);
+          if (Array.isArray(liveResults) && liveResults.length > 0) {
+            setMatchingPatients(prev => {
+              const map = new Map<string, Patient>();
+              prev.forEach(p => map.set(p.id || p.phone, p));
+              liveResults.forEach(p => map.set(p.id || p.phone, p));
+              const combined = Array.from(map.values()).filter(p => matchPatient(val, p));
+              setIsPatientDropdownOpen(combined.length > 0);
+              return combined;
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }, 300);
+    }
   };
 
   const handleSelectPatient = (pat: Patient) => {
@@ -396,21 +426,44 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setIsPatientDropdownOpen(false);
   };
 
-  const handlePhoneSearchSubmit = (e: React.FormEvent) => {
+  const handlePhoneSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneSearch || !phoneSearch.trim()) {
       alert('Please enter a mobile number or patient name.');
       return;
     }
-    const matched = allKnownPatients.filter(p => matchPatient(phoneSearch, p));
+
+    setIsSearchingLive(true);
+
+    // 1. Check local known list
+    let matched = allKnownPatients.filter(p => matchPatient(phoneSearch, p));
+
+    // 2. If not found or if user explicitly clicked search, query live backend
+    if (matched.length === 0) {
+      try {
+        const liveResults = await searchPatientsLiveApi(phoneSearch);
+        if (Array.isArray(liveResults) && liveResults.length > 0) {
+          matched = liveResults;
+        } else {
+          // Try fetching fresh full list
+          const fullList = await fetchPatientsApi();
+          matched = (fullList || []).filter(p => matchPatient(phoneSearch, p));
+        }
+      } catch (err) {
+        console.warn('Live search error:', err);
+      }
+    }
+
+    setIsSearchingLive(false);
     setMatchingPatients(matched);
+
     if (matched.length === 1) {
       handleSelectPatient(matched[0]);
     } else if (matched.length > 1) {
       setIsPatientDropdownOpen(true);
     } else {
       setIsPatientDropdownOpen(false);
-      alert(`No patient found matching "${phoneSearch}". You can register a new patient manually.`);
+      alert(`No patient record found matching "${phoneSearch}". Please check the phone number or ask Call Center / Admin to register the patient.`);
     }
   };
 
@@ -2986,10 +3039,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               </div>
               <button
                 type="submit"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                disabled={isSearchingLive}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-75 text-white text-xs font-bold px-4 py-2 rounded-xl shadow transition-all cursor-pointer flex items-center gap-1 shrink-0"
               >
-                <Search className="w-3.5 h-3.5" />
-                <span>Search</span>
+                {isSearchingLive ? (
+                  <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                <span>{isSearchingLive ? 'Searching...' : 'Search'}</span>
               </button>
             </form>
 

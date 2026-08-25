@@ -51,6 +51,7 @@ export function matchPatient(
     remark?: string;
     doctorName?: string;
     department?: string;
+    address?: string;
   }
 ): boolean {
   if (!query || !query.trim()) return true;
@@ -122,14 +123,21 @@ export function matchPatient(
     }
   }
 
-  // 5. Check Notes / Remark (Only for text queries under 7 digits)
-  if (queryDigits.length < 7) {
-    if (patient.notes && normalizeSearchText(patient.notes).includes(normalizedQuery)) {
-      return true;
-    }
-    if (patient.remark && normalizeSearchText(patient.remark).includes(normalizedQuery)) {
-      return true;
-    }
+  // 5. Check Notes, Remark & Address
+  if (patient.notes) {
+    const normNotes = normalizeSearchText(patient.notes);
+    if (normNotes.includes(normalizedQuery)) return true;
+    if (queryDigits.length >= 3 && normalizePhoneDigits(patient.notes).includes(queryDigits)) return true;
+  }
+  if (patient.remark) {
+    const normRemark = normalizeSearchText(patient.remark);
+    if (normRemark.includes(normalizedQuery)) return true;
+    if (queryDigits.length >= 3 && normalizePhoneDigits(patient.remark).includes(queryDigits)) return true;
+  }
+  if (patient.address) {
+    const normAddr = normalizeSearchText(patient.address);
+    if (normAddr.includes(normalizedQuery)) return true;
+    if (queryDigits.length >= 3 && normalizePhoneDigits(patient.address).includes(queryDigits)) return true;
   }
 
   return false;
