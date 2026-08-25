@@ -1484,7 +1484,7 @@ app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doct
   res.json({ message: 'Quotation saved successfully', quotation, quotations: localData.quotations });
 });
 
-app.delete('/api/quotations/:id', authenticateToken, requireRole('System Admin'), async (req, res) => {
+app.delete('/api/quotations/:id', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   const { id } = req.params;
   localData.quotations = localData.quotations.filter(q => q.id !== id);
   saveLocalDb();
@@ -1500,7 +1500,7 @@ app.delete('/api/quotations/:id', authenticateToken, requireRole('System Admin')
   res.json({ message: 'Quotation deleted successfully', quotations: localData.quotations });
 });
 
-app.post('/api/quotations/delete', authenticateToken, requireRole('System Admin'), async (req, res) => {
+app.post('/api/quotations/delete', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'No quotation IDs provided for deletion' });
@@ -1523,7 +1523,7 @@ app.post('/api/quotations/delete', authenticateToken, requireRole('System Admin'
 });
 
 // 6. Catalog API
-app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor', 'Call Center'), async (req, res) => {
+app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   if (isMySqlActive && mysqlPool) {
     try {
       const [rows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
@@ -1537,7 +1537,7 @@ app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor',
   res.json(localData.catalog);
 });
 
-app.post('/api/catalog', authenticateToken, requireRole('System Admin'), async (req, res) => {
+app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   const { catalog } = req.body;
   if (Array.isArray(catalog)) {
     localData.catalog = catalog;
@@ -1545,13 +1545,12 @@ app.post('/api/catalog', authenticateToken, requireRole('System Admin'), async (
 
     if (isMySqlActive && mysqlPool) {
       try {
+        await mysqlPool.execute('DELETE FROM catalog');
         for (const item of catalog) {
           await mysqlPool.execute(
             `INSERT INTO catalog (id, name, category, defaultPrice, defaultDiscountPercent, description)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE name=?, category=?, defaultPrice=?, defaultDiscountPercent=?, description=?`,
-            [item.id, item.name, item.category, item.defaultPrice, item.defaultDiscountPercent, item.description || '',
-             item.name, item.category, item.defaultPrice, item.defaultDiscountPercent, item.description || '']
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [item.id, item.name, item.category, item.defaultPrice || 0, item.defaultDiscountPercent || 0, item.description || '']
           );
         }
       } catch (err) {

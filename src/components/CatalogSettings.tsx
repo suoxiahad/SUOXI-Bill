@@ -15,7 +15,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
   const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
-    if (catalog && catalog.length > 0) {
+    if (Array.isArray(catalog)) {
       setItems(catalog);
     }
   }, [catalog]);

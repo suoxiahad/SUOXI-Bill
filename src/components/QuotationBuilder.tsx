@@ -373,27 +373,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     return Array.from(map.values());
   }, [patients, quotations]);
 
-  // Effective catalog merging DEFAULT_CATALOG and custom admin updates
+  // Effective catalog using dynamic catalog from admin or falling back to default
   const effectiveCatalog = useMemo<CatalogItem[]>(() => {
-    const map = new Map<string, CatalogItem>();
-    DEFAULT_CATALOG.forEach(item => {
-      if (item && item.id) {
-        map.set(item.id, item);
-      }
-    });
     if (Array.isArray(catalog) && catalog.length > 0) {
-      catalog.forEach(item => {
-        if (item && item.id) {
-          const existing = map.get(item.id);
-          if (existing) {
-            map.set(item.id, { ...existing, ...item });
-          } else {
-            map.set(item.id, item);
-          }
-        }
-      });
+      return catalog;
     }
-    return Array.from(map.values());
+    return DEFAULT_CATALOG;
   }, [catalog]);
 
   // Handle Patient Phone/Name Search & Dropdown State
@@ -1431,8 +1416,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       const catalogMap = new Map<string, CatalogItem>(addCatalog.map(c => [c.id, c]));
 
       if (prev.length > 0) {
-        // Filter out non-custom items that no longer exist in catalog, but keep selected items
-        const filteredPrev = prev.filter(item => item.isCustom || item.isSelected || (item.catalogId && catalogMap.has(item.catalogId)));
+        // Filter out non-custom items that no longer exist in catalog
+        const filteredPrev = prev.filter(item => item.isCustom || (item.catalogId && catalogMap.has(item.catalogId)));
 
         const updatedPrev = filteredPrev.map(item => {
           if (!item.isCustom && item.catalogId && catalogMap.has(item.catalogId)) {

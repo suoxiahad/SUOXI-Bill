@@ -478,6 +478,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   const isAdmin = currentUser?.role === 'System Admin';
   const canManageBilling = currentUser?.role === 'System Admin' || currentUser?.role === 'Billing Counter';
   const canEditAndCompare = currentUser?.role === 'System Admin' || currentUser?.role === 'Doctor';
+  const canDelete = Boolean(currentUser);
 
   const handleEditClick = (q: InvoiceQuotation) => {
     if (!canEditAndCompare) {
@@ -496,8 +497,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   const handleDeleteSingleQuotation = (q: InvoiceQuotation) => {
-    if (!isAdmin) {
-      alert('Delete permission is restricted to System Admin only.');
+    if (!canDelete) {
+      alert('Please log in with your user account to delete quotation invoices.');
       return;
     }
     setDeleteWarningModal({
@@ -511,8 +512,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   const handleDeletePatientGroup = (group: PatientHistoryGroup) => {
-    if (!isAdmin) {
-      alert('Delete permission is restricted to System Admin only.');
+    if (!canDelete) {
+      alert('Please log in with your user account to delete quotation history.');
       return;
     }
     const ids = group.quotations.map(q => q.id);
@@ -527,8 +528,8 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   const handleDeleteSelectedQuotations = () => {
-    if (!isAdmin) {
-      alert('Delete permission is restricted to System Admin only.');
+    if (!canDelete) {
+      alert('Please log in with your user account to delete quotation records.');
       return;
     }
     if (selectedQuotationIds.length === 0) return;
