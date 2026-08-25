@@ -486,20 +486,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     } else if (matched.length > 1) {
       setIsPatientDropdownOpen(true);
     } else {
-      // Create quick patient entry on-the-fly for walk-in / newly searched number
-      const cleanDigits = phoneSearch.replace(/[^\d]/g, '');
-      const isDigits = cleanDigits.length >= 6;
-      const newPat: Patient = {
-        id: `pat-walkin-${Date.now()}`,
-        name: isDigits ? `Patient (${phoneSearch.trim()})` : phoneSearch.trim(),
-        phone: isDigits ? phoneSearch.trim() : '01700000000',
-        age: 35,
-        gender: 'Male',
-        doctorName: currentUser?.name || billingDoctor || 'Dr. S.M. Shahidul Islam PhD',
-        status: 'Pending Counseling',
-        createdAt: new Date().toISOString()
-      };
-      handleSelectPatient(newPat);
+      // Do NOT auto-create patient when search has no matching entry
+      alert(`No registered patient found matching "${phoneSearch.trim()}". Please verify that the patient is registered in the Daily Appointment List.`);
       setIsPatientDropdownOpen(false);
     }
   };
@@ -3163,38 +3151,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                     );
                   })}
                 </div>
-
-                {/* Quick create option for typed query */}
-                {phoneSearch && phoneSearch.trim() && (
-                  <div
-                    onClick={() => {
-                      const cleanDigits = phoneSearch.replace(/[^\d]/g, '');
-                      const isDigits = cleanDigits.length >= 6;
-                      const newPat: Patient = {
-                        id: `pat-walkin-${Date.now()}`,
-                        name: isDigits ? `Patient (${phoneSearch.trim()})` : phoneSearch.trim(),
-                        phone: isDigits ? phoneSearch.trim() : '01700000000',
-                        age: 35,
-                        gender: 'Male',
-                        doctorName: currentUser?.name || billingDoctor || 'Dr. S.M. Shahidul Islam PhD',
-                        status: 'Pending Counseling',
-                        createdAt: new Date().toISOString()
-                      };
-                      handleSelectPatient(newPat);
-                    }}
-                    className="p-3 bg-emerald-50/80 hover:bg-emerald-100/90 border-t border-emerald-200 transition-colors cursor-pointer flex items-center justify-between gap-2 text-emerald-900"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Plus className="w-4 h-4 text-emerald-700 shrink-0" />
-                      <span className="text-xs font-bold">
-                        Create quotation for "{phoneSearch.trim()}"
-                      </span>
-                    </div>
-                    <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full shadow-xs">
-                      Select
-                    </span>
-                  </div>
-                )}
               </div>
             )}
           </div>

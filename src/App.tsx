@@ -89,7 +89,8 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !currentUser.token) return;
 
-    const interval = setInterval(async () => {
+    const pollPatients = async () => {
+      if (document.hidden) return;
       try {
         const fresh = await fetchPatientsApi();
         if (Array.isArray(fresh) && fresh.length > 0) {
@@ -98,9 +99,15 @@ export default function App() {
       } catch (err) {
         // silent background sync
       }
-    }, 4000);
+    };
 
-    return () => clearInterval(interval);
+    const interval = setInterval(pollPatients, 8000);
+    window.addEventListener('focus', pollPatients);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', pollPatients);
+    };
   }, [currentUser]);
 
   // Guard tabs based on role

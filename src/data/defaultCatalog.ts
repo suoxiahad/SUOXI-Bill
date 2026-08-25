@@ -98,7 +98,67 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'treatment',
     defaultPrice: 700,
     defaultDiscountPercent: 0,
-    description: 'Pain management thermal therapy',
+    description: 'Pain management thermal and nerve therapy',
+    outdoorSessions: 10,
+    indoorSessions: 15
+  },
+  {
+    id: 'tr-8',
+    name: 'Spinal Decompression & Traction Therapy',
+    category: 'treatment',
+    defaultPrice: 1500,
+    defaultDiscountPercent: 0,
+    description: 'Cervical / Lumbar spine decompression and mechanical traction',
+    outdoorSessions: 10,
+    indoorSessions: 15
+  },
+  {
+    id: 'tr-9',
+    name: 'Therapeutic Ultrasound & Deep Heat Therapy',
+    category: 'treatment',
+    defaultPrice: 800,
+    defaultDiscountPercent: 0,
+    description: 'Deep tissue phonophoresis and ultrasonic healing therapy',
+    outdoorSessions: 10,
+    indoorSessions: 15
+  },
+  {
+    id: 'tr-10',
+    name: 'Acupressure & Chinese Tuina Manipulation',
+    category: 'treatment',
+    defaultPrice: 1200,
+    defaultDiscountPercent: 0,
+    description: 'Traditional meridian acupressure and therapeutic Tuina',
+    outdoorSessions: 10,
+    indoorSessions: 15
+  },
+  {
+    id: 'tr-11',
+    name: 'TDP Mineral Lamp Heat Therapy',
+    category: 'treatment',
+    defaultPrice: 600,
+    defaultDiscountPercent: 0,
+    description: 'Electromagnetic mineral plate deep bio-spectrum heat therapy',
+    outdoorSessions: 10,
+    indoorSessions: 15
+  },
+  {
+    id: 'tr-12',
+    name: 'Dry Needling & Trigger Point Therapy',
+    category: 'treatment',
+    defaultPrice: 1200,
+    defaultDiscountPercent: 0,
+    description: 'Myofascial trigger point release and intramuscular stimulation',
+    outdoorSessions: 10,
+    indoorSessions: 15
+  },
+  {
+    id: 'tr-13',
+    name: 'Weight Loss & Metabolism Acupuncture',
+    category: 'treatment',
+    defaultPrice: 1500,
+    defaultDiscountPercent: 0,
+    description: 'Targeted abdominal acupuncture for weight and metabolic management',
     outdoorSessions: 10,
     indoorSessions: 15
   },

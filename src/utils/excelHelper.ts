@@ -247,7 +247,12 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
 
       let cleanSerial = '';
       if (rawSerial) {
-        const match = rawSerial.match(/\b\d+\b/);
+        const bnToEnMap: Record<string, string> = {
+          '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
+          '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
+        };
+        const enSerial = String(rawSerial).replace(/[০-৯]/g, (char) => bnToEnMap[char] || char);
+        const match = enSerial.match(/\b\d+\b/);
         if (match) cleanSerial = match[0];
       }
       if (!cleanSerial) {

@@ -52,18 +52,22 @@ app.get('/api/logo', (_req, res) => {
 
 app.use(express.json({ limit: '10mb' }));
 
-// Rate Limiters
+// Rate Limiters - Relaxed for hospital intranet multi-device usage & real-time polling
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 15,
-  message: { error: 'Too many login attempts from this IP, please try again after 15 minutes.' },
+  windowMs: 5 * 60 * 1000,
+  max: 500, // Generous limit for multi-device logins behind office/clinic NAT
+  message: { error: 'Too many login attempts from this IP, please try again after a few minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
+  windowMs: 1 * 60 * 1000,
+  max: 10000, // High threshold so live polling and multi-device data sync never get blocked
+  skip: (req) => {
+    // Never block authenticated staff members or internal polling
+    return Boolean(req.headers.authorization);
+  },
   message: { error: 'Too many requests from this IP, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -1238,6 +1242,80 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
   }
 });
 
+// Helper for high-performance MySQL batch upsert
+async function batchUpsertPatientsToMySQL(patientsList: any[]) {
+  if (!isMySqlActive || !mysqlPool || !Array.isArray(patientsList) || patientsList.length === 0) {
+    return;
+  }
+
+  const batchSize = 50;
+  for (let i = 0; i < patientsList.length; i += batchSize) {
+    const chunk = patientsList.slice(i, i + batchSize);
+    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+    const values: any[] = [];
+
+    for (const p of chunk) {
+      values.push(
+        p.id,
+        p.serialNo || '',
+        p.name || '',
+        p.phone || '',
+        p.age || '',
+        p.gender || 'Other',
+        p.address || '',
+        p.doctorName || 'Senior Counseling Doctor',
+        p.appointmentDate || new Date().toISOString().split('T')[0],
+        p.appointmentTime || '09:00 AM',
+        p.department || 'Acupuncture',
+        p.status || 'Pending Counseling',
+        p.notes || '',
+        p.remark || '',
+        p.createdAt || new Date().toISOString()
+      );
+    }
+
+    const sql = `
+      INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
+      VALUES ${placeholders}
+      ON DUPLICATE KEY UPDATE
+        serialNo = VALUES(serialNo),
+        name = VALUES(name),
+        phone = VALUES(phone),
+        age = VALUES(age),
+        gender = VALUES(gender),
+        address = VALUES(address),
+        doctorName = VALUES(doctorName),
+        appointmentDate = VALUES(appointmentDate),
+        appointmentTime = VALUES(appointmentTime),
+        department = VALUES(department),
+        status = VALUES(status),
+        notes = VALUES(notes),
+        remark = VALUES(remark)
+    `;
+
+    try {
+      await mysqlPool.execute(sql, values);
+    } catch (batchErr) {
+      console.warn(`Batch upsert chunk failed, attempting single-row fallback:`, batchErr);
+      for (const p of chunk) {
+        try {
+          await mysqlPool.execute(
+            `INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE serialNo=?, name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
+            [
+              p.id, p.serialNo, p.name, p.phone, p.age, p.gender, p.address, p.doctorName, p.appointmentDate, p.appointmentTime, p.department, p.status, p.notes, p.remark, p.createdAt,
+              p.serialNo, p.name, p.phone, p.age, p.gender, p.address, p.doctorName, p.appointmentDate, p.appointmentTime, p.department, p.status, p.notes, p.remark
+            ]
+          );
+        } catch (singleErr) {
+          console.error('MySQL single row fallback save error:', singleErr);
+        }
+      }
+    }
+  }
+}
+
 app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Admin', 'Call Center', 'Doctor'), async (req, res) => {
   const { patients } = req.body;
   if (!Array.isArray(patients)) {
@@ -1248,6 +1326,13 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
   let updated = 0;
   const todayStr = new Date().toISOString().split('T')[0];
   const newPatientsBatch: any[] = [];
+  const allFormattedForDb: any[] = [];
+
+  const bnToEnMap: Record<string, string> = {
+    '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
+    '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
+  };
+  const convertBnToEn = (s: string) => String(s || '').replace(/[০-৯]/g, (char) => bnToEnMap[char] || char);
 
   for (let idx = 0; idx < patients.length; idx++) {
     const p = patients[idx];
@@ -1257,13 +1342,12 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
     const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
 
-    // Only update if explicit p.id matches an existing record.
-    // Every row in the uploaded Excel represents an appointment entry - multiple appointments with the same phone must ALL be saved!
     const existingIdx = p.id ? localData.patients.findIndex(x => x.id === p.id) : -1;
 
     let cleanSerial = '';
     if (p.serialNo) {
-      const match = String(p.serialNo).match(/\b\d+\b/);
+      const enSerial = convertBnToEn(String(p.serialNo));
+      const match = enSerial.match(/\b\d+\b/);
       if (match) cleanSerial = match[0];
     }
     if (!cleanSerial) {
@@ -1289,8 +1373,10 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       status: p.status || 'Pending Counseling',
       notes: p.notes || p.remark || '',
       remark: p.remark || p.notes || '',
-      createdAt: new Date().toISOString()
+      createdAt: p.createdAt || new Date().toISOString()
     };
+
+    allFormattedForDb.push(formattedPatient);
 
     if (existingIdx >= 0) {
       localData.patients[existingIdx] = { ...localData.patients[existingIdx], ...formattedPatient };
@@ -1299,29 +1385,24 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       newPatientsBatch.push(formattedPatient);
       added++;
     }
-
-    if (isMySqlActive && mysqlPool) {
-      try {
-        await mysqlPool.execute(
-          `INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE serialNo=?, name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
-          [formattedPatient.id, formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark, formattedPatient.createdAt,
-           formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark]
-        );
-      } catch (err) {
-        console.error('MySQL patient import save error:', err);
-      }
-    }
   }
 
   // Prepend newly imported batch in exact top-to-bottom sheet order
   localData.patients = [...newPatientsBatch, ...localData.patients];
-
   saveLocalDb();
 
+  // Perform fast batch upsert to MySQL database
+  if (isMySqlActive && mysqlPool) {
+    try {
+      await batchUpsertPatientsToMySQL(allFormattedForDb);
+    } catch (err) {
+      console.error('MySQL patient batch upsert top-level error:', err);
+    }
+  }
+
   res.json({
-    message: `${added} new patients imported, ${updated} updated.`,
+    success: true,
+    message: `${added} new appointments imported, ${updated} updated.`,
     added,
     updated,
     patients: localData.patients
