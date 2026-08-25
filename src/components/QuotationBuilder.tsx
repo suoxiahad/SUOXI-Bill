@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Plus, 
   Trash2, 
@@ -38,7 +38,7 @@ import {
   CatalogItem,
   User 
 } from '../types';
-import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
+import { matchPatient, matchSearchQuery, normalizePhoneDigits, normalizeSearchText } from '../utils/searchHelper';
 
 interface TreatmentListItem {
   id: string;
@@ -334,6 +334,43 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }));
   }, [editingQuotation]);
 
+  // Unified list of all known patients (combining Intake Appointments + Quotation History)
+  const allKnownPatients = useMemo<Patient[]>(() => {
+    const map = new Map<string, Patient>();
+
+    (patients || []).forEach(p => {
+      if (p) {
+        const phoneNorm = normalizePhoneDigits(p.phone);
+        const nameNorm = normalizeSearchText(p.name);
+        const key = p.id || `${nameNorm}__${phoneNorm}`;
+        map.set(key, p);
+      }
+    });
+
+    (quotations || []).forEach(q => {
+      if (q && (q.patientName || q.patientPhone)) {
+        const phoneNorm = normalizePhoneDigits(q.patientPhone);
+        const nameNorm = normalizeSearchText(q.patientName);
+        const key = `${nameNorm}__${phoneNorm}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            id: q.patientId || `pat-history-${q.id}`,
+            name: q.patientName,
+            phone: q.patientPhone || '',
+            age: q.patientAge,
+            gender: q.patientGender,
+            doctorName: q.doctorName,
+            status: 'Quotation Created',
+            createdAt: q.createdDate || new Date().toISOString(),
+            notes: q.notes || ''
+          });
+        }
+      }
+    });
+
+    return Array.from(map.values());
+  }, [patients, quotations]);
+
   // Handle Patient Phone/Name Search & Dropdown State
   const [matchingPatients, setMatchingPatients] = useState<Patient[]>([]);
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState<boolean>(false);
@@ -345,7 +382,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       setIsPatientDropdownOpen(false);
       return;
     }
-    const matched = patients.filter(p => matchPatient(val, p));
+    const matched = allKnownPatients.filter(p => matchPatient(val, p));
     setMatchingPatients(matched);
     setIsPatientDropdownOpen(matched.length > 0);
   };
@@ -365,7 +402,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       alert('Please enter a mobile number or patient name.');
       return;
     }
-    const matched = patients.filter(p => matchPatient(phoneSearch, p));
+    const matched = allKnownPatients.filter(p => matchPatient(phoneSearch, p));
     setMatchingPatients(matched);
     if (matched.length === 1) {
       handleSelectPatient(matched[0]);

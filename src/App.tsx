@@ -83,6 +83,17 @@ export default function App() {
     initializeAppData();
   }, [initializeAppData]);
 
+  // Guard tabs based on role
+  useEffect(() => {
+    if (!currentUser) return;
+    const role = currentUser.role;
+    if (role === 'Doctor' && activeTab === 'appointments') {
+      setActiveTab('quotation');
+    } else if (role === 'Billing Counter' && activeTab === 'appointments') {
+      setActiveTab('history');
+    }
+  }, [currentUser, activeTab]);
+
   // Set initial default tab on login without strictly trapping the user
   const handleLoginSuccess = async (user: User) => {
     setCurrentUser(user);

@@ -669,7 +669,7 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Doctor'
   res.json(localData.patients);
 });
 
-app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
+app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Billing Counter'), async (req, res) => {
   const p = req.body;
   if (!p.name || !p.phone) {
     return res.status(400).json({ error: 'Patient Name and Phone Number are required' });
@@ -730,7 +730,7 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
   res.json({ message: 'Patient saved successfully', patient: formattedPatient, patients: localData.patients });
 });
 
-app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
+app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 'Call Center'), async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'No patient IDs provided for deletion' });
@@ -753,7 +753,7 @@ app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 
 });
 
 // PDF Upload Endpoint to parse Patient Name, Gender, Age, Phone Number, Remark (Disease)
-app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), upload.single('pdfFile'), async (req: any, res: any) => {
+app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admin', 'Call Center'), upload.single('pdfFile'), async (req: any, res: any) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No PDF file uploaded' });
   }
@@ -928,7 +928,7 @@ app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admi
 });
 
 // Upload and parse Excel Appointment File (.xlsx, .xls, .csv)
-app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), upload.single('excelFile'), (req: any, res: any) => {
+app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Admin', 'Call Center'), upload.single('excelFile'), (req: any, res: any) => {
   try {
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ error: 'No Excel file provided for upload.' });
@@ -1138,7 +1138,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
   }
 });
 
-app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
+app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Call Center'), async (req, res) => {
   const { patients } = req.body;
   if (!Array.isArray(patients)) {
     return res.status(400).json({ error: 'Invalid patient list' });

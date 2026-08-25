@@ -59,12 +59,13 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const userRole = currentUser?.role;
 
-  const canAccessAppointments = !!currentUser; // Accessible by all hospital staff
-  const canAccessQuotation = !!currentUser;    // Accessible by all hospital staff
-  const canAccessHistory = !!currentUser;      // Accessible by all hospital staff
+  const canAccessAppointments = userRole === 'System Admin' || userRole === 'Call Center';
+  const canAccessQuotation = !!currentUser;
+  const canAccessHistory = !!currentUser;
   const canAccessCatalog = userRole === 'System Admin';
   const canAccessUsers = !!currentUser;
   const canAccessCalculationToggle = userRole === 'System Admin' || userRole === 'Doctor';
+  const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center' || userRole === 'Billing Counter';
 
   const getRoleBadge = () => {
     if (!currentUser) {
@@ -181,13 +182,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* Patient Entry Button */}
-            <button
-              onClick={onOpenAddPatient}
-              className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs sm:text-sm px-3.5 py-2 rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>New Patient</span>
-            </button>
+            {canCreateNewPatient && (
+              <button
+                onClick={onOpenAddPatient}
+                className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs sm:text-sm px-3.5 py-2 rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>New Patient</span>
+              </button>
+            )}
           </div>
 
         </div>
