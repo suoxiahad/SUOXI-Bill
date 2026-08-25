@@ -83,21 +83,7 @@ export default function App() {
     initializeAppData();
   }, [initializeAppData]);
 
-  // Guard activeTab based on user role permissions
-  useEffect(() => {
-    if (!currentUser) return;
-    const role = currentUser.role;
-    if (activeTab === 'users') return; // All logged-in users have access to My Profile & Account Settings
-    
-    if (role === 'Call Center' && activeTab !== 'appointments') {
-      setActiveTab('appointments');
-    } else if (role === 'Doctor' && activeTab !== 'quotation' && activeTab !== 'history') {
-      setActiveTab('quotation');
-    } else if (role === 'Billing Counter' && activeTab !== 'history') {
-      setActiveTab('history');
-    }
-  }, [currentUser, activeTab]);
-
+  // Set initial default tab on login without strictly trapping the user
   const handleLoginSuccess = async (user: User) => {
     setCurrentUser(user);
     setIsLoginModalOpen(false);
@@ -107,6 +93,8 @@ export default function App() {
       setActiveTab('quotation');
     } else if (user.role === 'Billing Counter') {
       setActiveTab('history');
+    } else {
+      setActiveTab('quotation');
     }
     await initializeAppData();
   };
@@ -141,15 +129,9 @@ export default function App() {
     const foundPatient = patients.find(p => matchPatient(query, p));
 
     if (foundPatient) {
-      if (currentUser?.role === 'Call Center') {
-        setActiveTab('appointments');
-      } else if (currentUser?.role === 'Billing Counter') {
-        setActiveTab('history');
-      } else {
-        setEditingQuotation(null);
-        setSelectedPatientForQuotation(foundPatient);
-        setActiveTab('quotation');
-      }
+      setEditingQuotation(null);
+      setSelectedPatientForQuotation(foundPatient);
+      setActiveTab('quotation');
       return;
     }
 
@@ -174,13 +156,9 @@ export default function App() {
         createdAt: foundQuotation.createdAt || new Date().toISOString()
       };
 
-      if (currentUser?.role === 'Billing Counter') {
-        setActiveTab('history');
-      } else {
-        setEditingQuotation(null);
-        setSelectedPatientForQuotation(synchedPatient);
-        setActiveTab('quotation');
-      }
+      setEditingQuotation(null);
+      setSelectedPatientForQuotation(synchedPatient);
+      setActiveTab('quotation');
       return;
     }
 

@@ -59,9 +59,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const userRole = currentUser?.role;
 
-  const canAccessAppointments = userRole === 'System Admin' || userRole === 'Call Center';
-  const canAccessQuotation = userRole === 'System Admin' || userRole === 'Doctor';
-  const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter';
+  const canAccessAppointments = !!currentUser; // Accessible by all hospital staff
+  const canAccessQuotation = !!currentUser;    // Accessible by all hospital staff
+  const canAccessHistory = !!currentUser;      // Accessible by all hospital staff
   const canAccessCatalog = userRole === 'System Admin';
   const canAccessUsers = !!currentUser;
   const canAccessCalculationToggle = userRole === 'System Admin' || userRole === 'Doctor';

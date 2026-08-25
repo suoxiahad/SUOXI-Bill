@@ -669,7 +669,7 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Doctor'
   res.json(localData.patients);
 });
 
-app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
+app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
   const p = req.body;
   if (!p.name || !p.phone) {
     return res.status(400).json({ error: 'Patient Name and Phone Number are required' });
@@ -1245,7 +1245,7 @@ app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Docto
   res.json(localData.quotations);
 });
 
-app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter'), async (req, res) => {
+app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   const quotation = req.body;
   if (!quotation || !quotation.id) {
     return res.status(400).json({ error: 'Invalid quotation payload' });
