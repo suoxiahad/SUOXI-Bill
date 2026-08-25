@@ -536,7 +536,7 @@ const ALL_DEV_USERS: User[] = [
   { id: 'usr-bc1', username: 'billing', name: 'Billing Counter Desk', role: 'Billing Counter', phone: '01733333333' }
 ];
 
-const DEFAULT_USERS_LIST: User[] = import.meta.env.PROD ? ADMIN_ONLY_USER : ALL_DEV_USERS;
+const DEFAULT_USERS_LIST: User[] = ALL_DEV_USERS;
 
 export const getUsersLocal = (): User[] => {
   try {

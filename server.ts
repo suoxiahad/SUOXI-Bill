@@ -176,9 +176,7 @@ const DEMO_STAFF_USERS: UserRecord[] = [
   }
 ];
 
-const INITIAL_USERS: UserRecord[] = (IS_PRODUCTION || FORCE_CLEAR_DEMO)
-  ? [ADMIN_USER_RECORD]
-  : [ADMIN_USER_RECORD, ...DEMO_STAFF_USERS];
+const INITIAL_USERS: UserRecord[] = [ADMIN_USER_RECORD, ...DEMO_STAFF_USERS];
 
 const DEMO_PATIENTS = [
   {
@@ -235,12 +233,10 @@ function loadLocalDb() {
       let patients = Array.isArray(parsed.patients) ? parsed.patients : INITIAL_PATIENTS;
       let quotations = Array.isArray(parsed.quotations) ? parsed.quotations : [];
 
-      // In production mode, remove all demo patients and demo staff accounts
-      if (IS_PRODUCTION || FORCE_CLEAR_DEMO) {
-        patients = patients.filter((p: any) => p.id !== 'pat-101' && p.id !== 'pat-102');
-        users = users.filter((u: any) => u.username === 'admin' || (u.id !== 'usr-doctor' && u.id !== 'usr-callcenter' && u.id !== 'usr-billing'));
-        if (!users.some((u: any) => u.username === 'admin')) {
-          users.unshift(ADMIN_USER_RECORD);
+      // Ensure admin and default staff users always exist if not already present
+      for (const defUser of [ADMIN_USER_RECORD, ...DEMO_STAFF_USERS]) {
+        if (!users.some((u: any) => u.username === defUser.username)) {
+          users.push(defUser);
         }
       }
 
@@ -464,7 +460,7 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
 
   if (isMySqlActive && mysqlPool) {
     try {
-      const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY created_at DESC');
+      const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
       if (Array.isArray(pRows)) patients = pRows;
 
       const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
@@ -478,7 +474,7 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
       const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
       if (Array.isArray(cRows) && cRows.length > 0) catalog = cRows;
 
-      const [uRows]: any = await mysqlPool.execute('SELECT id, username, name, role, phone, is_active FROM users ORDER BY created_at ASC');
+      const [uRows]: any = await mysqlPool.execute('SELECT id, username, name, role, phone, is_active FROM users ORDER BY id ASC');
       if (Array.isArray(uRows) && uRows.length > 0) users = uRows;
     } catch (err) {
       console.error('MySQL init fetch error:', err);
@@ -661,10 +657,10 @@ app.delete('/api/users/:id', authenticateToken, requireRole('System Admin'), asy
 });
 
 // 4. Patients API & PDF Upload Parser
-app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Doctor', 'Call Center'), async (req, res) => {
+app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
   if (isMySqlActive && mysqlPool) {
     try {
-      const [rows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY created_at DESC');
+      const [rows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
       return res.json(rows);
     } catch (err) {
       console.error('Error fetching patients from MySQL:', err);
@@ -1233,7 +1229,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
 });
 
 // 5. Quotations API
-app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
+app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   if (isMySqlActive && mysqlPool) {
     try {
       const [rows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
@@ -1249,7 +1245,7 @@ app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Docto
   res.json(localData.quotations);
 });
 
-app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
+app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter'), async (req, res) => {
   const quotation = req.body;
   if (!quotation || !quotation.id) {
     return res.status(400).json({ error: 'Invalid quotation payload' });

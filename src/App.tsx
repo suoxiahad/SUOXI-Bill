@@ -24,6 +24,7 @@ import {
   getCatalogLocal,
   saveCatalogApi
 } from './utils/storage';
+import { matchSearchQuery } from './utils/searchHelper';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'appointments' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
@@ -133,16 +134,59 @@ export default function App() {
     setPatients(updated);
   };
 
-  const handleSearchPhoneInNavbar = (phone: string) => {
-    const cleanPhone = phone.trim().toLowerCase();
-    const found = patients.find(p => p.phone.includes(cleanPhone) || p.name.toLowerCase().includes(cleanPhone));
-    if (found) {
-      setEditingQuotation(null);
-      setSelectedPatientForQuotation(found);
-      setActiveTab('quotation');
-    } else {
-      alert(`No patient found matching "${phone}". Please register the patient manually.`);
+  const handleSearchPhoneInNavbar = (query: string) => {
+    if (!query || !query.trim()) return;
+
+    // 1. Search in Patients list
+    const foundPatient = patients.find(p => 
+      matchSearchQuery(query, [p.phone, p.name, p.serialNo, p.notes, p.remark])
+    );
+
+    if (foundPatient) {
+      if (currentUser?.role === 'Call Center') {
+        setActiveTab('appointments');
+      } else if (currentUser?.role === 'Billing Counter') {
+        setActiveTab('history');
+      } else {
+        setEditingQuotation(null);
+        setSelectedPatientForQuotation(foundPatient);
+        setActiveTab('quotation');
+      }
+      return;
     }
+
+    // 2. Search in Quotation History if not found in active patients
+    const foundQuotation = quotations.find(q =>
+      matchSearchQuery(query, [q.patientPhone, q.patientName, q.quotationNumber, q.doctorName])
+    );
+
+    if (foundQuotation) {
+      const synchedPatient: Patient = {
+        id: `pat-hist-${foundQuotation.id}`,
+        name: foundQuotation.patientName,
+        phone: foundQuotation.patientPhone,
+        age: String(foundQuotation.patientAge || ''),
+        gender: (foundQuotation.patientGender as any) || 'Other',
+        address: foundQuotation.patientAddress || '',
+        doctorName: foundQuotation.doctorName,
+        appointmentDate: foundQuotation.createdDate || new Date().toISOString().split('T')[0],
+        appointmentTime: '09:00 AM',
+        department: 'Acupuncture',
+        status: 'Quotation Created',
+        createdAt: foundQuotation.createdAt || new Date().toISOString()
+      };
+
+      if (currentUser?.role === 'Billing Counter') {
+        setActiveTab('history');
+      } else {
+        setEditingQuotation(null);
+        setSelectedPatientForQuotation(synchedPatient);
+        setActiveTab('quotation');
+      }
+      return;
+    }
+
+    alert(`No patient record found matching "${query}". You can register or import the patient.`);
   };
 
   const handleSaveQuotation = async (quotation: InvoiceQuotation) => {

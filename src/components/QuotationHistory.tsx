@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { InvoiceQuotation, User, Patient } from '../types';
 import { PackageComparisonModal, TreatmentItemForComparison, IndoorServiceItemForComparison } from './PackageComparisonModal';
+import { matchSearchQuery } from '../utils/searchHelper';
 
 interface QuotationHistoryProps {
   quotations: InvoiceQuotation[];
@@ -641,11 +642,13 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
 
   // Filter groups according to search term and date range
   const filteredGroups = patientGroups.filter(g => {
-    const matchesSearch = 
-      g.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      g.patientPhone.includes(searchTerm) ||
-      g.doctorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      g.quotations.some(q => q.quotationNumber.toLowerCase().includes(searchTerm.toLowerCase()));
+    const quotationNumbers = g.quotations.map(q => q.quotationNumber);
+    const matchesSearch = matchSearchQuery(searchTerm, [
+      g.patientName,
+      g.patientPhone,
+      g.doctorName,
+      ...quotationNumbers
+    ]);
 
     if (!matchesSearch) return false;
 
@@ -659,10 +662,12 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   // Flat list enriched with visit ordinal labels
   const flatEnrichedQuotations = patientGroups.flatMap(g => g.quotations);
   const filteredFlatQuotations = flatEnrichedQuotations.filter(q => {
-    const matchesSearch = 
-      q.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.patientPhone.includes(searchTerm) ||
-      q.quotationNumber.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = matchSearchQuery(searchTerm, [
+      q.patientName,
+      q.patientPhone,
+      q.doctorName,
+      q.quotationNumber
+    ]);
 
     if (!matchesSearch) return false;
 

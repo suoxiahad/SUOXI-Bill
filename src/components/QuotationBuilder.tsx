@@ -38,6 +38,7 @@ import {
   CatalogItem,
   User 
 } from '../types';
+import { matchSearchQuery } from '../utils/searchHelper';
 
 interface TreatmentListItem {
   id: string;
@@ -339,16 +340,13 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   const handlePatientSearchChange = (val: string) => {
     setPhoneSearch(val);
-    const clean = val.trim().toLowerCase();
-    if (!clean) {
+    if (!val || !val.trim()) {
       setMatchingPatients([]);
       setIsPatientDropdownOpen(false);
       return;
     }
     const matched = patients.filter(p => 
-      (p.phone && p.phone.toLowerCase().includes(clean)) || 
-      (p.name && p.name.toLowerCase().includes(clean)) ||
-      (p.serialNo && p.serialNo.toLowerCase().includes(clean))
+      matchSearchQuery(val, [p.phone, p.name, p.serialNo, p.notes, p.remark])
     );
     setMatchingPatients(matched);
     setIsPatientDropdownOpen(matched.length > 0);
@@ -365,15 +363,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   const handlePhoneSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = phoneSearch.trim().toLowerCase();
-    if (!clean) {
+    if (!phoneSearch || !phoneSearch.trim()) {
       alert('Please enter a mobile number or patient name.');
       return;
     }
     const matched = patients.filter(p => 
-      (p.phone && p.phone.toLowerCase().includes(clean)) || 
-      (p.name && p.name.toLowerCase().includes(clean)) ||
-      (p.serialNo && p.serialNo.toLowerCase().includes(clean))
+      matchSearchQuery(phoneSearch, [p.phone, p.name, p.serialNo, p.notes, p.remark])
     );
     setMatchingPatients(matched);
     if (matched.length === 1) {
@@ -382,7 +377,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       setIsPatientDropdownOpen(true);
     } else {
       setIsPatientDropdownOpen(false);
-      alert('No patient found with this mobile number or name. You can register a new patient manually.');
+      alert(`No patient found matching "${phoneSearch}". You can register a new patient manually.`);
     }
   };
 
