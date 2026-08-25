@@ -98,7 +98,7 @@ export default function App() {
       } catch (err) {
         // silent background sync
       }
-    }, 8000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [currentUser]);

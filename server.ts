@@ -331,11 +331,47 @@ async function initDatabase() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
 
-      // Safe check to add serialNo column if patients table already exists
-      try {
-        await pool.query(`ALTER TABLE patients ADD COLUMN serialNo VARCHAR(32) DEFAULT '' AFTER id;`);
-      } catch {
-        // column may already exist
+      // Exhaustive safe column migrations for existing MySQL tables
+      const migrations = [
+        "ALTER TABLE patients ADD COLUMN serialNo VARCHAR(32) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN name VARCHAR(128) NOT NULL DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN phone VARCHAR(32) NOT NULL DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN age VARCHAR(16) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN gender VARCHAR(16) DEFAULT 'Other'",
+        "ALTER TABLE patients ADD COLUMN address TEXT",
+        "ALTER TABLE patients ADD COLUMN doctorName VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN appointmentDate VARCHAR(32) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN appointmentTime VARCHAR(32) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN department VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN status VARCHAR(64) DEFAULT 'Pending Counseling'",
+        "ALTER TABLE patients ADD COLUMN notes TEXT",
+        "ALTER TABLE patients ADD COLUMN remark TEXT",
+        "ALTER TABLE patients ADD COLUMN createdAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN patientId VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN patientName VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN patientPhone VARCHAR(32) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN patientAge VARCHAR(16) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN patientGender VARCHAR(16) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN doctorName VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN totalAmount DOUBLE DEFAULT 0",
+        "ALTER TABLE quotations ADD COLUMN discountAmount DOUBLE DEFAULT 0",
+        "ALTER TABLE quotations ADD COLUMN netPayable DOUBLE DEFAULT 0",
+        "ALTER TABLE quotations ADD COLUMN paymentType VARCHAR(64) DEFAULT 'Cash'",
+        "ALTER TABLE quotations ADD COLUMN status VARCHAR(64) DEFAULT 'Saved'",
+        "ALTER TABLE quotations ADD COLUMN items JSON",
+        "ALTER TABLE quotations ADD COLUMN createdAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN createdDate VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE quotations ADD COLUMN notes TEXT",
+        "ALTER TABLE users ADD COLUMN phone VARCHAR(32) DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN is_active TINYINT DEFAULT 1"
+      ];
+
+      for (const mig of migrations) {
+        try {
+          await pool.query(mig);
+        } catch {
+          // column already exists
+        }
       }
 
       await pool.query(`
@@ -453,22 +489,27 @@ app.get('/api/system/status', (req, res) => {
 
 app.get('/api/init', authenticateToken, async (req: any, res) => {
   const user = req.user;
-  let patients: any[] = localData.patients;
-  let quotations: any[] = localData.quotations;
+  let patients: any[] = [...localData.patients];
+  let quotations: any[] = [...localData.quotations];
   let catalog: any[] = localData.catalog;
   let users: any[] = localData.users.map(({ password_hash, ...u }) => u);
 
   if (isMySqlActive && mysqlPool) {
     try {
       const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
-      if (Array.isArray(pRows)) patients = pRows;
+      if (Array.isArray(pRows) && pRows.length > 0) {
+        const dbIds = new Set(pRows.map((r: any) => r.id));
+        patients = [...pRows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
+      }
 
       const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
-      if (Array.isArray(qRows)) {
-        quotations = qRows.map((r: any) => ({
+      if (Array.isArray(qRows) && qRows.length > 0) {
+        const dbQIds = new Set(qRows.map((r: any) => r.id));
+        const parsedQRows = qRows.map((r: any) => ({
           ...r,
           items: typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])
         }));
+        quotations = [...parsedQRows, ...localData.quotations.filter((q: any) => q && q.id && !dbQIds.has(q.id))];
       }
 
       const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY id ASC');
@@ -657,26 +698,33 @@ app.delete('/api/users/:id', authenticateToken, requireRole('System Admin'), asy
 });
 
 // 4. Patients API & PDF Upload Parser
-app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+  let allPatients: any[] = [...localData.patients];
   if (isMySqlActive && mysqlPool) {
     try {
       const [rows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
-      return res.json(rows);
+      if (Array.isArray(rows) && rows.length > 0) {
+        const dbIds = new Set(rows.map((r: any) => r.id));
+        allPatients = [...rows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
+      }
     } catch (err) {
       console.error('Error fetching patients from MySQL:', err);
     }
   }
-  res.json(localData.patients);
+  res.json(allPatients);
 });
 
-app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
   const query = String(req.query.q || '').trim();
-  let allPatients: any[] = localData.patients;
+  let allPatients: any[] = [...localData.patients];
 
   if (isMySqlActive && mysqlPool) {
     try {
       const [rows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
-      if (Array.isArray(rows)) allPatients = rows;
+      if (Array.isArray(rows) && rows.length > 0) {
+        const dbIds = new Set(rows.map((r: any) => r.id));
+        allPatients = [...rows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
+      }
     } catch (err) {
       console.error('Error searching patients MySQL:', err);
     }
@@ -805,7 +853,7 @@ app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 
 });
 
 // PDF Upload Endpoint to parse Patient Name, Gender, Age, Phone Number, Remark (Disease)
-app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admin', 'Call Center'), upload.single('pdfFile'), async (req: any, res: any) => {
+app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admin', 'Admin', 'Call Center', 'Doctor'), upload.single('pdfFile'), async (req: any, res: any) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No PDF file uploaded' });
   }
@@ -980,7 +1028,7 @@ app.post('/api/patients/upload-pdf', authenticateToken, requireRole('System Admi
 });
 
 // Upload and parse Excel Appointment File (.xlsx, .xls, .csv)
-app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Admin', 'Call Center'), upload.single('excelFile'), (req: any, res: any) => {
+app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Admin', 'Admin', 'Call Center', 'Doctor'), upload.single('excelFile'), (req: any, res: any) => {
   try {
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ error: 'No Excel file provided for upload.' });
@@ -1190,7 +1238,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
   }
 });
 
-app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Call Center'), async (req, res) => {
+app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Admin', 'Call Center', 'Doctor'), async (req, res) => {
   const { patients } = req.body;
   if (!Array.isArray(patients)) {
     return res.status(400).json({ error: 'Invalid patient list' });
