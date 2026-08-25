@@ -60,12 +60,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   const userRole = currentUser?.role;
 
   const canAccessAppointments = userRole === 'System Admin' || userRole === 'Call Center';
-  const canAccessQuotation = !!currentUser;
-  const canAccessHistory = !!currentUser;
+  const canAccessQuotation = userRole === 'System Admin' || userRole === 'Doctor';
+  const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter';
   const canAccessCatalog = userRole === 'System Admin';
   const canAccessUsers = !!currentUser;
   const canAccessCalculationToggle = userRole === 'System Admin' || userRole === 'Doctor';
-  const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center' || userRole === 'Billing Counter';
+  const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center';
 
   const getRoleBadge = () => {
     if (!currentUser) {

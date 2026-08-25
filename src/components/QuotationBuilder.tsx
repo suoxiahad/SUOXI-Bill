@@ -38,6 +38,7 @@ import {
   CatalogItem,
   User 
 } from '../types';
+import { DEFAULT_CATALOG } from '../data/defaultCatalog';
 import { searchPatientsLiveApi, fetchPatientsApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery, normalizePhoneDigits, normalizeSearchText } from '../utils/searchHelper';
 
@@ -372,6 +373,29 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     return Array.from(map.values());
   }, [patients, quotations]);
 
+  // Effective catalog merging DEFAULT_CATALOG and custom admin updates
+  const effectiveCatalog = useMemo<CatalogItem[]>(() => {
+    const map = new Map<string, CatalogItem>();
+    DEFAULT_CATALOG.forEach(item => {
+      if (item && item.id) {
+        map.set(item.id, item);
+      }
+    });
+    if (Array.isArray(catalog) && catalog.length > 0) {
+      catalog.forEach(item => {
+        if (item && item.id) {
+          const existing = map.get(item.id);
+          if (existing) {
+            map.set(item.id, { ...existing, ...item });
+          } else {
+            map.set(item.id, item);
+          }
+        }
+      });
+    }
+    return Array.from(map.values());
+  }, [catalog]);
+
   // Handle Patient Phone/Name Search & Dropdown State
   const [matchingPatients, setMatchingPatients] = useState<Patient[]>([]);
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState<boolean>(false);
@@ -462,8 +486,21 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     } else if (matched.length > 1) {
       setIsPatientDropdownOpen(true);
     } else {
+      // Create quick patient entry on-the-fly for walk-in / newly searched number
+      const cleanDigits = phoneSearch.replace(/[^\d]/g, '');
+      const isDigits = cleanDigits.length >= 6;
+      const newPat: Patient = {
+        id: `pat-walkin-${Date.now()}`,
+        name: isDigits ? `Patient (${phoneSearch.trim()})` : phoneSearch.trim(),
+        phone: isDigits ? phoneSearch.trim() : '01700000000',
+        age: 35,
+        gender: 'Male',
+        doctorName: currentUser?.name || billingDoctor || 'Dr. S.M. Shahidul Islam PhD',
+        status: 'Pending Counseling',
+        createdAt: new Date().toISOString()
+      };
+      handleSelectPatient(newPat);
       setIsPatientDropdownOpen(false);
-      alert(`No patient record found matching "${phoneSearch}". Please check the phone number or ask Call Center / Admin to register the patient.`);
     }
   };
 
@@ -910,7 +947,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   // Initialize treatment list from catalog setup (Admin entry)
   useEffect(() => {
-    const treatmentCatalog = catalog.filter(c => c.category === 'treatment' || c.category === 'consultation');
+    const treatmentCatalog = effectiveCatalog.filter(c => c.category === 'treatment' || c.category === 'consultation');
     const catalogOrderMap = new Map<string, number>(treatmentCatalog.map((c, i) => [c.id, i]));
     
     setTreatmentList(prev => {
@@ -1012,7 +1049,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalog]);
+  }, [effectiveCatalog]);
 
   const toggleTreatmentSelection = (id: string) => {
     setTreatmentList(prev => prev.map(item => {
@@ -1248,7 +1285,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [indoorServiceList, setIndoorServiceList] = useState<IndoorServiceListItem[]>([]);
 
   useEffect(() => {
-    const roomCatalog = catalog.filter(c => c.category === 'indoor_room');
+    const roomCatalog = effectiveCatalog.filter(c => c.category === 'indoor_room');
     const catalogOrderMap = new Map<string, number>(roomCatalog.map((c, i) => [c.id, i]));
 
     setIndoorServiceList(prev => {
@@ -1319,7 +1356,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalog]);
+  }, [effectiveCatalog]);
 
   const toggleIndoorServiceSelection = (id: string) => {
     setIndoorServiceList(prev => prev.map(item => {
@@ -1399,7 +1436,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   // Initialize and Sync Additional Treatments from Catalog (Admin Catalog & Rates)
   useEffect(() => {
-    const addCatalog = catalog.filter(c => c.category === 'additional_treatment');
+    const addCatalog = effectiveCatalog.filter(c => c.category === 'additional_treatment');
     const catalogOrderMap = new Map<string, number>(addCatalog.map((c, i) => [c.id, i]));
 
     setAdditionalTreatmentList(prev => {
@@ -1513,7 +1550,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         };
       });
     });
-  }, [catalog, patientTreatmentMode]);
+  }, [effectiveCatalog, patientTreatmentMode]);
 
   // Recalculate indoor free and outdoor discount for additional treatments when patientTreatmentMode changes
   useEffect(() => {
@@ -3126,6 +3163,38 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                     );
                   })}
                 </div>
+
+                {/* Quick create option for typed query */}
+                {phoneSearch && phoneSearch.trim() && (
+                  <div
+                    onClick={() => {
+                      const cleanDigits = phoneSearch.replace(/[^\d]/g, '');
+                      const isDigits = cleanDigits.length >= 6;
+                      const newPat: Patient = {
+                        id: `pat-walkin-${Date.now()}`,
+                        name: isDigits ? `Patient (${phoneSearch.trim()})` : phoneSearch.trim(),
+                        phone: isDigits ? phoneSearch.trim() : '01700000000',
+                        age: 35,
+                        gender: 'Male',
+                        doctorName: currentUser?.name || billingDoctor || 'Dr. S.M. Shahidul Islam PhD',
+                        status: 'Pending Counseling',
+                        createdAt: new Date().toISOString()
+                      };
+                      handleSelectPatient(newPat);
+                    }}
+                    className="p-3 bg-emerald-50/80 hover:bg-emerald-100/90 border-t border-emerald-200 transition-colors cursor-pointer flex items-center justify-between gap-2 text-emerald-900"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Plus className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span className="text-xs font-bold">
+                        Create quotation for "{phoneSearch.trim()}"
+                      </span>
+                    </div>
+                    <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full shadow-xs">
+                      Select
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

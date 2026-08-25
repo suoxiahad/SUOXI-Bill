@@ -107,10 +107,18 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
     const role = currentUser.role;
-    if (role === 'Doctor' && activeTab === 'appointments') {
-      setActiveTab('quotation');
-    } else if (role === 'Billing Counter' && activeTab === 'appointments') {
-      setActiveTab('history');
+    if (role === 'Call Center') {
+      if (activeTab !== 'appointments' && activeTab !== 'users') {
+        setActiveTab('appointments');
+      }
+    } else if (role === 'Billing Counter') {
+      if (activeTab !== 'history' && activeTab !== 'users') {
+        setActiveTab('history');
+      }
+    } else if (role === 'Doctor') {
+      if (activeTab !== 'quotation' && activeTab !== 'history' && activeTab !== 'users') {
+        setActiveTab('quotation');
+      }
     }
   }, [currentUser, activeTab]);
 

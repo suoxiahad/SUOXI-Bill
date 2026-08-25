@@ -769,7 +769,7 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
   res.json(matched);
 });
 
-app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Billing Counter'), async (req, res) => {
+app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Billing Counter', 'Doctor'), async (req, res) => {
   const p = req.body;
   if (!p.name || !p.phone) {
     return res.status(400).json({ error: 'Patient Name and Phone Number are required' });

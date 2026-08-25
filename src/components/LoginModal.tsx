@@ -127,54 +127,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, canClose = true,
               {loading ? 'Authenticating...' : 'Sign In'}
             </button>
           </form>
-
-          {/* Quick Staff Login Options */}
-          <div className="pt-2 border-t border-slate-100">
-            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 text-center">
-              Quick Role Login
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => performLogin('admin', 'admin123')}
-                disabled={loading}
-                className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-medium text-left transition flex flex-col cursor-pointer disabled:opacity-50"
-              >
-                <span className="font-bold text-[11px]">🛡️ Admin</span>
-                <span className="text-[10px] text-emerald-600 font-mono">admin / admin123</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => performLogin('doctor', 'doctor123')}
-                disabled={loading}
-                className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg text-xs font-medium text-left transition flex flex-col cursor-pointer disabled:opacity-50"
-              >
-                <span className="font-bold text-[11px]">🩺 Doctor</span>
-                <span className="text-[10px] text-blue-600 font-mono">doctor / doctor123</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => performLogin('callcenter', 'cc123')}
-                disabled={loading}
-                className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-medium text-left transition flex flex-col cursor-pointer disabled:opacity-50"
-              >
-                <span className="font-bold text-[11px]">📞 Call Center</span>
-                <span className="text-[10px] text-amber-600 font-mono">callcenter / cc123</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => performLogin('billing', 'billing123')}
-                disabled={loading}
-                className="px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 rounded-lg text-xs font-medium text-left transition flex flex-col cursor-pointer disabled:opacity-50"
-              >
-                <span className="font-bold text-[11px]">🧾 Billing</span>
-                <span className="text-[10px] text-purple-600 font-mono">billing / billing123</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Footer */}
