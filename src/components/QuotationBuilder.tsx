@@ -5108,8 +5108,6 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         initialAdmissionFee={admissionFee === '' ? 1000 : Number(admissionFee)}
         currentMode={patientTreatmentMode}
         currentPackage={treatmentPackage}
-        currentDays={treatmentDays}
-        showFullTreatmentCalculation={showFullTreatmentCalculation}
         patientName={selectedPatient?.name || (phoneSearch ? `Patient (${phoneSearch})` : 'Walk-in Patient')}
         patientMobile={selectedPatient?.phone || (selectedPatient as any)?.mobile || (selectedPatient as any)?.mobileNumber || (selectedPatient as any)?.patientPhone || (selectedPatient as any)?.patientMobile || phoneSearch || ''}
         consultingDoctor={billingDoctor}

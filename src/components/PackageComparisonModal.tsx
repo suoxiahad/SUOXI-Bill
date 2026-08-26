@@ -6,7 +6,6 @@ export interface TreatmentItemForComparison {
   id: string;
   treatmentName: string;
   unitCost: number;
-  sessions?: number | '';
   outdoorSessions?: number;
   indoorSessions?: number;
   isIndoorFree?: boolean;
@@ -14,8 +13,6 @@ export interface TreatmentItemForComparison {
   discountPercent?: number | '';
   discountAmount?: number;
   outdoorDiscountPercent?: number;
-  outdoorDiscountAmount?: number;
-  defaultDiscountPercent?: number;
   totalCost?: number;
 }
 
@@ -55,8 +52,6 @@ interface PackageComparisonModalProps {
   initialAdmissionFee?: number;
   currentMode: 'outdoor' | 'indoor' | '' | 'individual';
   currentPackage: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string;
-  currentDays?: number | '';
-  showFullTreatmentCalculation?: boolean;
   patientName?: string;
   patientMobile?: string;
   consultingDoctor?: string;
@@ -103,8 +98,6 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   initialAdmissionFee = 1000,
   currentMode,
   currentPackage,
-  currentDays = 30,
-  showFullTreatmentCalculation = true,
   patientName,
   patientMobile,
   consultingDoctor,
@@ -218,43 +211,15 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     return Number(item.unitCost) || 0;
   };
 
-  // Helper to compute effective daily sessions for a treatment item (honors manually edited sessions from QuotationBuilder)
-  const getEffectiveDailySessions = (
-    item: TreatmentItemForComparison,
-    patientType: 'outdoor' | 'indoor'
-  ): number => {
-    const isIndoor = patientType === 'indoor';
-    const catalogDaily = isIndoor
-      ? (item.indoorSessions !== undefined ? item.indoorSessions : 1)
-      : (item.outdoorSessions !== undefined ? item.outdoorSessions : 1);
-
-    // If the user manually entered or edited total sessions in the QuotationBuilder
-    if (item.sessions !== undefined && item.sessions !== '' && !isNaN(Number(item.sessions)) && Number(item.sessions) >= 0) {
-      const manualSessions = Number(item.sessions);
-      if (showFullTreatmentCalculation) {
-        const numCurrentDays = Number(currentDays) || 0;
-        const baseDays = numCurrentDays > 0
-          ? numCurrentDays
-          : (currentMode === 'indoor' ? 10 : 30);
-        return baseDays > 0 ? manualSessions / baseDays : manualSessions;
-      } else {
-        // 1-Day View: item.sessions is directly the per-day session count
-        return manualSessions;
-      }
-    }
-
-    return catalogDaily;
-  };
-
   // Compute daily gross cost per day for Outdoor and Indoor treatments
   const outdoorDailyGross = selectedTreatments.reduce((sum, item) => {
-    const dailySessions = getEffectiveDailySessions(item, 'outdoor');
+    const dailySessions = item.outdoorSessions !== undefined ? item.outdoorSessions : 1;
     const effectiveCost = getEffectiveTreatmentUnitCost(item, false);
     return sum + (effectiveCost * dailySessions);
   }, 0);
 
   const indoorDailyGross = selectedTreatments.reduce((sum, item) => {
-    const dailySessions = getEffectiveDailySessions(item, 'indoor');
+    const dailySessions = item.indoorSessions !== undefined ? item.indoorSessions : 1;
     const effectiveCost = getEffectiveTreatmentUnitCost(item, true);
     return sum + (effectiveCost * dailySessions);
   }, 0);
@@ -387,39 +352,36 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   ];
 
   const calculateDetails = (sc: Scenario) => {
-    const isIndoor = sc.patientType === 'indoor';
-    let treatmentGross = 0;
-    let treatmentDiscount = 0;
-
-    selectedTreatments.forEach(item => {
-      const dailySessions = getEffectiveDailySessions(item, sc.patientType);
-      const effectiveUnitCost = getEffectiveTreatmentUnitCost(item, isIndoor);
-      const itemGross = effectiveUnitCost * dailySessions * sc.days;
-      treatmentGross += itemGross;
-
-      if (isIndoor && item.isIndoorFree) {
-        treatmentDiscount += itemGross;
-      } else {
-        treatmentDiscount += Math.round((itemGross * sc.discountPercent) / 100);
-      }
-    });
-
-    const treatmentNet = Math.max(0, treatmentGross - treatmentDiscount);
-
     if (sc.patientType === 'outdoor') {
+      const treatmentGross = outdoorDailyGross * sc.days;
+      const treatmentDiscount = Math.round((treatmentGross * sc.discountPercent) / 100);
+      const treatmentNet = Math.max(0, treatmentGross - treatmentDiscount);
       const perDayNet = sc.days > 0 ? Math.round(treatmentNet / sc.days) : 0;
 
       return {
-        treatmentGross: Math.round(treatmentGross),
-        treatmentDiscount: Math.round(treatmentDiscount),
-        treatmentNet: Math.round(treatmentNet),
+        treatmentGross,
+        treatmentDiscount,
+        treatmentNet,
         roomTotal: 0,
         foodTotal: 0,
         admissionTotal: 0,
-        grandTotal: Math.round(treatmentNet),
+        grandTotal: treatmentNet,
         perDayNet,
       };
     } else {
+      let treatmentGross = 0;
+      let treatmentDiscount = 0;
+
+      selectedTreatments.forEach(item => {
+        const dailySessions = item.indoorSessions !== undefined ? item.indoorSessions : 1;
+        const effectiveUnitCost = getEffectiveTreatmentUnitCost(item, true);
+        const itemGross = effectiveUnitCost * dailySessions * sc.days;
+        treatmentGross += itemGross;
+        treatmentDiscount += Math.round((itemGross * sc.discountPercent) / 100);
+      });
+
+      const treatmentNet = Math.max(0, treatmentGross - treatmentDiscount);
+
       const roomTotal = totalRoomDailyRate * sc.days;
       const foodTotal = initialFoodChargeSelected ? ((initialFoodChargePerDay || 500) * sc.days) : 0;
       const admissionTotal = initialIncludeAdmissionFee ? (initialAdmissionFee || 1000) : 0;
@@ -429,13 +391,13 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       const perDayNet = sc.days > 0 ? Math.round(recurringTotal / sc.days) : 0;
 
       return {
-        treatmentGross: Math.round(treatmentGross),
-        treatmentDiscount: Math.round(treatmentDiscount),
-        treatmentNet: Math.round(treatmentNet),
-        roomTotal: Math.round(roomTotal),
-        foodTotal: Math.round(foodTotal),
-        admissionTotal: Math.round(admissionTotal),
-        grandTotal: Math.round(grandTotal),
+        treatmentGross,
+        treatmentDiscount,
+        treatmentNet,
+        roomTotal,
+        foodTotal,
+        admissionTotal,
+        grandTotal,
         perDayNet,
       };
     }
