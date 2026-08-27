@@ -1104,6 +1104,24 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setTreatmentList(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, ...fields };
+
+        // If the user manually changed sessions, update the corresponding per-day session count
+        if (fields.sessions !== undefined) {
+          const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
+          const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
+          const enteredSessions = fields.sessions === '' ? 0 : Number(fields.sessions);
+          const dailySession = calcDays > 0 ? (enteredSessions / calcDays) : enteredSessions;
+
+          if (patientTreatmentMode === 'outdoor') {
+            updated.outdoorSessions = dailySession;
+          } else if (patientTreatmentMode === 'indoor') {
+            updated.indoorSessions = dailySession;
+          } else {
+            updated.outdoorSessions = dailySession;
+            updated.indoorSessions = dailySession;
+          }
+        }
+
         const unitCost = Number(updated.unitCost) || 0;
         const sessions = updated.sessions === '' ? 0 : (Number(updated.sessions) || 0);
         const gross = unitCost * sessions;
@@ -5099,7 +5117,30 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       <PackageComparisonModal
         isOpen={isCompareModalOpen}
         onClose={() => setIsCompareModalOpen(false)}
-        selectedTreatments={treatmentList.filter(t => t.selected)}
+        selectedTreatments={treatmentList.filter(t => t.selected).map(t => {
+          const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
+          const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
+          const currentSessions = t.sessions === '' ? 0 : Number(t.sessions);
+          const currentDaily = calcDays > 0 ? (currentSessions / calcDays) : currentSessions;
+
+          let effOutdoorDaily = t.outdoorSessions !== undefined ? t.outdoorSessions : 1;
+          let effIndoorDaily = t.indoorSessions !== undefined ? t.indoorSessions : 1;
+
+          if (patientTreatmentMode === 'outdoor' && currentDaily > 0) {
+            effOutdoorDaily = currentDaily;
+          } else if (patientTreatmentMode === 'indoor' && currentDaily > 0) {
+            effIndoorDaily = currentDaily;
+          } else if (patientTreatmentMode === '' && currentDaily > 0) {
+            effOutdoorDaily = currentDaily;
+            effIndoorDaily = currentDaily;
+          }
+
+          return {
+            ...t,
+            outdoorSessions: effOutdoorDaily,
+            indoorSessions: effIndoorDaily,
+          };
+        })}
         selectedAdditionalTreatments={additionalTreatmentList.filter(t => t.selected)}
         allIndoorServices={indoorServiceList}
         initialFoodChargeSelected={foodChargeSelected}

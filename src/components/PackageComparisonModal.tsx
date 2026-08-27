@@ -511,9 +511,14 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                 const effCost = getEffectiveTreatmentUnitCost(t, false);
                 const isFree = effCost === 0;
                 const nameHasFree = (t.treatmentName || '').toLowerCase().includes('free');
+                const outSess = t.outdoorSessions !== undefined ? t.outdoorSessions : 1;
+                const inSess = t.indoorSessions !== undefined ? t.indoorSessions : 1;
+                const sessionLabel = outSess === inSess 
+                  ? (outSess > 1 ? `${outSess} sess/day` : '') 
+                  : `Out: ${outSess}/d, In: ${inSess}/d`;
                 return (
                   <span key={t.id} className="bg-white text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md text-[11px] font-medium shadow-2xs">
-                    ✓ {t.treatmentName} {isFree ? (nameHasFree ? '(0 BDT)' : '(FREE)') : `(${effCost} BDT)`}
+                    ✓ {t.treatmentName} {sessionLabel ? `(${sessionLabel})` : ''} {isFree ? (nameHasFree ? '(0 BDT)' : '(FREE)') : `(${effCost} BDT)`}
                   </span>
                 );
               })}
@@ -1046,9 +1051,14 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               const effCost = getEffectiveTreatmentUnitCost(t, false);
               const isFree = effCost === 0;
               const nameHasFree = (t.treatmentName || '').toLowerCase().includes('free');
+              const outSess = t.outdoorSessions !== undefined ? t.outdoorSessions : 1;
+              const inSess = t.indoorSessions !== undefined ? t.indoorSessions : 1;
+              const sessionLabel = outSess === inSess 
+                ? (outSess > 1 ? `${outSess} sess/day` : '') 
+                : `Out: ${outSess}/d, In: ${inSess}/d`;
               return (
                 <span key={t.id} className="bg-white text-emerald-900 border border-emerald-300 px-2 py-0.5 rounded font-medium">
-                  ✓ {t.treatmentName} {isFree ? (nameHasFree ? '(0 BDT/session)' : '(FREE)') : `(${effCost} BDT/session)`}
+                  ✓ {t.treatmentName} {sessionLabel ? `(${sessionLabel})` : ''} {isFree ? (nameHasFree ? '(0 BDT/session)' : '(FREE)') : `(${effCost} BDT/session)`}
                 </span>
               );
             })
