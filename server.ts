@@ -844,18 +844,31 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin',
 app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
   const query = String(req.query.q || '').trim();
   const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
+  const dateFilter = req.query.date ? String(req.query.date).trim() : '';
 
   if (!query) {
-    // If no query, return recent patients with limit
+    // If no query, return recent patients with limit (and optional date filter)
     if (isMySqlActive && mysqlPool) {
       try {
-        const [rows]: any = await mysqlPool.execute(`SELECT * FROM patients ORDER BY createdAt DESC, id DESC LIMIT ${limit}`);
+        let queryStr = 'SELECT * FROM patients';
+        const queryParams: any[] = [];
+        if (dateFilter && dateFilter !== 'all') {
+          queryStr += ' WHERE appointmentDate = ?';
+          queryParams.push(dateFilter);
+        }
+        queryStr += ' ORDER BY createdAt DESC, id DESC LIMIT ?';
+        queryParams.push(String(limit));
+        const [rows]: any = await mysqlPool.execute(queryStr, queryParams);
         return res.json(rows || []);
       } catch (err) {
         console.error('MySQL recent patients error:', err);
       }
     }
-    return res.json(localData.patients.slice(0, limit));
+    let fallback = localData.patients;
+    if (dateFilter && dateFilter !== 'all') {
+      fallback = fallback.filter(p => p.appointmentDate === dateFilter);
+    }
+    return res.json(fallback.slice(0, limit));
   }
 
   // Bengali to English digit mapping
@@ -867,6 +880,7 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
 
   const cleanQuery = convertBnToEn(query.toLowerCase());
   const queryDigits = convertBnToEn(query).replace(/\D/g, '');
+  const queryDigitsNoZero = queryDigits.replace(/^0+/, '');
 
   let results: any[] = [];
   const seenIds = new Set<string>();
@@ -877,18 +891,39 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
       const searchParam = `%${cleanQuery}%`;
       const digitParam = queryDigits.length >= 3 ? `%${queryDigits}%` : searchParam;
 
-      const [rows]: any = await mysqlPool.execute(
-        `SELECT * FROM patients 
-         WHERE name LIKE ? 
+      let whereClause = `(name LIKE ? 
             OR phone LIKE ? 
             OR serialNo = ? 
+            OR serialNo = ?
             OR serialNo LIKE ? 
             OR doctorName LIKE ? 
             OR notes LIKE ? 
-            OR remark LIKE ?
+            OR remark LIKE ?)`;
+      
+      const queryParams = [
+        searchParam, 
+        digitParam, 
+        cleanQuery, 
+        queryDigitsNoZero || cleanQuery,
+        `%${cleanQuery}%`, 
+        searchParam, 
+        searchParam, 
+        searchParam
+      ];
+
+      if (dateFilter && dateFilter !== 'all') {
+        whereClause = `appointmentDate = ? AND ${whereClause}`;
+        queryParams.unshift(dateFilter);
+      }
+
+      queryParams.push(String(limit));
+
+      const [rows]: any = await mysqlPool.execute(
+        `SELECT * FROM patients 
+         WHERE ${whereClause}
          ORDER BY createdAt DESC 
          LIMIT ?`,
-        [searchParam, digitParam, cleanQuery, `%${cleanQuery}%`, searchParam, searchParam, searchParam, String(limit)]
+        queryParams
       );
 
       if (Array.isArray(rows)) {
@@ -908,16 +943,28 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
   const queryNoZero = queryDigits.replace(/^0+/, '');
   for (const p of localData.patients) {
     if (!p || seenIds.has(p.id)) continue;
+    if (dateFilter && dateFilter !== 'all' && p.appointmentDate && p.appointmentDate !== dateFilter) {
+      continue;
+    }
+
     const name = convertBnToEn(String(p.name || '').toLowerCase());
     const phone = convertBnToEn(String(p.phone || '').toLowerCase());
     const phoneDigits = phone.replace(/\D/g, '');
     const phoneNoZero = phoneDigits.replace(/^0+/, '');
-    const serial = String(p.serialNo || '').toLowerCase();
+    const serial = String(p.serialNo || '').trim().toLowerCase();
+    const serialNoZero = serial.replace(/^0+/, '');
     const notes = convertBnToEn(String(p.notes || p.remark || '').toLowerCase());
     const doctor = convertBnToEn(String(p.doctorName || '').toLowerCase());
 
     let isMatch = false;
-    if (name.includes(cleanQuery) || phone.includes(cleanQuery) || serial === cleanQuery || notes.includes(cleanQuery) || doctor.includes(cleanQuery)) {
+    if (
+      name.includes(cleanQuery) || 
+      phone.includes(cleanQuery) || 
+      serial === cleanQuery || 
+      (queryNoZero && serialNoZero === queryNoZero) ||
+      notes.includes(cleanQuery) || 
+      doctor.includes(cleanQuery)
+    ) {
       isMatch = true;
     } else if (queryDigits.length >= 3) {
       if (phoneDigits.includes(queryDigits) || (queryNoZero.length >= 3 && phoneDigits.includes(queryNoZero))) isMatch = true;

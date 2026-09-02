@@ -226,10 +226,14 @@ export const fetchPatientsApi = async (options?: { limit?: number; offset?: numb
   return getPatientsLocal();
 };
 
-export const searchPatientsLiveApi = async (query: string, limit = 50): Promise<Patient[]> => {
+export const searchPatientsLiveApi = async (query: string, limit = 50, date?: string): Promise<Patient[]> => {
   if (!query || !query.trim()) return [];
   try {
-    const res = await fetch(`/api/patients/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`, {
+    let url = `/api/patients/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`;
+    if (date && date !== 'all') {
+      url += `&date=${encodeURIComponent(date)}`;
+    }
+    const res = await fetch(url, {
       headers: getAuthHeader()
     });
     if (res.ok) {

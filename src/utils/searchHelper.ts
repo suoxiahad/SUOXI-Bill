@@ -100,11 +100,18 @@ export function matchPatient(
     }
   }
 
-  // 3. Check Serial Number (Exact or contains query, e.g. '#211' or '211' or '1')
+  // 3. Check Serial Number (Exact, stripped leading zeros, e.g. '#01', '1', '০১')
   if (patient.serialNo !== undefined && patient.serialNo !== null && patient.serialNo !== '') {
-    const serialStr = String(patient.serialNo).toLowerCase().replace(/^#/, '');
-    const cleanQuerySerial = rawQuery.replace(/^#/, '');
-    if (serialStr === cleanQuerySerial || (cleanQuerySerial.length >= 2 && serialStr.includes(cleanQuerySerial))) {
+    const rawSerial = convertBengaliToEnglishDigits(String(patient.serialNo)).toLowerCase().trim().replace(/^#/, '');
+    const cleanQuerySerial = convertBengaliToEnglishDigits(rawQuery).toLowerCase().trim().replace(/^#/, '');
+    const serialNoZero = rawSerial.replace(/^0+/, '');
+    const querySerialNoZero = cleanQuerySerial.replace(/^0+/, '');
+
+    if (
+      rawSerial === cleanQuerySerial || 
+      (querySerialNoZero && serialNoZero === querySerialNoZero) ||
+      (cleanQuerySerial.length >= 2 && rawSerial.includes(cleanQuerySerial))
+    ) {
       return true;
     }
   }
