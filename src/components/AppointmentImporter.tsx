@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   FileText, 
   Upload, 
@@ -21,15 +21,21 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Filter,
+  CheckSquare,
+  Square,
+  ShieldCheck,
+  FileX
 } from 'lucide-react';
-import { Patient } from '../types';
+import { Patient, InvoiceQuotation } from '../types';
 import { parseExcelAppointmentFile, downloadSampleExcelTemplate, ParsedExcelPatient } from '../utils/excelHelper';
 import { importPatientsFromExcelApi, deletePatientsApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
 
 interface AppointmentImporterProps {
   patients: Patient[];
+  quotations?: InvoiceQuotation[];
   onRefreshPatients: () => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
   onOpenAddPatient: () => void;
@@ -37,6 +43,7 @@ interface AppointmentImporterProps {
 
 export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   patients,
+  quotations = [],
   onRefreshPatients,
   onSelectPatientForQuotation,
   onOpenAddPatient
@@ -44,6 +51,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('all');
+  const [activeSubTab, setActiveSubTab] = useState<'all' | 'no-quotation'>('all');
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -58,10 +66,11 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
 
-  // Reset page to 1 whenever search query or date filter changes
+  // Reset page to 1 whenever search query, sub-tab or date filter changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterText, selectedDateFilter]);
+    setSelectedPatientIds([]);
+  }, [filterText, selectedDateFilter, activeSubTab]);
 
   const handleConfirmDelete = async () => {
     if (selectedPatientIds.length === 0) return;
@@ -181,7 +190,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     setIsProcessing(true);
     setUploadMessage({
       type: 'info',
-      text: `Importing ${selectedRecords.length} appointment records for date ${formatDateDisplay(selectedDate)} into database... Please wait.`
+      text: `Directly writing ${selectedRecords.length} appointment records for date ${formatDateDisplay(selectedDate)} to database... (0/${selectedRecords.length})`
     });
 
     try {
@@ -190,12 +199,17 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         appointmentDate: selectedDate
       }));
 
-      const summary = await importPatientsFromExcelApi(recordsToSave);
+      const summary = await importPatientsFromExcelApi(recordsToSave, (processed, total) => {
+        setUploadMessage({
+          type: 'info',
+          text: `Writing to database: ${processed} of ${total} records confirmed...`
+        });
+      });
       onRefreshPatients();
 
       setUploadMessage({
         type: 'success',
-        text: `Successfully imported ${summary.added} appointment records into database for appointment date (${formatDateDisplay(selectedDate)})!`
+        text: `Successfully imported ${summary.added + summary.updated} appointment records directly into database for date (${formatDateDisplay(selectedDate)})! All connected doctors can now search them instantly.`
       });
 
       // Clear preview after saving to prevent accidental re-imports
@@ -227,7 +241,37 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     }
   };
 
+  // Create a fast lookup set of patient IDs and phone numbers that already have quotations
+  const patientsWithQuotationsSet = useMemo(() => {
+    const idSet = new Set<string>();
+    const phoneSet = new Set<string>();
+    quotations.forEach(q => {
+      if (q.patientId) idSet.add(q.patientId);
+      if (q.patientPhone) phoneSet.add(String(q.patientPhone).trim().replace(/\D/g, ''));
+    });
+    return { idSet, phoneSet };
+  }, [quotations]);
+
+  const isPatientWithoutQuotation = (p: Patient) => {
+    if (p.status === 'Quotation Created' || p.status === 'Treatment Ongoing' || p.status === 'Completed') {
+      return false;
+    }
+    if (patientsWithQuotationsSet.idSet.has(p.id)) return false;
+    const cleanP = String(p.phone || '').trim().replace(/\D/g, '');
+    if (cleanP && cleanP.length >= 7 && patientsWithQuotationsSet.phoneSet.has(cleanP)) return false;
+    return true;
+  };
+
+  // Compute counts for the tabs
+  const noQuotationCountTotal = useMemo(() => {
+    return patients.filter(isPatientWithoutQuotation).length;
+  }, [patients, patientsWithQuotationsSet]);
+
   const filteredPatients = patients.filter(p => {
+    if (activeSubTab === 'no-quotation') {
+      if (!isPatientWithoutQuotation(p)) return false;
+    }
+
     const matchesText = matchPatient(filterText, p);
 
     const matchesDate = 
@@ -460,21 +504,101 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
       {/* Patient Database List */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
         
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+        {/* Sub-Tabs: All Patients vs No Quotation Created */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+          <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl w-fit">
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('all')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeSubTab === 'all'
+                  ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <User className="w-3.5 h-3.5 text-emerald-600" />
+              <span>All Registered Patients</span>
+              <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
+                {patients.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('no-quotation')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeSubTab === 'no-quotation'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-amber-700 hover:text-amber-900 hover:bg-amber-50'
+              }`}
+            >
+              <FileX className="w-3.5 h-3.5" />
+              <span>No Quotation Created</span>
+              <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold ${
+                activeSubTab === 'no-quotation'
+                  ? 'bg-amber-700 text-amber-100'
+                  : 'bg-amber-100 text-amber-800'
+              }`}>
+                {noQuotationCountTotal}
+              </span>
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-500 font-medium">
+            {activeSubTab === 'no-quotation' ? (
+              <span className="text-amber-700 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>Unused appointment entries that have no financial/treatment quotation.</span>
+              </span>
+            ) : (
+              <span>Select any patient below to generate quotation or manage records.</span>
+            )}
+          </div>
+        </div>
+
+        {/* Action Toolbar & Filters */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
           <div>
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-              <User className="w-4 h-4 text-emerald-600" />
-              <span>Registered Patients ({filteredPatients.length} of {patients.length})</span>
+              <span>
+                {activeSubTab === 'no-quotation' ? 'Unused Appointments List' : 'Patient List'} ({filteredPatients.length} shown)
+              </span>
               {selectedPatientIds.length > 0 && (
                 <span className="ml-2 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                   {selectedPatientIds.length} Selected
                 </span>
               )}
             </h3>
-            <p className="text-[11px] text-slate-500">Select any patient below to open the Quotation Builder</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            {/* Quick Bulk Select Button for No Quotation Tab */}
+            {activeSubTab === 'no-quotation' && filteredPatients.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedPatientIds.length === filteredPatients.length) {
+                    setSelectedPatientIds([]);
+                  } else {
+                    setSelectedPatientIds(filteredPatients.map(p => p.id));
+                  }
+                }}
+                className="text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+              >
+                {selectedPatientIds.length === filteredPatients.length ? (
+                  <>
+                    <Square className="w-3.5 h-3.5" />
+                    <span>Deselect All</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Select All in this View ({filteredPatients.length})</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {selectedPatientIds.length > 0 && (
               <button
                 type="button"
@@ -482,7 +606,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                 className="text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Delete Selected ({selectedPatientIds.length})</span>
+                <span>
+                  {activeSubTab === 'no-quotation' ? 'Clean / Delete Selected' : 'Delete Selected'} ({selectedPatientIds.length})
+                </span>
               </button>
             )}
 
@@ -519,15 +645,40 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
           </div>
         </div>
 
+        {/* Helpful Info Alert for No Quotation Tab */}
+        {activeSubTab === 'no-quotation' && (
+          <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-3 flex items-center justify-between text-xs text-amber-900 gap-2">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                <strong>Safe Database Clean-up:</strong> Only patients without any quotation are listed here. Deleting from this tab will keep all generated quotations and medical records 100% safe.
+              </span>
+            </div>
+            {filteredPatients.length > 0 && selectedPatientIds.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedPatientIds(filteredPatients.map(p => p.id))}
+                className="shrink-0 text-xs font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
+              >
+                Select all {filteredPatients.length} to clean
+              </button>
+            )}
+          </div>
+        )}
+
         {filteredPatients.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs space-y-2">
-            <p>No registered patients found for the selected date or search filter.</p>
+            <p>
+              {activeSubTab === 'no-quotation' 
+                ? 'All patients in this view already have quotations created! No unused entries found.'
+                : 'No registered patients found for the selected date or search filter.'}
+            </p>
             {selectedDateFilter !== 'all' && (
               <button
                 onClick={() => setSelectedDateFilter('all')}
                 className="text-emerald-700 font-bold underline hover:text-emerald-800"
               >
-                Clear Date Filter to View All Patients
+                Clear Date Filter to View All Records
               </button>
             )}
           </div>

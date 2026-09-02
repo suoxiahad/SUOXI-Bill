@@ -362,86 +362,56 @@ export const deletePatientsApi = async (ids: string[]): Promise<Patient[]> => {
   return updated;
 };
 
-export const importPatientsFromExcelApi = async (newPatients: Partial<Patient>[]): Promise<{ added: number; updated: number; list: Patient[] }> => {
-  try {
-    const res = await fetch('/api/patients/import', {
-      method: 'POST',
-      headers: getAuthHeader(),
-      body: JSON.stringify({ patients: newPatients })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      savePatientsLocal(data.patients);
-      return { added: data.added, updated: data.updated, list: data.patients };
-    } else {
-      const errData = await res.json().catch(() => ({}));
-      const errorMsg = errData.error || `Server import failed (Status ${res.status})`;
-      console.warn('Excel import notice from server:', res.status, errorMsg);
-    }
-  } catch (err: any) {
-    console.warn('Backend Excel import network issue, saving locally:', err?.message || err);
+export const importPatientsFromExcelApi = async (
+  newPatients: Partial<Patient>[],
+  onProgress?: (processed: number, total: number) => void
+): Promise<{ added: number; updated: number; list: Patient[] }> => {
+  if (!Array.isArray(newPatients) || newPatients.length === 0) {
+    return { added: 0, updated: 0, list: getPatientsLocal() };
   }
 
-  // Fallback client-side logic
-  const current = getPatientsLocal();
-  let added = 0;
-  let updated = 0;
-  const todayStr = new Date().toISOString().split('T')[0];
-  const newPatientsBatch: Patient[] = [];
+  const chunkSize = 100;
+  let totalAdded = 0;
+  let totalUpdated = 0;
+  let latestList: Patient[] = [];
 
-  newPatients.forEach((p, idx) => {
-    if (!p.name && !p.phone) return;
-    const rawPhone = p.phone ? String(p.phone).trim() : '';
-    const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
-    const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
+  for (let i = 0; i < newPatients.length; i += chunkSize) {
+    const chunk = newPatients.slice(i, i + chunkSize);
+    try {
+      const res = await fetch('/api/patients/import', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify({ patients: chunk })
+      });
 
-    // Only update if explicit p.id matches an existing record.
-    // Every row in the uploaded Excel represents an appointment entry - duplicate phone numbers must ALL be saved as separate appointments!
-    const existingIdx = p.id ? current.findIndex(x => x.id === p.id) : -1;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Server database rejected import batch (Status ${res.status})`);
+      }
 
-    let cleanSerial = '';
-    if (p.serialNo) {
-      const match = String(p.serialNo).match(/\b\d+\b/);
-      if (match) cleanSerial = match[0];
+      const data = await res.json();
+      totalAdded += data.added || 0;
+      totalUpdated += data.updated || 0;
+      latestList = data.patients || latestList;
+
+      if (onProgress) {
+        onProgress(Math.min(i + chunkSize, newPatients.length), newPatients.length);
+      }
+    } catch (err: any) {
+      console.error(`Database import failed at batch ${i / chunkSize + 1}:`, err);
+      throw new Error(`Direct database import failed: ${err?.message || 'Network or Database Server Error'}. Data was not stored to prevent cache discrepancies.`);
     }
-    if (!cleanSerial) {
-      cleanSerial = String(idx + 1);
-    }
+  }
 
-    const uniqueId = existingIdx >= 0
-      ? current[existingIdx].id
-      : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`);
+  // Update local memory and cache only after server database confirms 100% successful persistence
+  if (latestList && latestList.length > 0) {
+    savePatientsLocal(latestList);
+    return { added: totalAdded, updated: totalUpdated, list: latestList };
+  }
 
-    const formattedPatient: Patient = {
-      id: uniqueId,
-      serialNo: cleanSerial,
-      name: cleanName,
-      phone: cleanPhone,
-      age: p.age || '',
-      gender: p.gender || 'Other',
-      address: p.address || '',
-      doctorName: p.doctorName || 'Senior Counseling Doctor',
-      appointmentDate: p.appointmentDate || todayStr,
-      appointmentTime: p.appointmentTime || '09:00 AM',
-      department: p.department || 'Acupuncture',
-      status: p.status || 'Pending Counseling',
-      createdAt: new Date().toISOString(),
-      notes: p.remark || p.notes || '',
-      remark: p.remark || ''
-    };
-
-    if (existingIdx >= 0) {
-      current[existingIdx] = { ...current[existingIdx], ...formattedPatient };
-      updated++;
-    } else {
-      newPatientsBatch.push(formattedPatient);
-      added++;
-    }
-  });
-
-  const updatedCurrent = [...newPatientsBatch, ...current];
-  savePatientsLocal(updatedCurrent);
-  return { added, updated, list: updatedCurrent };
+  // Refetch fresh data directly from server database
+  const freshList = await fetchPatientsApi();
+  return { added: totalAdded, updated: totalUpdated, list: freshList };
 };
 
 // Quotation APIs

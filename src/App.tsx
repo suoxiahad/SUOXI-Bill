@@ -314,6 +314,7 @@ export default function App() {
             <div className={activeTab === 'appointments' ? 'block' : 'hidden'}>
               <AppointmentImporter
                 patients={patients}
+                quotations={quotations}
                 onRefreshPatients={initializeAppData}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
                 onOpenAddPatient={() => setIsAddPatientOpen(true)}

@@ -50,7 +50,8 @@ app.get('/api/logo', (_req, res) => {
   }
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Rate Limiters - Relaxed for hospital intranet multi-device usage & real-time polling
 const loginLimiter = rateLimit({
@@ -1613,6 +1614,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     message: `${added} new appointments imported, ${updated} updated.`,
     added,
     updated,
+    totalPatients: localData.patients.length,
     patients: localData.patients
   });
 });
