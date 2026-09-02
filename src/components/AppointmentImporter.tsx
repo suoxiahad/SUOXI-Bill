@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   FileText, 
   Upload, 
@@ -17,7 +17,11 @@ import {
   FileCheck,
   Table,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 import { Patient } from '../types';
 import { parseExcelAppointmentFile, downloadSampleExcelTemplate, ParsedExcelPatient } from '../utils/excelHelper';
@@ -49,6 +53,15 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   const [selectedPreviewIndexes, setSelectedPreviewIndexes] = useState<number[]>([]);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Pagination state for high-volume patient lists (2000+ records)
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
+
+  // Reset page to 1 whenever search query or date filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterText, selectedDateFilter]);
 
   const handleConfirmDelete = async () => {
     if (selectedPatientIds.length === 0) return;
@@ -224,6 +237,12 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
     return matchesText && matchesDate;
   });
+
+  const totalPatientsCount = filteredPatients.length;
+  const totalPages = Math.max(1, Math.ceil(totalPatientsCount / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const paginatedPatients = filteredPatients.slice(startIndex, startIndex + pageSize);
 
   return (
     <div className="space-y-6 print:hidden">
@@ -513,101 +532,171 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
-                <tr>
-                  <th className="px-3 py-3 w-10 text-center">
-                    <input
-                      type="checkbox"
-                      checked={filteredPatients.length > 0 && filteredPatients.every(p => selectedPatientIds.includes(p.id))}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedPatientIds(filteredPatients.map(p => p.id));
-                        } else {
-                          setSelectedPatientIds([]);
-                        }
-                      }}
-                      className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                      title="Select All"
-                    />
-                  </th>
-                  <th className="px-3 py-3 font-bold">SL No.</th>
-                  <th className="px-3 py-3 font-bold">Appt Date</th>
-                  <th className="px-4 py-3 font-bold">Patient Name</th>
-                  <th className="px-4 py-3 font-bold">Phone Number</th>
-                  <th className="px-3 py-3 font-bold">Gender / Age</th>
-                  <th className="px-4 py-3 font-bold">Remark (Disease)</th>
-                  <th className="px-3 py-3 font-bold">Status</th>
-                  <th className="px-4 py-3 font-bold text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredPatients.map((p, idx) => {
-                  const isSelected = selectedPatientIds.includes(p.id);
-                  const phoneDuplicates = patients.filter(x => x.phone === p.phone && x.phone && x.phone !== '01700000000').length;
-                  return (
-                    <tr key={p.id ? `${p.id}-${idx}` : `pat-row-${idx}`} className={`hover:bg-emerald-50/40 transition-colors ${isSelected ? 'bg-emerald-50/50' : ''}`}>
-                      <td className="px-3 py-3.5 w-10 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => {
-                            setSelectedPatientIds(prev => 
-                              prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
-                            );
-                          }}
-                          className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                        />
-                      </td>
-                      <td className="px-3 py-3.5 font-mono text-slate-500 font-bold">
-                        {p.serialNo || idx + 1}
-                      </td>
-                      <td className="px-3 py-3.5 font-medium text-emerald-800 whitespace-nowrap text-[11px]">
-                        <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md font-semibold text-emerald-900">
-                          {p.appointmentDate ? formatDateDisplay(p.appointmentDate) : 'Today'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 font-bold text-slate-900">
-                        {p.name}
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-slate-700">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span>{p.phone}</span>
-                          {phoneDuplicates > 1 && (
-                            <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded-md border border-purple-200" title={`${phoneDuplicates} appointments registered under this mobile number`}>
-                              {phoneDuplicates} Appts
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3.5 text-slate-600 whitespace-nowrap">
-                        {p.gender || 'Male'} • {p.age ? `${p.age} Yrs` : 'N/A'}
-                      </td>
-                      <td className="px-4 py-3.5 text-slate-600 max-w-xs truncate">
-                        {p.remark || p.notes || 'General Assessment'}
-                      </td>
-                      <td className="px-3 py-3.5">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap ${
-                          p.status === 'Quotation Created' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {p.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 text-right">
-                        <button
-                          onClick={() => onSelectPatientForQuotation(p)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow transition cursor-pointer flex items-center gap-1 ml-auto whitespace-nowrap"
-                        >
-                          <span>Create Quotation</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="px-3 py-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={filteredPatients.length > 0 && filteredPatients.every(p => selectedPatientIds.includes(p.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedPatientIds(filteredPatients.map(p => p.id));
+                          } else {
+                            setSelectedPatientIds([]);
+                          }
+                        }}
+                        className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                        title="Select All"
+                      />
+                    </th>
+                    <th className="px-3 py-3 font-bold">SL No.</th>
+                    <th className="px-3 py-3 font-bold">Appt Date</th>
+                    <th className="px-4 py-3 font-bold">Patient Name</th>
+                    <th className="px-4 py-3 font-bold">Phone Number</th>
+                    <th className="px-3 py-3 font-bold">Gender / Age</th>
+                    <th className="px-4 py-3 font-bold">Remark (Disease)</th>
+                    <th className="px-3 py-3 font-bold">Status</th>
+                    <th className="px-4 py-3 font-bold text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {paginatedPatients.map((p, idx) => {
+                    const isSelected = selectedPatientIds.includes(p.id);
+                    const phoneDuplicates = patients.filter(x => x.phone === p.phone && x.phone && x.phone !== '01700000000').length;
+                    const itemDisplayIndex = startIndex + idx + 1;
+                    return (
+                      <tr key={p.id ? `${p.id}-${itemDisplayIndex}` : `pat-row-${itemDisplayIndex}`} className={`hover:bg-emerald-50/40 transition-colors ${isSelected ? 'bg-emerald-50/50' : ''}`}>
+                        <td className="px-3 py-3.5 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setSelectedPatientIds(prev => 
+                                prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
+                              );
+                            }}
+                            className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                          />
+                        </td>
+                        <td className="px-3 py-3.5 font-mono text-slate-500 font-bold">
+                          {p.serialNo || itemDisplayIndex}
+                        </td>
+                        <td className="px-3 py-3.5 font-medium text-emerald-800 whitespace-nowrap text-[11px]">
+                          <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md font-semibold text-emerald-900">
+                            {p.appointmentDate ? formatDateDisplay(p.appointmentDate) : 'Today'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3.5 font-bold text-slate-900">
+                          {p.name}
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-slate-700">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{p.phone}</span>
+                            {phoneDuplicates > 1 && (
+                              <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded-md border border-purple-200" title={`${phoneDuplicates} appointments registered under this mobile number`}>
+                                {phoneDuplicates} Appts
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3.5 text-slate-600 whitespace-nowrap">
+                          {p.gender || 'Male'} • {p.age ? `${p.age} Yrs` : 'N/A'}
+                        </td>
+                        <td className="px-4 py-3.5 text-slate-600 max-w-xs truncate">
+                          {p.remark || p.notes || 'General Assessment'}
+                        </td>
+                        <td className="px-3 py-3.5">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap ${
+                            p.status === 'Quotation Created' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {p.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3.5 text-right">
+                          <button
+                            onClick={() => onSelectPatientForQuotation(p)}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow transition cursor-pointer flex items-center gap-1 ml-auto whitespace-nowrap"
+                          >
+                            <span>Create Quotation</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination Controls */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-3 text-slate-600 font-medium">
+                <span>
+                  Showing <strong className="text-slate-900">{totalPatientsCount > 0 ? startIndex + 1 : 0}</strong> - <strong className="text-slate-900">{Math.min(startIndex + pageSize, totalPatientsCount)}</strong> of <strong className="text-slate-900">{totalPatientsCount}</strong> patients
+                </span>
+                <div className="flex items-center gap-1.5 border-l border-slate-300 pl-3">
+                  <span className="text-[11px] text-slate-500">Per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                  </select>
+                </div>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1 self-end sm:self-auto">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={safeCurrentPage <= 1}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    title="First Page"
+                  >
+                    <ChevronsLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={safeCurrentPage <= 1}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    title="Previous Page"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  
+                  <span className="px-3 py-1 bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 rounded-lg text-xs">
+                    Page {safeCurrentPage} of {totalPages}
+                  </span>
+
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    title="Next Page"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    title="Last Page"
+                  >
+                    <ChevronsRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

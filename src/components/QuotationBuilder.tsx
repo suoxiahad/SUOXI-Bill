@@ -395,20 +395,20 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       return;
     }
 
-    // 1. Instant local search
+    // 1. Instant local/in-memory search
     const localMatches = allKnownPatients.filter(p => matchPatient(val, p));
     setMatchingPatients(localMatches);
     setIsPatientDropdownOpen(localMatches.length > 0);
 
-    // 2. Debounced background live server search for newly imported patients
+    // 2. Debounced background live server search for database entries
     if (searchDebounceTimer.current) {
       clearTimeout(searchDebounceTimer.current);
     }
 
-    if (val.trim().length >= 3) {
+    if (val.trim().length >= 2) {
       searchDebounceTimer.current = setTimeout(async () => {
         try {
-          const liveResults = await searchPatientsLiveApi(val);
+          const liveResults = await searchPatientsLiveApi(val, 50);
           if (Array.isArray(liveResults) && liveResults.length > 0) {
             setMatchingPatients(prev => {
               const map = new Map<string, Patient>();
@@ -422,7 +422,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         } catch {
           // ignore
         }
-      }, 300);
+      }, 150);
     }
   };
 
@@ -447,16 +447,12 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     // 1. Check local known list
     let matched = allKnownPatients.filter(p => matchPatient(phoneSearch, p));
 
-    // 2. If not found or if user explicitly clicked search, query live backend
+    // 2. If not found or if user explicitly clicked search, query live backend fast
     if (matched.length === 0) {
       try {
-        const liveResults = await searchPatientsLiveApi(phoneSearch);
+        const liveResults = await searchPatientsLiveApi(phoneSearch, 50);
         if (Array.isArray(liveResults) && liveResults.length > 0) {
           matched = liveResults;
-        } else {
-          // Try fetching fresh full list
-          const fullList = await fetchPatientsApi();
-          matched = (fullList || []).filter(p => matchPatient(phoneSearch, p));
         }
       } catch (err) {
         console.warn('Live search error:', err);

@@ -177,14 +177,48 @@ export const fetchInitApi = async (): Promise<InitDataResponse | null> => {
   };
 };
 
-// Patient APIs
-export const fetchPatientsApi = async (): Promise<Patient[]> => {
+// In-memory runtime cache for high-volume patient support (bypasses 5MB localStorage limit)
+let inMemoryPatients: Patient[] = [];
+let inMemoryQuotations: InvoiceQuotation[] = [];
+
+export interface PatientSummary {
+  count: number;
+  latestCreatedAt: string;
+  latestId: string;
+  timestamp: number;
+}
+
+export const fetchPatientsSummaryApi = async (): Promise<PatientSummary | null> => {
   try {
-    const res = await fetch('/api/patients', { headers: getAuthHeader() });
+    const res = await fetch('/api/patients/summary', { headers: getAuthHeader() });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    // ignore
+  }
+  return null;
+};
+
+// Patient APIs
+export const fetchPatientsApi = async (options?: { limit?: number; offset?: number; date?: string }): Promise<Patient[]> => {
+  try {
+    let url = '/api/patients';
+    if (options) {
+      const params = new URLSearchParams();
+      if (options.limit) params.set('limit', String(options.limit));
+      if (options.offset) params.set('offset', String(options.offset));
+      if (options.date) params.set('date', options.date);
+      url += `?${params.toString()}`;
+    }
+
+    const res = await fetch(url, { headers: getAuthHeader() });
     if (res.ok) {
       const data = await res.json();
-      savePatientsLocal(data);
-      return data;
+      if (Array.isArray(data)) {
+        savePatientsLocal(data);
+        return data;
+      }
     }
   } catch (err) {
     console.warn('API fetch failed, reading local cache:', err);
@@ -192,18 +226,20 @@ export const fetchPatientsApi = async (): Promise<Patient[]> => {
   return getPatientsLocal();
 };
 
-export const searchPatientsLiveApi = async (query: string): Promise<Patient[]> => {
+export const searchPatientsLiveApi = async (query: string, limit = 50): Promise<Patient[]> => {
   if (!query || !query.trim()) return [];
   try {
-    const res = await fetch(`/api/patients/search?q=${encodeURIComponent(query.trim())}`, {
+    const res = await fetch(`/api/patients/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`, {
       headers: getAuthHeader()
     });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        const current = getPatientsLocal();
-        const merged = mergePatientsList(data, current);
-        savePatientsLocal(merged);
+      if (Array.isArray(data)) {
+        if (data.length > 0) {
+          const current = getPatientsLocal();
+          const merged = mergePatientsList(data, current);
+          savePatientsLocal(merged);
+        }
         return data;
       }
     }
@@ -214,6 +250,10 @@ export const searchPatientsLiveApi = async (query: string): Promise<Patient[]> =
 };
 
 export const getPatientsLocal = (): Patient[] => {
+  if (inMemoryPatients.length > 0) {
+    return inMemoryPatients;
+  }
+
   try {
     const data = localStorage.getItem(PATIENTS_KEY);
     let patients: Patient[] = INITIAL_PATIENTS;
@@ -231,6 +271,7 @@ export const getPatientsLocal = (): Patient[] => {
       seen.add(id);
       uniquePatients.push({ ...p, id });
     });
+    inMemoryPatients = uniquePatients;
     return uniquePatients;
   } catch (err) {
     return INITIAL_PATIENTS;
@@ -238,10 +279,21 @@ export const getPatientsLocal = (): Patient[] => {
 };
 
 export const savePatientsLocal = (patients: Patient[]): void => {
+  if (!Array.isArray(patients)) return;
+  // Always keep all patients intact in active memory
+  inMemoryPatients = patients;
+
   try {
     localStorage.setItem(PATIENTS_KEY, JSON.stringify(patients));
-  } catch (err) {
-    console.error('Error saving local patients', err);
+  } catch (err: any) {
+    // If browser localStorage quota (5MB) is exceeded, save the top 300 recent patients as fallback
+    try {
+      const sliced = patients.slice(0, 300);
+      localStorage.setItem(PATIENTS_KEY, JSON.stringify(sliced));
+      console.warn('LocalStorage limit reached; saved top 300 recent patients to disk cache while retaining all in memory.');
+    } catch {
+      // Ignore if still failing
+    }
   }
 };
 

@@ -335,6 +335,21 @@ async function initDatabase() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
 
+      // Add database indexes for high-volume patient performance
+      const patientIndexes = [
+        "ALTER TABLE patients ADD INDEX idx_patients_name (name)",
+        "ALTER TABLE patients ADD INDEX idx_patients_serial (serialNo)",
+        "ALTER TABLE patients ADD INDEX idx_patients_date (appointmentDate)",
+        "ALTER TABLE patients ADD INDEX idx_patients_doc (doctorName)"
+      ];
+      for (const idxQuery of patientIndexes) {
+        try {
+          await pool.query(idxQuery);
+        } catch {
+          // index already exists
+        }
+      }
+
       // Exhaustive safe column migrations for existing MySQL tables
       const migrations = [
         "ALTER TABLE patients ADD COLUMN serialNo VARCHAR(32) DEFAULT ''",
@@ -754,12 +769,59 @@ app.delete('/api/users/:id', authenticateToken, requireRole('System Admin'), asy
 });
 
 // 4. Patients API & PDF Upload Parser
+app.get('/api/patients/summary', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+  let count = localData.patients.length;
+  let latestCreatedAt = localData.patients[0]?.createdAt || '';
+  let latestId = localData.patients[0]?.id || '';
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [rows]: any = await mysqlPool.execute('SELECT COUNT(*) as total, MAX(createdAt) as latestCreated, MAX(id) as latestId FROM patients');
+      if (rows && rows.length > 0) {
+        count = rows[0].total || 0;
+        latestCreatedAt = rows[0].latestCreated || '';
+        latestId = rows[0].latestId || '';
+      }
+    } catch (err) {
+      console.error('Error fetching patient summary from MySQL:', err);
+    }
+  }
+
+  res.json({
+    count,
+    latestCreatedAt,
+    latestId,
+    timestamp: Date.now()
+  });
+});
+
 app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+  const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 0;
+  const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
+  const dateFilter = req.query.date ? String(req.query.date).trim() : '';
+
   let allPatients: any[] = [...localData.patients];
   if (isMySqlActive && mysqlPool) {
     try {
-      const [rows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
-      if (Array.isArray(rows) && rows.length > 0) {
+      let queryStr = 'SELECT * FROM patients';
+      const queryParams: any[] = [];
+
+      if (dateFilter && dateFilter !== 'all') {
+        queryStr += ' WHERE appointmentDate = ?';
+        queryParams.push(dateFilter);
+      }
+
+      queryStr += ' ORDER BY createdAt DESC, id DESC';
+
+      if (limit > 0) {
+        queryStr += ` LIMIT ${limit} OFFSET ${offset || 0}`;
+      }
+
+      const [rows]: any = await mysqlPool.execute(queryStr, queryParams);
+      if (Array.isArray(rows)) {
+        if (limit > 0 || dateFilter) {
+          return res.json(rows);
+        }
         const dbIds = new Set(rows.map((r: any) => r.id));
         allPatients = [...rows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
       }
@@ -767,29 +829,36 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin',
       console.error('Error fetching patients from MySQL:', err);
     }
   }
+
+  if (dateFilter && dateFilter !== 'all') {
+    allPatients = allPatients.filter(p => p.appointmentDate === dateFilter);
+  }
+
+  if (limit > 0) {
+    allPatients = allPatients.slice(offset, offset + limit);
+  }
+
   res.json(allPatients);
 });
 
 app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
   const query = String(req.query.q || '').trim();
-  let allPatients: any[] = [...localData.patients];
-
-  if (isMySqlActive && mysqlPool) {
-    try {
-      const [rows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
-      if (Array.isArray(rows) && rows.length > 0) {
-        const dbIds = new Set(rows.map((r: any) => r.id));
-        allPatients = [...rows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
-      }
-    } catch (err) {
-      console.error('Error searching patients MySQL:', err);
-    }
-  }
+  const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
 
   if (!query) {
-    return res.json(allPatients);
+    // If no query, return recent patients with limit
+    if (isMySqlActive && mysqlPool) {
+      try {
+        const [rows]: any = await mysqlPool.execute(`SELECT * FROM patients ORDER BY createdAt DESC, id DESC LIMIT ${limit}`);
+        return res.json(rows || []);
+      } catch (err) {
+        console.error('MySQL recent patients error:', err);
+      }
+    }
+    return res.json(localData.patients.slice(0, limit));
   }
 
+  // Bengali to English digit mapping
   const bnToEnMap: Record<string, string> = {
     '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
     '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
@@ -798,10 +867,47 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
 
   const cleanQuery = convertBnToEn(query.toLowerCase());
   const queryDigits = convertBnToEn(query).replace(/\D/g, '');
-  const queryNoZero = queryDigits.replace(/^0+/, '');
 
-  const matched = allPatients.filter((p: any) => {
-    if (!p) return false;
+  let results: any[] = [];
+  const seenIds = new Set<string>();
+
+  // 1. Direct MySQL Search if active
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const searchParam = `%${cleanQuery}%`;
+      const digitParam = queryDigits.length >= 3 ? `%${queryDigits}%` : searchParam;
+
+      const [rows]: any = await mysqlPool.execute(
+        `SELECT * FROM patients 
+         WHERE name LIKE ? 
+            OR phone LIKE ? 
+            OR serialNo = ? 
+            OR serialNo LIKE ? 
+            OR doctorName LIKE ? 
+            OR notes LIKE ? 
+            OR remark LIKE ?
+         ORDER BY createdAt DESC 
+         LIMIT ?`,
+        [searchParam, digitParam, cleanQuery, `%${cleanQuery}%`, searchParam, searchParam, searchParam, String(limit)]
+      );
+
+      if (Array.isArray(rows)) {
+        rows.forEach((r: any) => {
+          if (r && r.id && !seenIds.has(r.id)) {
+            seenIds.add(r.id);
+            results.push(r);
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Error executing fast MySQL patient search:', err);
+    }
+  }
+
+  // 2. Also search in-memory/localData for any unsynced or local items
+  const queryNoZero = queryDigits.replace(/^0+/, '');
+  for (const p of localData.patients) {
+    if (!p || seenIds.has(p.id)) continue;
     const name = convertBnToEn(String(p.name || '').toLowerCase());
     const phone = convertBnToEn(String(p.phone || '').toLowerCase());
     const phoneDigits = phone.replace(/\D/g, '');
@@ -810,19 +916,22 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
     const notes = convertBnToEn(String(p.notes || p.remark || '').toLowerCase());
     const doctor = convertBnToEn(String(p.doctorName || '').toLowerCase());
 
+    let isMatch = false;
     if (name.includes(cleanQuery) || phone.includes(cleanQuery) || serial === cleanQuery || notes.includes(cleanQuery) || doctor.includes(cleanQuery)) {
-      return true;
+      isMatch = true;
+    } else if (queryDigits.length >= 3) {
+      if (phoneDigits.includes(queryDigits) || (queryNoZero.length >= 3 && phoneDigits.includes(queryNoZero))) isMatch = true;
+      if (phoneNoZero.length >= 3 && queryDigits.includes(phoneNoZero)) isMatch = true;
     }
-    if (queryDigits.length >= 3) {
-      if (phoneDigits.includes(queryDigits) || (queryNoZero.length >= 3 && phoneDigits.includes(queryNoZero))) return true;
-      if (phoneNoZero.length >= 3 && queryDigits.includes(phoneNoZero)) return true;
-      if (phoneNoZero.length >= 3 && queryNoZero.length >= 3 && (phoneNoZero.includes(queryNoZero) || queryNoZero.includes(phoneNoZero))) return true;
-      if (notes.replace(/\D/g, '').includes(queryDigits)) return true;
-    }
-    return false;
-  });
 
-  res.json(matched);
+    if (isMatch) {
+      seenIds.add(p.id);
+      results.push(p);
+      if (results.length >= limit) break;
+    }
+  }
+
+  res.json(results);
 });
 
 app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call Center', 'Billing Counter', 'Doctor'), async (req, res) => {

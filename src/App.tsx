@@ -17,6 +17,7 @@ import {
   setActiveUser,
   fetchInitApi,
   fetchPatientsApi,
+  fetchPatientsSummaryApi,
   searchPatientsLiveApi,
   getPatientsLocal,
   addOrUpdatePatientApi,
@@ -85,28 +86,45 @@ export default function App() {
     initializeAppData();
   }, [initializeAppData]);
 
-  // Periodic background sync so doctor & billing counter always have the latest appointments without refreshing
+  // Periodic background sync so doctor & billing counter always have the latest appointments without freezing or transferring heavy payloads
   useEffect(() => {
     if (!currentUser || !currentUser.token) return;
 
-    const pollPatients = async () => {
+    let lastSummaryCount = 0;
+    let lastSummaryLatestId = '';
+
+    const checkAndSyncPatients = async () => {
       if (document.hidden) return;
       try {
-        const fresh = await fetchPatientsApi();
-        if (Array.isArray(fresh) && fresh.length > 0) {
-          setPatients(fresh);
+        const summary = await fetchPatientsSummaryApi();
+        if (summary) {
+          // Only fetch full patient list if count or latest ID changed
+          if (summary.count !== lastSummaryCount || summary.latestId !== lastSummaryLatestId) {
+            lastSummaryCount = summary.count;
+            lastSummaryLatestId = summary.latestId;
+            const fresh = await fetchPatientsApi();
+            if (Array.isArray(fresh) && fresh.length > 0) {
+              setPatients(fresh);
+            }
+          }
+        } else {
+          // Fallback if summary endpoint is unavailable
+          const fresh = await fetchPatientsApi();
+          if (Array.isArray(fresh) && fresh.length > 0) {
+            setPatients(fresh);
+          }
         }
       } catch (err) {
         // silent background sync
       }
     };
 
-    const interval = setInterval(pollPatients, 8000);
-    window.addEventListener('focus', pollPatients);
+    const interval = setInterval(checkAndSyncPatients, 15000);
+    window.addEventListener('focus', checkAndSyncPatients);
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('focus', pollPatients);
+      window.removeEventListener('focus', checkAndSyncPatients);
     };
   }, [currentUser]);
 
