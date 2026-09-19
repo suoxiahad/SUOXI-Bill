@@ -150,6 +150,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   // Search patient by phone inside builder
   const [phoneSearch, setPhoneSearch] = useState('');
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(initialPatient || null);
+  const [activeComparisonQuotationId, setActiveComparisonQuotationId] = useState<string | null>(null);
 
   // Consulting / Billing Doctor Name
   const [billingDoctor, setBillingDoctor] = useState(
@@ -530,7 +531,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [treatmentSearch, setTreatmentSearch] = useState('');
   const [treatmentList, setTreatmentList] = useState<TreatmentListItem[]>([]);
   const [patientTreatmentMode, setPatientTreatmentMode] = useState<'outdoor' | 'indoor' | ''>('');
-  const [treatmentPackage, setTreatmentPackage] = useState<'30 Days' | '15 Days' | 'Per Day' | ''>('');
+  const [treatmentPackage, setTreatmentPackage] = useState<'30 Days' | '15 Days' | '7 Days' | '5 Days' | 'Per Day' | string>('');
   const [treatmentDays, setTreatmentDays] = useState<number | ''>('');
   const [bulkDiscountPercent, setBulkDiscountPercent] = useState<number | ''>('');
   const [internalShowFullTreatmentCalculation, internalSetShowFullTreatmentCalculation] = useState<boolean>(false);
@@ -637,7 +638,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   const handleApplyPackageFromComparison = (
     patientType: 'outdoor' | 'indoor',
-    packageType: '30 Days' | '15 Days' | 'Per Day',
+    packageType: '30 Days' | '15 Days' | '7 Days' | '5 Days' | 'Per Day' | string,
     days: number | '',
     discount: number,
     indoorOptions?: {
@@ -696,7 +697,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const updateDaysAndDiscount = (
     newDays: number | '',
     newDiscount: number | '',
-    newPackage?: '30 Days' | '15 Days' | 'Per Day' | '',
+    newPackage?: '30 Days' | '15 Days' | '7 Days' | '5 Days' | 'Per Day' | '' | string,
     targetMode: 'outdoor' | 'indoor' | '' = patientTreatmentMode
   ) => {
     setTreatmentDays(newDays);
@@ -808,7 +809,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }));
   };
 
-  const handlePackageSelect = (pkg: '30 Days' | '15 Days' | 'Per Day') => {
+  const handlePackageSelect = (pkg: '30 Days' | '7 Days' | '15 Days' | '5 Days' | 'Per Day' | string) => {
     let daysVal: number | '' = '';
     let discountVal: number | '' = bulkDiscountPercent;
 
@@ -819,10 +820,24 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       } else if (patientTreatmentMode === 'indoor') {
         discountVal = 30;
       }
+    } else if (pkg === '7 Days') {
+      daysVal = 7;
+      if (patientTreatmentMode === 'outdoor') {
+        discountVal = 15;
+      } else if (patientTreatmentMode === 'indoor') {
+        discountVal = 30;
+      }
     } else if (pkg === '15 Days') {
       daysVal = 15;
       if (patientTreatmentMode === 'outdoor') {
         discountVal = 25;
+      } else if (patientTreatmentMode === 'indoor') {
+        discountVal = 30;
+      }
+    } else if (pkg === '5 Days') {
+      daysVal = 5;
+      if (patientTreatmentMode === 'outdoor') {
+        discountVal = 0;
       } else if (patientTreatmentMode === 'indoor') {
         discountVal = 30;
       }
@@ -944,8 +959,14 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     if (treatmentPackage === '30 Days') {
       if (newMode === 'outdoor') newDiscountVal = 35;
       else if (newMode === 'indoor') newDiscountVal = 30;
+    } else if (treatmentPackage === '7 Days') {
+      if (newMode === 'outdoor') newDiscountVal = 15;
+      else if (newMode === 'indoor') newDiscountVal = 30;
     } else if (treatmentPackage === '15 Days') {
       if (newMode === 'outdoor') newDiscountVal = 25;
+      else if (newMode === 'indoor') newDiscountVal = 30;
+    } else if (treatmentPackage === '5 Days') {
+      if (newMode === 'outdoor') newDiscountVal = 0;
       else if (newMode === 'indoor') newDiscountVal = 30;
     } else if (treatmentPackage === 'Per Day') {
       if (newMode === 'outdoor') newDiscountVal = 0;
@@ -2089,6 +2110,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setPaymentPlanMode('10_day_cycles');
     setPaymentPhases([]);
     setSavedComparisonSnapshot(null);
+    setActiveComparisonQuotationId(null);
     setIsSaved(false);
     setIsDraftRestored(false);
 
@@ -3009,6 +3031,44 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     clearFormAndDraftState();
   };
 
+  // Called when user clicks "Print Comparison" inside PackageComparisonModal
+  // Automatically saves 1st/current quotation before triggering print
+  const handleSaveBeforeComparisonPrint = async () => {
+    let targetPatient = selectedPatient;
+    if (!targetPatient) {
+      const fallbackName = phoneSearch ? `Patient (${phoneSearch})` : 'Walk-in Patient';
+      const fallbackPhone = phoneSearch || '01700000000';
+      targetPatient = {
+        id: `patient-${Date.now()}`,
+        name: fallbackName,
+        phone: fallbackPhone,
+        status: 'Quotation Created',
+        createdAt: new Date().toISOString()
+      };
+      setSelectedPatient(targetPatient);
+    }
+
+    const quot = generateQuotationData();
+    if (!quot.patientName) {
+      quot.patientName = targetPatient.name || 'Walk-in Patient';
+    }
+    if (!quot.patientPhone) {
+      quot.patientPhone = targetPatient.phone || '';
+    }
+
+    // Reuse ID if already saved in current comparison session to avoid duplicate invoices
+    if (!editingQuotation && activeComparisonQuotationId) {
+      quot.id = activeComparisonQuotationId;
+    } else if (!editingQuotation) {
+      setActiveComparisonQuotationId(quot.id);
+    }
+
+    await onSaveQuotation(quot);
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 3000);
+    return true;
+  };
+
   return (
     <>
       <div className="space-y-8 print:hidden">
@@ -3471,7 +3531,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   Treatment Package:
                 </label>
                 <div className="flex items-center gap-1.5" title={!patientTreatmentMode ? "Please select Outdoor or Indoor Patient type first" : ""}>
-                  {(['30 Days', '15 Days', 'Per Day'] as const).map((pkg) => {
+                  {(['30 Days', '7 Days', '15 Days', '5 Days', 'Per Day'] as const).map((pkg) => {
                     const isSelected = treatmentPackage === pkg;
                     return (
                       <button
@@ -5289,6 +5349,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           setSavedComparisonSnapshot(comp);
         }}
         onApplyPackage={handleApplyPackageFromComparison}
+        onBeforePrint={handleSaveBeforeComparisonPrint}
       />
     </>
   );

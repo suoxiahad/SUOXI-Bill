@@ -81,6 +81,7 @@ export interface InvoiceQuotation {
   patientGender?: string;
   doctorName?: string;
   createdDate: string;
+  createdAt?: string;
   validUntil: string;
   visitNumber?: number;
   visitLabel?: string;

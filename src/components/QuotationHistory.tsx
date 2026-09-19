@@ -143,6 +143,15 @@ export function getQuotationDailyRateBreakdown(quotation: InvoiceQuotation) {
   };
 }
 
+// Helper to get local date formatted as YYYY-MM-DD
+const getTodayLocalYMD = (): string => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   quotations,
   patients,
@@ -154,9 +163,9 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   onEditQuotation
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last7' | 'thisMonth' | 'custom'>('all');
+  const [startDate, setStartDate] = useState<string>(getTodayLocalYMD);
+  const [endDate, setEndDate] = useState<string>(getTodayLocalYMD);
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last7' | 'thisMonth' | 'custom'>('today');
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 15;
 
@@ -231,10 +240,10 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     setCurrentPage(1);
   };
 
-  const isQuotationInDateRange = (qDateStr?: string) => {
+  const isQuotationInDateRange = (qDateStr?: string, qCreatedAt?: string) => {
     if (!startDate && !endDate) return true;
-    const qYmd = parseDateToYMD(qDateStr);
-    if (!qYmd) return true;
+    const qYmd = parseDateToYMD(qDateStr) || parseDateToYMD(qCreatedAt);
+    if (!qYmd) return false;
 
     if (startDate && endDate) {
       return qYmd >= startDate && qYmd <= endDate;
@@ -641,6 +650,35 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     };
   });
 
+  // Helper to extract timestamp from quotation for accurate latest-first sorting
+  const getQuotationTime = (q?: InvoiceQuotation): number => {
+    if (!q) return 0;
+    if (q.createdAt) {
+      const t = new Date(q.createdAt).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    if (q.createdDate) {
+      const t = new Date(q.createdDate).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    const match = q.id.match(/\d{10,}/);
+    if (match) {
+      const num = parseInt(match[0], 10);
+      if (!isNaN(num) && num > 0) return num;
+    }
+    return 0;
+  };
+
+  // Sort patient groups so that newest / latest entries appear first at the beginning
+  patientGroups.sort((a, b) => {
+    const timeA = getQuotationTime(a.quotations[0]);
+    const timeB = getQuotationTime(b.quotations[0]);
+    if (timeB !== timeA) {
+      return timeB - timeA;
+    }
+    return (b.quotations[0]?.id || '').localeCompare(a.quotations[0]?.id || '');
+  });
+
   // Filter groups according to search term and date range
   const filteredGroups = patientGroups.filter(g => {
     const quotationNumbers = g.quotations.map(q => q.quotationNumber);
@@ -654,14 +692,24 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     if (!matchesSearch) return false;
 
     if (startDate || endDate) {
-      return g.quotations.some(q => isQuotationInDateRange(q.createdDate));
+      return g.quotations.some(q => isQuotationInDateRange(q.createdDate, q.createdAt));
     }
 
     return true;
   });
 
-  // Flat list enriched with visit ordinal labels
-  const flatEnrichedQuotations = patientGroups.flatMap(g => g.quotations);
+  // Flat list enriched with visit ordinal labels (sorted latest first)
+  const flatEnrichedQuotations = patientGroups
+    .flatMap(g => g.quotations)
+    .sort((a, b) => {
+      const timeA = getQuotationTime(a);
+      const timeB = getQuotationTime(b);
+      if (timeB !== timeA) {
+        return timeB - timeA;
+      }
+      return (b.id || '').localeCompare(a.id || '');
+    });
+
   const filteredFlatQuotations = flatEnrichedQuotations.filter(q => {
     const matchesSearch = matchSearchQuery(searchTerm, [
       q.patientName,
@@ -673,7 +721,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     if (!matchesSearch) return false;
 
     if (startDate || endDate) {
-      return isQuotationInDateRange(q.createdDate);
+      return isQuotationInDateRange(q.createdDate, q.createdAt);
     }
 
     return true;
@@ -930,8 +978,25 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
           {filteredGroups.length === 0 ? (
             <div className="bg-white rounded-2xl p-12 text-center text-slate-500 space-y-3 border border-slate-200 shadow-sm">
               <FileText className="w-12 h-12 text-slate-300 mx-auto" />
-              <p className="font-bold text-sm text-slate-700">No Patient History Found</p>
-              <p className="text-xs text-slate-500">No matching billing or quotation records created yet.</p>
+              <p className="font-bold text-sm text-slate-700">
+                {datePreset === 'today' ? "No Quotation Records Recorded Today" : "No Patient History Found"}
+              </p>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                {datePreset === 'today'
+                  ? `No quotation or billing entries were found for today (${startDate || 'Today'}). You can quickly browse all historical patient records by clicking below.`
+                  : "No matching billing or quotation records found for selected date and search filters."}
+              </p>
+              {datePreset === 'today' && quotations.length > 0 && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleApplyDatePreset('all')}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer inline-flex items-center gap-2"
+                  >
+                    <span>View All Time Records ({quotations.length})</span>
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -1274,8 +1339,25 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
           {filteredFlatQuotations.length === 0 ? (
             <div className="p-12 text-center text-slate-500 space-y-3">
               <FileText className="w-12 h-12 text-slate-300 mx-auto" />
-              <p className="font-bold text-sm text-slate-700">No Quotations Found</p>
-              <p className="text-xs text-slate-500">No matching quotation invoices found for selected date and search filters.</p>
+              <p className="font-bold text-sm text-slate-700">
+                {datePreset === 'today' ? "No Quotations Recorded Today" : "No Quotations Found"}
+              </p>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                {datePreset === 'today'
+                  ? `No invoice records found for today (${startDate || 'Today'}). You can switch to All Time to see previous records.`
+                  : "No matching quotation invoices found for selected date and search filters."}
+              </p>
+              {datePreset === 'today' && quotations.length > 0 && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleApplyDatePreset('all')}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer inline-flex items-center gap-2"
+                  >
+                    <span>View All Time Records ({quotations.length})</span>
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -2049,6 +2131,21 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
             consultingDoctor={comparingQuotation.doctorName}
             quotationNo={comparingQuotation.quotationNumber}
             initialSavedComparison={savedComp || null}
+            onSaveComparison={(comp) => {
+              if (comparingQuotation && onUpdateQuotation) {
+                const updatedQ = {
+                  ...comparingQuotation,
+                  packageComparison: comp
+                };
+                onUpdateQuotation(updatedQ);
+              }
+            }}
+            onBeforePrint={() => {
+              if (comparingQuotation && onUpdateQuotation) {
+                onUpdateQuotation(comparingQuotation);
+              }
+              return true;
+            }}
           />
         );
       })()}

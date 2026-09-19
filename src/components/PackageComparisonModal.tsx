@@ -51,7 +51,7 @@ interface PackageComparisonModalProps {
   initialIncludeAdmissionFee?: boolean;
   initialAdmissionFee?: number;
   currentMode: 'outdoor' | 'indoor' | '' | 'individual';
-  currentPackage: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string;
+  currentPackage: '30 Days' | '15 Days' | '10 Days' | '7 Days' | '5 Days' | 'Per Day' | string;
   patientName?: string;
   patientMobile?: string;
   consultingDoctor?: string;
@@ -80,10 +80,11 @@ interface PackageComparisonModalProps {
   }) => void;
   onApplyPackage?: (
     patientType: 'outdoor' | 'indoor',
-    packageType: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string,
+    packageType: '30 Days' | '15 Days' | '10 Days' | '7 Days' | '5 Days' | 'Per Day' | string,
     days: number | '',
     discount: number
   ) => void;
+  onBeforePrint?: () => boolean | void | Promise<boolean | void>;
 }
 
 export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
@@ -105,6 +106,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   initialSavedComparison,
   onSaveComparison,
   onApplyPackage,
+  onBeforePrint,
 }) => {
   const [benchmarkDays, setBenchmarkDays] = useState<number>(30);
   const [showOutdoor, setShowOutdoor] = useState<boolean>(true);
@@ -113,9 +115,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   // Editable Days and Discount Percent for each scenario
   const [customDays, setCustomDays] = useState<Record<string, number>>({
     outdoor_30: 30,
+    outdoor_7: 7,
     outdoor_15: 15,
-    outdoor_10: 10,
-    outdoor_perday: 30,
+    outdoor_5: 5,
+    outdoor_10: 7,
+    outdoor_perday: 5,
     indoor_10: 10,
     indoor_15: 15,
     indoor_7: 7,
@@ -123,7 +127,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
   const [customDiscounts, setCustomDiscounts] = useState<Record<string, number>>({
     outdoor_30: 35,
+    outdoor_7: 15,
     outdoor_15: 25,
+    outdoor_5: 0,
     outdoor_10: 15,
     outdoor_perday: 0,
     indoor_10: 30,
@@ -179,10 +185,51 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     onClose();
   };
 
+  const [isSavingAndPrinting, setIsSavingAndPrinting] = useState<boolean>(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = async () => {
+    // 1. Snapshot and save comparison options if callback provided
+    if (onSaveComparison) {
+      try {
+        onSaveComparison({
+          showOutdoor,
+          showIndoor,
+          foodChargeSelected: initialFoodChargeSelected,
+          foodChargePerDay: initialFoodChargePerDay,
+          includeAdmissionFee: initialIncludeAdmissionFee,
+          admissionFee: initialAdmissionFee,
+          comparedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.warn('Comparison snapshot warning:', err);
+      }
+    }
+
+    // 2. Save 1st / current quotation before printing
+    if (onBeforePrint) {
+      try {
+        setIsSavingAndPrinting(true);
+        const proceed = await onBeforePrint();
+        if (proceed === false) {
+          setIsSavingAndPrinting(false);
+          return;
+        }
+        setSaveSuccessMsg('Quotation saved successfully! Opening Print...');
+      } catch (err) {
+        console.error('Error saving quotation before print:', err);
+      } finally {
+        setIsSavingAndPrinting(false);
+      }
+    }
+
+    // 3. Open browser print dialog after saving
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => setSaveSuccessMsg(null), 3500);
+    }, 200);
   };
 
   // Helper to compute effective unit cost for a treatment item (taking into account FREE items, 100% discount, fixed discounts)
@@ -271,7 +318,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     id: string;
     patientType: 'outdoor' | 'indoor';
     patientTypeLabel: string;
-    packageType: '30 Days' | '15 Days' | '10 Days' | '7 Days' | 'Per Day' | string;
+    packageType: '30 Days' | '15 Days' | '10 Days' | '7 Days' | '5 Days' | 'Per Day' | string;
     days: number;
     discountPercent: number;
     badgeText: string;
@@ -290,6 +337,16 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       badgeColor: 'bg-emerald-600 text-white',
     },
     {
+      id: 'outdoor_7',
+      patientType: 'outdoor',
+      patientTypeLabel: 'Outdoor Patient',
+      packageType: '7 Days',
+      days: customDays['outdoor_7'] ?? customDays['outdoor_10'] ?? 7,
+      discountPercent: customDiscounts['outdoor_7'] ?? customDiscounts['outdoor_10'] ?? 15,
+      badgeText: 'Weekly Choice',
+      badgeColor: 'bg-teal-600 text-white',
+    },
+    {
       id: 'outdoor_15',
       patientType: 'outdoor',
       patientTypeLabel: 'Outdoor Patient',
@@ -297,25 +354,15 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       days: customDays['outdoor_15'] ?? 15,
       discountPercent: customDiscounts['outdoor_15'] ?? 25,
       badgeText: 'Popular Choice',
-      badgeColor: 'bg-teal-600 text-white',
-    },
-    {
-      id: 'outdoor_10',
-      patientType: 'outdoor',
-      patientTypeLabel: 'Outdoor Patient',
-      packageType: '10 Days',
-      days: customDays['outdoor_10'] ?? 10,
-      discountPercent: customDiscounts['outdoor_10'] ?? 15,
-      badgeText: 'Value Choice',
       badgeColor: 'bg-cyan-700 text-white',
     },
     {
-      id: 'outdoor_perday',
+      id: 'outdoor_5',
       patientType: 'outdoor',
       patientTypeLabel: 'Outdoor Patient',
-      packageType: 'Per Day',
-      days: customDays['outdoor_perday'] ?? benchmarkDays,
-      discountPercent: customDiscounts['outdoor_perday'] ?? 0,
+      packageType: '5 Days',
+      days: customDays['outdoor_5'] ?? customDays['outdoor_perday'] ?? 5,
+      discountPercent: customDiscounts['outdoor_5'] ?? customDiscounts['outdoor_perday'] ?? 0,
       badgeText: 'Standard Rate',
       badgeColor: 'bg-slate-600 text-white',
     },
@@ -425,13 +472,20 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {saveSuccessMsg && (
+                <span className="hidden sm:inline-flex items-center gap-1.5 text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 text-[11px] font-bold px-2.5 py-1 rounded-lg animate-in fade-in">
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{saveSuccessMsg}</span>
+                </span>
+              )}
               <button
                 onClick={handlePrint}
-                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition cursor-pointer shadow-xs"
-                title="Print Comparison Sheet"
+                disabled={isSavingAndPrinting}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition cursor-pointer shadow-xs"
+                title="Save Quotation & Print Comparison Sheet"
               >
                 <Printer className="w-4 h-4" />
-                <span>Print Comparison</span>
+                <span>{isSavingAndPrinting ? 'Saving...' : 'Print Comparison'}</span>
               </button>
               <button
                 onClick={handleCloseModal}
@@ -964,12 +1018,20 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {saveSuccessMsg && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-100 border border-emerald-300 text-xs font-bold px-3 py-1.5 rounded-lg animate-in fade-in">
+                <Check className="w-3.5 h-3.5 text-emerald-700" />
+                <span>{saveSuccessMsg}</span>
+              </span>
+            )}
             <button
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition cursor-pointer shadow-xs"
+              disabled={isSavingAndPrinting}
+              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-700 text-white rounded-xl font-bold transition cursor-pointer shadow-xs"
+              title="Save Quotation & Print Comparison Sheet"
             >
               <Printer className="w-4 h-4" />
-              <span>Print Comparison</span>
+              <span>{isSavingAndPrinting ? 'Saving Quotation...' : 'Print Comparison'}</span>
             </button>
             <button
               onClick={handleCloseModal}

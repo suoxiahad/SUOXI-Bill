@@ -38,6 +38,11 @@ app.use(
   })
 );
 
+// Health Check Endpoint (For Cloud Run / Ingress Readiness)
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Serve logo asset directly
 app.get('/api/logo', (_req, res) => {
   const logoPath = path.join(process.cwd(), 'src', 'assets', 'logo.png');
@@ -95,7 +100,7 @@ const upload = multer({
   }
 });
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : (process.env.NODE_ENV === 'production' ? 3003 : 3000);
+const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'suoxi_hospital_secure_jwt_secret_key_2026_default_32char_long';
 
 // Interface definitions
@@ -1851,7 +1856,11 @@ app.use((err: any, req: any, res: any, next: any) => {
 
 // Start Server & Integrate Vite Middleware
 async function startServer() {
-  await initDatabase();
+  try {
+    await initDatabase();
+  } catch (dbErr) {
+    console.error('Database initialization warning (falling back to local DB):', dbErr);
+  }
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -1862,7 +1871,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
@@ -1872,4 +1881,6 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Fatal server startup error:', err);
+});
