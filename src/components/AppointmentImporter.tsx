@@ -50,7 +50,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [selectedDateFilter, setSelectedDateFilter] = useState<string>('all');
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'no-quotation'>('all');
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -621,11 +621,20 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                 onChange={(e) => setSelectedDateFilter(e.target.value || 'all')}
                 className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
               />
+              {selectedDateFilter !== todayStr && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDateFilter(todayStr)}
+                  className="text-[10px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 px-2 py-0.5 rounded-md ml-1 transition cursor-pointer"
+                >
+                  Today
+                </button>
+              )}
               {selectedDateFilter !== 'all' && (
                 <button
                   type="button"
                   onClick={() => setSelectedDateFilter('all')}
-                  className="text-[10px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 px-2 py-0.5 rounded-md ml-1 transition"
+                  className="text-[10px] font-bold text-slate-700 bg-slate-200 hover:bg-slate-300 px-2 py-0.5 rounded-md ml-1 transition cursor-pointer"
                 >
                   Show All
                 </button>

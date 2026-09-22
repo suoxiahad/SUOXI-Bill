@@ -25,7 +25,10 @@ import {
   saveQuotationApi,
   deleteQuotationsApi,
   getCatalogLocal,
-  saveCatalogApi
+  saveCatalogApi,
+  getStoredDataVersion,
+  setStoredDataVersion,
+  invalidateLocalCaches
 } from './utils/storage';
 import { matchPatient, matchSearchQuery } from './utils/searchHelper';
 
@@ -57,12 +60,14 @@ export default function App() {
     setShowFullIndoorCalculation(nextVal);
   };
 
-  const initializeAppData = useCallback(async () => {
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  const initializeAppData = useCallback(async (forceBypass = false) => {
     setIsLoading(true);
     const savedUser = getActiveUser();
     if (savedUser && savedUser.token) {
       setCurrentUser(savedUser);
-      const initData = await fetchInitApi();
+      const initData = await fetchInitApi(forceBypass);
       if (initData) {
         setPatients(initData.patients);
         setQuotations(initData.quotations);
@@ -86,32 +91,56 @@ export default function App() {
     initializeAppData();
   }, [initializeAppData]);
 
-  // Periodic background sync so doctor & billing counter always have the latest appointments without freezing or transferring heavy payloads
+  // Periodic background sync so doctor & billing counter always have the latest appointments, quotations, and catalog rates without manual cache clearing
   useEffect(() => {
     if (!currentUser || !currentUser.token) return;
 
     let lastSummaryCount = 0;
     let lastSummaryLatestId = '';
+    let lastQuotationsCount = 0;
+    let lastCatalogLength = 0;
+    let lastVersion = getStoredDataVersion();
 
-    const checkAndSyncPatients = async () => {
+    const checkAndSyncData = async () => {
       if (document.hidden) return;
       try {
         const summary = await fetchPatientsSummaryApi();
         if (summary) {
-          // Only fetch full patient list if count or latest ID changed
-          if (summary.count !== lastSummaryCount || summary.latestId !== lastSummaryLatestId) {
-            lastSummaryCount = summary.count;
-            lastSummaryLatestId = summary.latestId;
+          const currentStoredVersion = getStoredDataVersion();
+          const serverVer = summary.dataVersion || 0;
+
+          // If server dataVersion differs from what this client stored, server had changes (e.g. import, rate update, deletion)
+          const versionChanged = serverVer > 0 && currentStoredVersion > 0 && serverVer !== currentStoredVersion;
+          const patientsChanged = summary.count !== lastSummaryCount || summary.latestId !== lastSummaryLatestId;
+          const quotationsChanged = summary.quotationsCount !== undefined && lastQuotationsCount !== 0 && summary.quotationsCount !== lastQuotationsCount;
+          const catalogChanged = summary.catalogLength !== undefined && lastCatalogLength !== 0 && summary.catalogLength !== lastCatalogLength;
+
+          if (versionChanged || catalogChanged || quotationsChanged) {
+            // Full refresh required: reload fresh init data so treatments, prices and patients all update synchronously
+            setIsSyncing(true);
+            const freshInit = await fetchInitApi(true);
+            if (freshInit) {
+              setPatients(freshInit.patients);
+              setQuotations(freshInit.quotations);
+              setCatalog(freshInit.catalog);
+            }
+            setIsSyncing(false);
+          } else if (patientsChanged) {
+            // Patient-only change
             const fresh = await fetchPatientsApi();
-            if (Array.isArray(fresh) && fresh.length > 0) {
+            if (Array.isArray(fresh)) {
               setPatients(fresh);
             }
           }
-        } else {
-          // Fallback if summary endpoint is unavailable
-          const fresh = await fetchPatientsApi();
-          if (Array.isArray(fresh) && fresh.length > 0) {
-            setPatients(fresh);
+
+          // Update tracked checkpoints
+          lastSummaryCount = summary.count;
+          lastSummaryLatestId = summary.latestId;
+          if (summary.quotationsCount !== undefined) lastQuotationsCount = summary.quotationsCount;
+          if (summary.catalogLength !== undefined) lastCatalogLength = summary.catalogLength;
+          if (serverVer > 0) {
+            lastVersion = serverVer;
+            setStoredDataVersion(serverVer);
           }
         }
       } catch (err) {
@@ -119,12 +148,12 @@ export default function App() {
       }
     };
 
-    const interval = setInterval(checkAndSyncPatients, 15000);
-    window.addEventListener('focus', checkAndSyncPatients);
+    const interval = setInterval(checkAndSyncData, 10000);
+    window.addEventListener('focus', checkAndSyncData);
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('focus', checkAndSyncPatients);
+      window.removeEventListener('focus', checkAndSyncData);
     };
   }, [currentUser]);
 
@@ -280,6 +309,8 @@ export default function App() {
         onLogout={handleLogout}
         isAllCalculationsFull={isAllCalculationsFull}
         onToggleAllCalculations={handleToggleAllCalculations}
+        isSyncing={isSyncing}
+        onRefreshData={() => initializeAppData(true)}
       />
 
       {/* Main Container */}

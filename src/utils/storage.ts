@@ -5,6 +5,37 @@ const PATIENTS_KEY = 'suoxi_patients_db';
 const QUOTATIONS_KEY = 'suoxi_quotations_db';
 const CATALOG_KEY = 'suoxi_catalog_db';
 const AUTH_KEY = 'suoxi_auth_user';
+const DATA_VERSION_KEY = 'suoxi_data_version';
+
+export const getStoredDataVersion = (): number => {
+  try {
+    const val = localStorage.getItem(DATA_VERSION_KEY);
+    return val ? Number(val) || 0 : 0;
+  } catch {
+    return 0;
+  }
+};
+
+export const setStoredDataVersion = (version: number): void => {
+  try {
+    localStorage.setItem(DATA_VERSION_KEY, String(version));
+  } catch {
+    // ignore
+  }
+};
+
+export const invalidateLocalCaches = (): void => {
+  inMemoryPatients = [];
+  inMemoryQuotations = [];
+  try {
+    localStorage.removeItem(PATIENTS_KEY);
+    localStorage.removeItem(QUOTATIONS_KEY);
+    localStorage.removeItem(CATALOG_KEY);
+    localStorage.removeItem(DATA_VERSION_KEY);
+  } catch (err) {
+    console.warn('Failed clearing cached storage items:', err);
+  }
+};
 
 // Initial sample patient data (development only)
 const DEMO_PATIENTS_LIST: Patient[] = [
@@ -123,9 +154,10 @@ export interface InitDataResponse {
   catalog: CatalogItem[];
   users: User[];
   dbMode?: string;
+  dataVersion?: number;
 }
 
-export const fetchInitApi = async (): Promise<InitDataResponse | null> => {
+export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataResponse | null> => {
   const user = getActiveUser();
   const localPatients = getPatientsLocal();
   const localQuotations = getQuotationsLocal();
@@ -142,7 +174,8 @@ export const fetchInitApi = async (): Promise<InitDataResponse | null> => {
   }
 
   try {
-    const res = await fetch('/api/init', { headers: getAuthHeader() });
+    const url = forceBypassCache ? `/api/init?t=${Date.now()}` : '/api/init';
+    const res = await fetch(url, { headers: getAuthHeader() });
     if (res.ok) {
       const data = await res.json();
       if (data) {
@@ -156,12 +189,17 @@ export const fetchInitApi = async (): Promise<InitDataResponse | null> => {
         saveCatalogLocal(serverCatalog);
         saveUsersLocal(serverUsers);
 
+        if (data.dataVersion) {
+          setStoredDataVersion(Number(data.dataVersion));
+        }
+
         return {
           patients: serverPatients,
           quotations: serverQuotations,
           catalog: serverCatalog,
           users: serverUsers,
-          dbMode: data.dbMode
+          dbMode: data.dbMode,
+          dataVersion: data.dataVersion
         };
       }
     }
@@ -185,12 +223,15 @@ export interface PatientSummary {
   count: number;
   latestCreatedAt: string;
   latestId: string;
+  quotationsCount?: number;
+  catalogLength?: number;
+  dataVersion?: number;
   timestamp: number;
 }
 
 export const fetchPatientsSummaryApi = async (): Promise<PatientSummary | null> => {
   try {
-    const res = await fetch('/api/patients/summary', { headers: getAuthHeader() });
+    const res = await fetch(`/api/patients/summary?t=${Date.now()}`, { headers: getAuthHeader() });
     if (res.ok) {
       return await res.json();
     }

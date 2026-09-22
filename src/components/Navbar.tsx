@@ -16,7 +16,8 @@ import {
   Users,
   Receipt,
   Eye,
-  EyeOff
+  EyeOff,
+  RefreshCw
 } from 'lucide-react';
 import { User } from '../types';
 import { SuoxiLogo } from './SuoxiLogo';
@@ -33,6 +34,8 @@ interface NavbarProps {
   onLogout: () => void;
   isAllCalculationsFull?: boolean;
   onToggleAllCalculations?: () => void;
+  isSyncing?: boolean;
+  onRefreshData?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -46,7 +49,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenLoginModal,
   onLogout,
   isAllCalculationsFull,
-  onToggleAllCalculations
+  onToggleAllCalculations,
+  isSyncing = false,
+  onRefreshData
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -302,6 +307,26 @@ export const Navbar: React.FC<NavbarProps> = ({
               ) : (
                 <EyeOff className="w-4 h-4 text-amber-400 shrink-0" />
               )}
+            </button>
+          )}
+
+          {/* Real-time Data Sync & Cache Invalidation Status Button */}
+          {currentUser && onRefreshData && (
+            <button
+              type="button"
+              onClick={onRefreshData}
+              disabled={isSyncing}
+              title="Force Sync with Server: Fetches latest appointments and current catalog rates across all browsers"
+              aria-label="Refresh and sync latest data from server"
+              className={`p-2 rounded-lg transition-all cursor-pointer border shrink-0 flex items-center justify-center ${
+                !canAccessCalculationToggle ? 'ml-auto sm:ml-2' : 'ml-2'
+              } ${
+                isSyncing
+                  ? 'bg-emerald-500/30 text-emerald-300 border-emerald-500/50'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white'
+              }`}
+            >
+              <RefreshCw className={`w-4 h-4 text-emerald-400 shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
             </button>
           )}
 

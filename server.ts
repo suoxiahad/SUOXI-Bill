@@ -226,6 +226,11 @@ const DEMO_PATIENTS = [
 const INITIAL_PATIENTS: any[] = [];
 
 // Local JSON DB Helper
+let serverDataVersion = Date.now();
+function touchServerDataVersion() {
+  serverDataVersion = Date.now();
+}
+
 let localData = {
   users: INITIAL_USERS,
   patients: INITIAL_PATIENTS,
@@ -265,6 +270,7 @@ function loadLocalDb() {
 }
 
 function saveLocalDb() {
+  touchServerDataVersion();
   try {
     fs.writeFileSync(LOCAL_DB_FILE, JSON.stringify(localData, null, 2), 'utf-8');
   } catch (err) {
@@ -605,7 +611,8 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
     quotations,
     catalog,
     users,
-    dbMode: isMySqlActive ? 'MySQL Central Database' : 'Local File Persistence'
+    dbMode: isMySqlActive ? 'MySQL Central Database' : 'Local File Persistence',
+    dataVersion: serverDataVersion
   });
 });
 
@@ -797,6 +804,9 @@ app.get('/api/patients/summary', authenticateToken, requireRole('System Admin', 
     count,
     latestCreatedAt,
     latestId,
+    quotationsCount: localData.quotations.length,
+    catalogLength: localData.catalog.length,
+    dataVersion: serverDataVersion,
     timestamp: Date.now()
   });
 });

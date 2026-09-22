@@ -122,18 +122,20 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     outdoor_perday: 5,
     indoor_10: 10,
     indoor_15: 15,
-    indoor_7: 7,
+    indoor_30: 30,
+    indoor_7: 30,
   });
 
   const [customDiscounts, setCustomDiscounts] = useState<Record<string, number>>({
     outdoor_30: 35,
-    outdoor_7: 15,
+    outdoor_7: 35,
     outdoor_15: 25,
-    outdoor_5: 0,
-    outdoor_10: 15,
-    outdoor_perday: 0,
+    outdoor_5: 25,
+    outdoor_10: 35,
+    outdoor_perday: 25,
     indoor_10: 30,
     indoor_15: 30,
+    indoor_30: 30,
     indoor_7: 30,
   });
 
@@ -148,10 +150,20 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           setShowIndoor(initialSavedComparison.showIndoor);
         }
         if (initialSavedComparison.customDays) {
-          setCustomDays(prev => ({ ...prev, ...initialSavedComparison.customDays }));
+          const daysMap = { ...initialSavedComparison.customDays };
+          if (daysMap.indoor_30 === undefined) {
+            daysMap.indoor_30 = daysMap.indoor_7 && daysMap.indoor_7 !== 7 ? daysMap.indoor_7 : 30;
+          }
+          setCustomDays(prev => ({ ...prev, ...daysMap }));
         }
         if (initialSavedComparison.customDiscounts) {
-          setCustomDiscounts(prev => ({ ...prev, ...initialSavedComparison.customDiscounts }));
+          const discMap = { ...initialSavedComparison.customDiscounts };
+          if (discMap.outdoor_7 === 15) discMap.outdoor_7 = 35;
+          if (discMap.outdoor_5 === 0) discMap.outdoor_5 = 25;
+          if (discMap.indoor_30 === undefined) {
+            discMap.indoor_30 = discMap.indoor_7 ?? 30;
+          }
+          setCustomDiscounts(prev => ({ ...prev, ...discMap }));
         }
       } else {
         if (currentMode === 'outdoor') {
@@ -342,7 +354,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientTypeLabel: 'Outdoor Patient',
       packageType: '7 Days',
       days: customDays['outdoor_7'] ?? customDays['outdoor_10'] ?? 7,
-      discountPercent: customDiscounts['outdoor_7'] ?? customDiscounts['outdoor_10'] ?? 15,
+      discountPercent: customDiscounts['outdoor_7'] ?? customDiscounts['outdoor_10'] ?? 35,
       badgeText: 'Weekly Choice',
       badgeColor: 'bg-teal-600 text-white',
     },
@@ -362,7 +374,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       patientTypeLabel: 'Outdoor Patient',
       packageType: '5 Days',
       days: customDays['outdoor_5'] ?? customDays['outdoor_perday'] ?? 5,
-      discountPercent: customDiscounts['outdoor_5'] ?? customDiscounts['outdoor_perday'] ?? 0,
+      discountPercent: customDiscounts['outdoor_5'] ?? customDiscounts['outdoor_perday'] ?? 25,
       badgeText: 'Standard Rate',
       badgeColor: 'bg-slate-600 text-white',
     },
@@ -387,13 +399,13 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       badgeColor: 'bg-indigo-500 text-white',
     },
     {
-      id: 'indoor_7',
+      id: 'indoor_30',
       patientType: 'indoor',
       patientTypeLabel: 'Indoor Patient',
-      packageType: '7 Days',
-      days: customDays['indoor_7'] ?? 7,
-      discountPercent: customDiscounts['indoor_7'] ?? 30,
-      badgeText: 'Indoor 7 Days',
+      packageType: '30 Days',
+      days: customDays['indoor_30'] ?? customDays['indoor_7'] ?? 30,
+      discountPercent: customDiscounts['indoor_30'] ?? customDiscounts['indoor_7'] ?? 30,
+      badgeText: 'Indoor 30 Days',
       badgeColor: 'bg-indigo-400 text-white',
     },
   ];
@@ -1014,7 +1026,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           <div className="flex items-center gap-1.5">
             <TrendingDown className="w-4 h-4 text-emerald-600" />
             <span>
-              Tip: Outdoor 30-Day offers <strong>35% OFF</strong> treatment cost, while Indoor packages (10, 15, 7 Days) offer <strong>30% OFF</strong> treatment cost plus full room & board estimation.
+              Tip: Outdoor packages offer up to <strong>35% OFF</strong> treatment cost, while Indoor packages (10, 15, 30 Days) offer <strong>30% OFF</strong> treatment cost plus full room & board estimation.
             </span>
           </div>
           <div className="flex items-center gap-2">
