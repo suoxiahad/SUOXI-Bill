@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import { 
   Stethoscope,
   Search, 
@@ -33,6 +33,7 @@ interface ConsultationProps {
   professions?: string[];
   comments?: string[];
   onRefreshPatients: () => void;
+  onUpdatePatient?: (patient: Patient) => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
   onViewQuotation?: (quotation: InvoiceQuotation) => void;
   currentUser: UserModel | null;
@@ -44,6 +45,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
   professions = [],
   comments = [],
   onRefreshPatients,
+  onUpdatePatient,
   onSelectPatientForQuotation,
   onViewQuotation,
   currentUser
@@ -71,6 +73,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
   const [activeSubTab, setActiveSubTab] = useState<'pre' | 'post'>('pre');
   const [filterText, setFilterText] = useState('');
+  const deferredFilterText = useDeferredValue(filterText);
   const [selectedCommentFilter, setSelectedCommentFilter] = useState<string>('all');
   const [isProcessingDone, setIsProcessingDone] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -180,9 +183,9 @@ export const Consultation: React.FC<ConsultationProps> = ({
       });
     }
 
-    // Filter by search query
-    if (filterText.trim()) {
-      const query = filterText.trim().toLowerCase();
+    // Filter by search query (deferred for silky-smooth typing)
+    if (deferredFilterText.trim()) {
+      const query = deferredFilterText.trim().toLowerCase();
       result = result.filter(p => {
         return (
           p.name?.toLowerCase().includes(query) ||
@@ -203,7 +206,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
     }
 
     return result;
-  }, [patients, selectedDateFilter, activeSubTab, selectedCommentFilter, filterText]);
+  }, [patients, selectedDateFilter, activeSubTab, selectedCommentFilter, deferredFilterText]);
 
   // Pagination calculation
   const totalPatientsCount = filteredPatients.length;
@@ -214,58 +217,82 @@ export const Consultation: React.FC<ConsultationProps> = ({
     return filteredPatients.slice(startIndex, startIndex + pageSize);
   }, [filteredPatients, startIndex, pageSize]);
 
-  // Action: Update single patient profession
-  const handleUpdateProfession = async (patient: Patient, newProfession: string) => {
-    try {
-      const updated: Patient = {
-        ...patient,
-        profession: newProfession
-      };
-      await addOrUpdatePatientApi(updated);
-      onRefreshPatients();
-      setActionMessage({
-        type: 'success',
-        text: `✓ Profession updated to "${newProfession}" for ${patient.name}.`
-      });
-      setTimeout(() => setActionMessage(null), 2500);
-    } catch (err: any) {
-      console.error('Failed to update profession:', err);
+  // Action: Update single patient profession (Instant 1ms UI update + Silent background sync)
+  const handleUpdateProfession = (patient: Patient, newProfession: string) => {
+    const updated: Patient = {
+      ...patient,
+      profession: newProfession
+    };
+
+    // 1. Instant UI update in 1ms:
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
     }
+
+    setActionMessage({
+      type: 'success',
+      text: `✓ Profession updated to "${newProfession}" for ${patient.name}.`
+    });
+    setTimeout(() => setActionMessage(null), 2500);
+
+    // 2. Silent background database update:
+    addOrUpdatePatientApi(updated).catch((err: any) => {
+      console.error('Failed to update profession in background:', err);
+      if (onUpdatePatient) {
+        onUpdatePatient(patient); // rollback on error
+      }
+      setActionMessage({
+        type: 'error',
+        text: `⚠️ Could not save profession to database: ${err?.message || 'Network error'}`
+      });
+    });
   };
 
   // Custom Profession save
-  const handleSaveCustomProfession = async (patient: Patient) => {
+  const handleSaveCustomProfession = (patient: Patient) => {
     const clean = customProfessionText.trim();
     if (clean) {
-      await handleUpdateProfession(patient, clean);
+      handleUpdateProfession(patient, clean);
     }
     setCustomProfessionPatientId(null);
   };
 
-  // Action: Update single patient decision / comment
-  const handleUpdateComment = async (patient: Patient, newComment: string) => {
-    try {
-      const updated: Patient = {
-        ...patient,
-        consultationComment: newComment
-      };
-      await addOrUpdatePatientApi(updated);
-      onRefreshPatients();
-      setActionMessage({
-        type: 'success',
-        text: `✓ Decision comment "${newComment}" saved for ${patient.name}.`
-      });
-      setTimeout(() => setActionMessage(null), 2500);
-    } catch (err: any) {
-      console.error('Failed to update comment:', err);
+  // Action: Update single patient decision / comment (Instant 1ms UI update + Silent background sync)
+  const handleUpdateComment = (patient: Patient, newComment: string) => {
+    const updated: Patient = {
+      ...patient,
+      consultationComment: newComment
+    };
+
+    // 1. Instant UI update in 1ms:
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
     }
+
+    setActionMessage({
+      type: 'success',
+      text: `✓ Decision comment "${newComment}" saved for ${patient.name}.`
+    });
+    setTimeout(() => setActionMessage(null), 2500);
+
+    // 2. Silent background database update:
+    addOrUpdatePatientApi(updated).catch((err: any) => {
+      console.error('Failed to update comment in background:', err);
+      if (onUpdatePatient) {
+        onUpdatePatient(patient); // rollback on error
+      }
+      setActionMessage({
+        type: 'error',
+        text: `⚠️ Could not save comment to database: ${err?.message || 'Network error'}`
+      });
+    });
   };
 
   // Custom Comment save
-  const handleSaveCustomComment = async (patient: Patient) => {
+  const handleSaveCustomComment = (patient: Patient) => {
     const clean = customCommentText.trim();
     if (clean) {
-      await handleUpdateComment(patient, clean);
+      handleUpdateComment(patient, clean);
     }
     setCustomCommentPatientId(null);
   };
@@ -279,21 +306,25 @@ export const Consultation: React.FC<ConsultationProps> = ({
   const handleSaveDisease = async (patient: Patient) => {
     if (isSavingDisease) return;
     setIsSavingDisease(true);
-    try {
-      const clean = editingDiseaseText.trim();
-      const updated: Patient = {
-        ...patient,
-        notes: clean,
-        remark: clean
-      };
-      await addOrUpdatePatientApi(updated);
-      onRefreshPatients();
-      setEditingDiseaseId(null);
-    } catch (err) {
-      console.error('Failed to update disease:', err);
-    } finally {
-      setIsSavingDisease(false);
+    const clean = editingDiseaseText.trim();
+    const updated: Patient = {
+      ...patient,
+      notes: clean,
+      remark: clean
+    };
+
+    // 1. Instant UI update
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
     }
+    setEditingDiseaseId(null);
+    setIsSavingDisease(false);
+
+    // 2. Silent background update
+    addOrUpdatePatientApi(updated).catch(err => {
+      console.error('Failed to update disease in background:', err);
+      if (onUpdatePatient) onUpdatePatient(patient);
+    });
   };
 
   // Action: Mark single patient as Done in Pre Consultation -> moves to Post Consultation with Auto-Detected Doctor
@@ -308,30 +339,35 @@ export const Consultation: React.FC<ConsultationProps> = ({
     }
 
     setIsProcessingDone(patient.id);
-    try {
-      const attendingDoctor = currentUser?.name || currentUser?.username || patient.doctorName || 'Doctor';
-      const updated: Patient = {
-        ...patient,
-        status: 'Post Consultation',
-        consultationStatus: 'Post Consultation',
-        preDoctorName: patient.preDoctorName || attendingDoctor,
-        preConsultationAt: new Date().toISOString()
-      };
-      await addOrUpdatePatientApi(updated);
-      onRefreshPatients();
-      setActionMessage({
-        type: 'success',
-        text: `✓ ${patient.name} marked as Done by Dr. ${patient.preDoctorName || attendingDoctor} and moved to Post Consultation.`
-      });
-      setTimeout(() => setActionMessage(null), 3500);
-    } catch (err: any) {
+    const attendingDoctor = currentUser?.name || currentUser?.username || patient.doctorName || 'Doctor';
+    const updated: Patient = {
+      ...patient,
+      status: 'Post Consultation',
+      consultationStatus: 'Post Consultation',
+      preDoctorName: patient.preDoctorName || attendingDoctor,
+      preConsultationAt: new Date().toISOString()
+    };
+
+    // 1. Instant UI update in 1ms
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
+    }
+    setIsProcessingDone(null);
+    setActionMessage({
+      type: 'success',
+      text: `✓ ${patient.name} marked as Done by Dr. ${patient.preDoctorName || attendingDoctor} and moved to Post Consultation.`
+    });
+    setTimeout(() => setActionMessage(null), 3500);
+
+    // 2. Silent background sync
+    addOrUpdatePatientApi(updated).catch((err: any) => {
+      console.error('Failed to mark done in background:', err);
+      if (onUpdatePatient) onUpdatePatient(patient);
       setActionMessage({
         type: 'error',
         text: `Failed to mark done: ${err?.message || 'Error occurred'}`
       });
-    } finally {
-      setIsProcessingDone(null);
-    }
+    });
   };
 
   // Action: Create Quotation in Post Consultation -> auto-records doctor and opens Quotation Builder
@@ -340,22 +376,22 @@ export const Consultation: React.FC<ConsultationProps> = ({
       return;
     }
     setIsProcessingDone(patient.id);
-    try {
-      const attendingDoctor = currentUser?.name || currentUser?.username || patient.preDoctorName || 'Doctor';
-      const updated: Patient = {
-        ...patient,
-        postDoctorName: patient.postDoctorName || attendingDoctor,
-        postConsultationAt: patient.postConsultationAt || new Date().toISOString()
-      };
-      await addOrUpdatePatientApi(updated);
-      onRefreshPatients();
-      onSelectPatientForQuotation(updated);
-    } catch (err) {
-      console.error('Failed to auto-record doctor on quotation create:', err);
-      onSelectPatientForQuotation(patient);
-    } finally {
-      setIsProcessingDone(null);
+    const attendingDoctor = currentUser?.name || currentUser?.username || patient.preDoctorName || 'Doctor';
+    const updated: Patient = {
+      ...patient,
+      postDoctorName: patient.postDoctorName || attendingDoctor,
+      postConsultationAt: patient.postConsultationAt || new Date().toISOString()
+    };
+
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
     }
+    setIsProcessingDone(null);
+    onSelectPatientForQuotation(updated);
+
+    addOrUpdatePatientApi(updated).catch(err => {
+      console.error('Failed to auto-record doctor on quotation create in background:', err);
+    });
   };
 
   // Action: Mark single patient as Done / Confirmed in Post Consultation
@@ -370,56 +406,66 @@ export const Consultation: React.FC<ConsultationProps> = ({
     }
 
     setIsProcessingDone(patient.id);
-    try {
-      const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
-      const updated: Patient = {
-        ...patient,
-        postDoctorName: patient.postDoctorName || attendingDoctor,
-        postConsultationConfirmed: true,
-        postConfirmedAt: new Date().toISOString()
-      };
-      await addOrUpdatePatientApi(updated);
-      onRefreshPatients();
-      setActionMessage({
-        type: 'success',
-        text: `✓ Post Consultation confirmed for ${patient.name}.`
-      });
-      setTimeout(() => setActionMessage(null), 3000);
-    } catch (err: any) {
+    const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
+    const updated: Patient = {
+      ...patient,
+      postDoctorName: patient.postDoctorName || attendingDoctor,
+      postConsultationConfirmed: true,
+      postConfirmedAt: new Date().toISOString()
+    };
+
+    // 1. Instant UI update
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
+    }
+    setIsProcessingDone(null);
+    setActionMessage({
+      type: 'success',
+      text: `✓ Post Consultation confirmed for ${patient.name}.`
+    });
+    setTimeout(() => setActionMessage(null), 3000);
+
+    // 2. Silent background sync
+    addOrUpdatePatientApi(updated).catch((err: any) => {
+      console.error('Failed to confirm post consultation in background:', err);
+      if (onUpdatePatient) onUpdatePatient(patient);
       setActionMessage({
         type: 'error',
         text: `Failed to confirm: ${err?.message || 'Error occurred'}`
       });
-    } finally {
-      setIsProcessingDone(null);
-    }
+    });
   };
 
   // Action: Revert patient from Post Consultation back to Pre Consultation
   const handleRevertToPre = async (patient: Patient) => {
     setIsProcessingDone(patient.id);
-    try {
-      const updated: Patient = {
-        ...patient,
-        status: 'Pending Counseling',
-        consultationStatus: 'Pre Consultation',
-        postConsultationConfirmed: false
-      };
-      await addOrUpdatePatientApi(updated);
-      onRefreshPatients();
-      setActionMessage({
-        type: 'success',
-        text: `✓ ${patient.name} moved back to Pre Consultation tab.`
-      });
-      setTimeout(() => setActionMessage(null), 3500);
-    } catch (err: any) {
+    const updated: Patient = {
+      ...patient,
+      status: 'Pending Counseling',
+      consultationStatus: 'Pre Consultation',
+      postConsultationConfirmed: false
+    };
+
+    // 1. Instant UI update
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
+    }
+    setIsProcessingDone(null);
+    setActionMessage({
+      type: 'success',
+      text: `✓ ${patient.name} moved back to Pre Consultation tab.`
+    });
+    setTimeout(() => setActionMessage(null), 3500);
+
+    // 2. Silent background sync
+    addOrUpdatePatientApi(updated).catch((err: any) => {
+      console.error('Failed to revert in background:', err);
+      if (onUpdatePatient) onUpdatePatient(patient);
       setActionMessage({
         type: 'error',
         text: `Failed to move back: ${err?.message || 'Error occurred'}`
       });
-    } finally {
-      setIsProcessingDone(null);
-    }
+    });
   };
 
   return (

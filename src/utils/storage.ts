@@ -481,20 +481,38 @@ export const savePatientsLocal = (patients: Patient[]): void => {
   }
 };
 
-export const addOrUpdatePatientApi = async (patient: Patient): Promise<Patient[]> => {
-  // Optimistic local update
-  const current = getPatientsLocal();
-  const existingIdx = patient.id ? current.findIndex(p => p.id === patient.id) : -1;
-  if (existingIdx >= 0) {
-    current[existingIdx] = { ...current[existingIdx], ...patient };
+export const updatePatientLocal = (patient: Patient): void => {
+  if (!patient || !patient.id) return;
+
+  // 1. Update in-memory cache instantly
+  const mIdx = inMemoryPatients.findIndex(p => p.id === patient.id);
+  if (mIdx >= 0) {
+    inMemoryPatients[mIdx] = { ...inMemoryPatients[mIdx], ...patient };
   } else {
-    const newRecord: Patient = {
-      ...patient,
-      id: patient.id || `pat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
-    };
-    current.unshift(newRecord);
+    inMemoryPatients.unshift(patient);
   }
-  savePatientsLocal(current);
+
+  // 2. Update localStorage cache safely
+  try {
+    const raw = localStorage.getItem(PATIENTS_KEY);
+    if (raw) {
+      const list: Patient[] = JSON.parse(raw);
+      const idx = list.findIndex(p => p.id === patient.id);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...patient };
+      } else {
+        list.unshift(patient);
+      }
+      localStorage.setItem(PATIENTS_KEY, JSON.stringify(list));
+    }
+  } catch {
+    // ignore quota errors
+  }
+};
+
+export const addOrUpdatePatientApi = async (patient: Patient): Promise<{ success: boolean; patient: Patient; patients?: Patient[] }> => {
+  // Instant local update (1ms)
+  updatePatientLocal(patient);
 
   try {
     const res = await fetch('/api/patients', {
@@ -504,16 +522,15 @@ export const addOrUpdatePatientApi = async (patient: Patient): Promise<Patient[]
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.patients) {
-        savePatientsLocal(data.patients);
-        return data.patients;
-      }
+      const savedPatient = data.patient || patient;
+      updatePatientLocal(savedPatient);
+      return { success: true, patient: savedPatient, patients: data.patients };
     }
   } catch (err) {
     console.warn('Error saving patient to backend:', err);
   }
 
-  return current;
+  return { success: false, patient };
 };
 
 export const confirmPatientApi = async (id: string, isConfirmed: boolean = true): Promise<{ patient?: Patient; patients: Patient[] }> => {
@@ -546,7 +563,7 @@ export const confirmPatientApi = async (id: string, isConfirmed: boolean = true)
         status: 'Pending Counseling'
       };
     }
-    savePatientsLocal([...current]);
+    updatePatientLocal(current[idx]);
   }
 
   try {
@@ -557,10 +574,10 @@ export const confirmPatientApi = async (id: string, isConfirmed: boolean = true)
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.patients) {
-        savePatientsLocal(data.patients);
-        return { patient: data.patient, patients: data.patients };
+      if (data.patient) {
+        updatePatientLocal(data.patient);
       }
+      return { patient: data.patient, patients: data.patients || inMemoryPatients };
     }
   } catch (err) {
     console.warn('Backend confirm error:', err);

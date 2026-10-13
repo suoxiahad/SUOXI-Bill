@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import { 
   FileText, 
   Upload, 
@@ -30,7 +30,7 @@ import {
   Stethoscope,
   Undo2
 } from 'lucide-react';
-import { Patient, InvoiceQuotation } from '../types';
+import { Patient, InvoiceQuotation, User as UserModel } from '../types';
 import { parseExcelAppointmentFile, downloadSampleExcelTemplate, ParsedExcelPatient } from '../utils/excelHelper';
 import { importPatientsFromExcelApi, deletePatientsApi, confirmPatientApi, confirmBatchPatientsApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
@@ -39,18 +39,22 @@ interface AppointmentImporterProps {
   patients: Patient[];
   quotations?: InvoiceQuotation[];
   onRefreshPatients: () => void;
+  onUpdatePatient?: (patient: Patient) => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
-  onOpenAddPatient: () => void;
+  onOpenAddPatient?: () => void;
   onGoToConsultation?: () => void;
+  currentUser?: UserModel | null;
 }
 
 export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   patients,
   quotations = [],
   onRefreshPatients,
+  onUpdatePatient,
   onSelectPatientForQuotation,
   onOpenAddPatient,
-  onGoToConsultation
+  onGoToConsultation,
+  currentUser
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -63,6 +67,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [parsedPreview, setParsedPreview] = useState<ParsedExcelPatient[]>([]);
   const [filterText, setFilterText] = useState('');
+  const deferredFilterText = useDeferredValue(filterText);
   const [selectedPatientIds, setSelectedPatientIds] = useState<string[]>([]);
   const [selectedPreviewIndexes, setSelectedPreviewIndexes] = useState<number[]>([]);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -78,45 +83,86 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     setSelectedPatientIds([]);
   }, [filterText, selectedDateFilter, activeSubTab]);
 
-  const handleConfirmPatient = async (p: Patient) => {
-    setIsConfirmingId(p.id);
-    try {
-      const res = await confirmPatientApi(p.id, true);
-      const serialNum = res.patient?.consultationSerial;
-      setUploadMessage({
-        type: 'success',
-        text: `✓ ${p.name} confirmed for Pre Consultation (Serial #${serialNum || '✓'}).`
-      });
-      onRefreshPatients();
-      setTimeout(() => setUploadMessage(null), 4000);
-    } catch (err: any) {
+  const handleConfirmPatient = (p: Patient) => {
+    // 1. Instant optimistic update in 1ms
+    const targetDate = p.appointmentDate || selectedDate || new Date().toISOString().split('T')[0];
+    const sameDateSerials = patients
+      .filter(x => x.appointmentDate === targetDate && typeof x.consultationSerial === 'number')
+      .map(x => x.consultationSerial!);
+    const optimisticSerial = sameDateSerials.length > 0 ? Math.max(...sameDateSerials) + 1 : 1;
+
+    const optimisticPatient: Patient = {
+      ...p,
+      isConfirmed: true,
+      confirmedAt: new Date().toISOString(),
+      consultationSerial: optimisticSerial,
+      consultationStatus: 'Pre Consultation',
+      status: 'Pre Consultation'
+    };
+
+    if (onUpdatePatient) {
+      onUpdatePatient(optimisticPatient);
+    }
+
+    setUploadMessage({
+      type: 'success',
+      text: `✓ ${p.name} confirmed for Pre Consultation (Serial #${optimisticSerial}).`
+    });
+    setTimeout(() => setUploadMessage(null), 3500);
+
+    // 2. Silent background update
+    confirmPatientApi(p.id, true).then(res => {
+      if (res.patient && onUpdatePatient) {
+        onUpdatePatient(res.patient);
+      }
+    }).catch(err => {
+      console.error('Failed to confirm patient in background:', err);
+      if (onUpdatePatient) {
+        onUpdatePatient(p); // rollback on error
+      }
       setUploadMessage({
         type: 'error',
         text: `Failed to confirm patient: ${err?.message || 'Error occurred'}`
       });
-    } finally {
-      setIsConfirmingId(null);
-    }
+    });
   };
 
-  const handleUnconfirmPatient = async (p: Patient) => {
-    setIsConfirmingId(p.id);
-    try {
-      await confirmPatientApi(p.id, false);
-      setUploadMessage({
-        type: 'info',
-        text: `${p.name} removed from Pre Consultation and reverted to unconfirmed.`
-      });
-      onRefreshPatients();
-      setTimeout(() => setUploadMessage(null), 3000);
-    } catch (err: any) {
+  const handleUnconfirmPatient = (p: Patient) => {
+    // 1. Instant optimistic update in 1ms
+    const revertedPatient: Patient = {
+      ...p,
+      isConfirmed: false,
+      confirmedAt: '',
+      consultationSerial: null,
+      consultationStatus: undefined,
+      status: 'Pending Counseling'
+    };
+
+    if (onUpdatePatient) {
+      onUpdatePatient(revertedPatient);
+    }
+
+    setUploadMessage({
+      type: 'info',
+      text: `${p.name} removed from Pre Consultation and reverted to unconfirmed.`
+    });
+    setTimeout(() => setUploadMessage(null), 3000);
+
+    // 2. Silent background update
+    confirmPatientApi(p.id, false).then(res => {
+      if (res.patient && onUpdatePatient) {
+        onUpdatePatient(res.patient);
+      }
+    }).catch(err => {
+      console.error('Failed to revert patient in background:', err);
+      if (onUpdatePatient) {
+        onUpdatePatient(p); // rollback on error
+      }
       setUploadMessage({
         type: 'error',
         text: `Failed to revert: ${err?.message || 'Error occurred'}`
       });
-    } finally {
-      setIsConfirmingId(null);
-    }
+    });
   };
 
   const handleBulkConfirmPatients = async () => {
@@ -336,26 +382,30 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     return patients.filter(p => !!p.isConfirmed).length;
   }, [patients]);
 
-  const filteredPatients = patients.filter(p => {
-    if (activeSubTab === 'confirmed') {
-      if (!p.isConfirmed) return false;
-    }
+  const filteredPatients = useMemo(() => {
+    return patients.filter(p => {
+      if (activeSubTab === 'confirmed') {
+        if (!p.isConfirmed) return false;
+      }
 
-    const matchesText = matchPatient(filterText, p);
+      const matchesText = matchPatient(deferredFilterText, p);
 
-    const matchesDate = 
-      selectedDateFilter === 'all' || 
-      !selectedDateFilter || 
-      p.appointmentDate === selectedDateFilter;
+      const matchesDate = 
+        selectedDateFilter === 'all' || 
+        !selectedDateFilter || 
+        p.appointmentDate === selectedDateFilter;
 
-    return matchesText && matchesDate;
-  });
+      return matchesText && matchesDate;
+    });
+  }, [patients, activeSubTab, deferredFilterText, selectedDateFilter]);
 
   const totalPatientsCount = filteredPatients.length;
   const totalPages = Math.max(1, Math.ceil(totalPatientsCount / pageSize));
   const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
   const startIndex = (safeCurrentPage - 1) * pageSize;
-  const paginatedPatients = filteredPatients.slice(startIndex, startIndex + pageSize);
+  const paginatedPatients = useMemo(() => {
+    return filteredPatients.slice(startIndex, startIndex + pageSize);
+  }, [filteredPatients, startIndex, pageSize]);
 
   return (
     <div className="space-y-6 print:hidden">
@@ -396,13 +446,15 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
               <span>Download Sample Excel</span>
             </button>
 
-            <button
-              onClick={onOpenAddPatient}
-              className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl border border-emerald-500/50 shadow transition cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>New Patient Entry</span>
-            </button>
+            {currentUser?.role !== 'Doctor' && onOpenAddPatient && (
+              <button
+                onClick={onOpenAddPatient}
+                className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl border border-emerald-500/50 shadow transition cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>New Patient Entry</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

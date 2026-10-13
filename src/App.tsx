@@ -21,6 +21,7 @@ import {
   fetchPatientsSummaryApi,
   searchPatientsLiveApi,
   getPatientsLocal,
+  updatePatientLocal,
   addOrUpdatePatientApi,
   getQuotationsLocal,
   saveQuotationApi,
@@ -40,15 +41,16 @@ import { matchPatient, matchSearchQuery } from './utils/searchHelper';
 export default function App() {
   const [activeTab, setActiveTab] = useState<'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
   
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(() => getActiveUser());
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !getActiveUser());
 
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [quotations, setQuotations] = useState<InvoiceQuotation[]>([]);
-  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
-  const [professions, setProfessions] = useState<string[]>([]);
-  const [comments, setComments] = useState<string[]>([]);
+  // Instant 0ms cache loading on initial mount/reload:
+  const [patients, setPatients] = useState<Patient[]>(() => getPatientsLocal());
+  const [quotations, setQuotations] = useState<InvoiceQuotation[]>(() => getQuotationsLocal());
+  const [catalog, setCatalog] = useState<CatalogItem[]>(() => getCatalogLocal());
+  const [professions, setProfessions] = useState<string[]>(() => getProfessionsLocal());
+  const [comments, setComments] = useState<string[]>(() => getConsultationCommentsLocal());
 
   const [selectedPatientForQuotation, setSelectedPatientForQuotation] = useState<Patient | null>(null);
   const [editingQuotation, setEditingQuotation] = useState<InvoiceQuotation | null>(null);
@@ -69,11 +71,33 @@ export default function App() {
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
+  // Instant 1ms optimistic update handler for single patient:
+  const handleUpdatePatient = useCallback((updatedPatient: Patient) => {
+    setPatients(prev => {
+      const idx = prev.findIndex(p => p.id === updatedPatient.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = updatedPatient;
+        return copy;
+      }
+      return [updatedPatient, ...prev];
+    });
+    // Silently sync into local memory & disk cache without freezing UI
+    updatePatientLocal(updatedPatient);
+  }, []);
+
   const initializeAppData = useCallback(async (forceBypass = false) => {
-    setIsLoading(true);
     const savedUser = getActiveUser();
     if (savedUser && savedUser.token) {
       setCurrentUser(savedUser);
+      // Only show full loader if local patients are completely empty
+      const localP = getPatientsLocal();
+      if (!localP || localP.length === 0) {
+        setIsLoading(true);
+      } else {
+        setIsSyncing(true);
+      }
+
       const initData = await fetchInitApi(forceBypass);
       if (initData) {
         setPatients(initData.patients);
@@ -81,23 +105,13 @@ export default function App() {
         setCatalog(initData.catalog);
         if (initData.professions) setProfessions(initData.professions);
         if (initData.comments) setComments(initData.comments);
-      } else {
-        setPatients(getPatientsLocal());
-        setQuotations(getQuotationsLocal());
-        setCatalog(getCatalogLocal());
-        setProfessions(getProfessionsLocal());
-        setComments(getConsultationCommentsLocal());
       }
     } else {
       setCurrentUser(null);
-      setPatients(getPatientsLocal());
-      setQuotations(getQuotationsLocal());
-      setCatalog(getCatalogLocal());
-      setProfessions(getProfessionsLocal());
-      setComments(getConsultationCommentsLocal());
       setIsLoginModalOpen(true);
     }
     setIsLoading(false);
+    setIsSyncing(false);
   }, []);
 
   useEffect(() => {
@@ -161,7 +175,7 @@ export default function App() {
       }
     };
 
-    const interval = setInterval(checkAndSyncData, 10000);
+    const interval = setInterval(checkAndSyncData, 4000);
     window.addEventListener('focus', checkAndSyncData);
 
     return () => {
@@ -243,8 +257,10 @@ export default function App() {
       patientToSave.consultationStatus = 'Pre Consultation';
       patientToSave.status = 'Pre Consultation';
     }
-    const updated = await addOrUpdatePatientApi(patientToSave);
-    setPatients(updated);
+    const result = await addOrUpdatePatientApi(patientToSave);
+    if (result.patient) {
+      handleUpdatePatient(result.patient);
+    }
   };
 
   const handleSearchPhoneInNavbar = async (query: string) => {
@@ -392,9 +408,11 @@ export default function App() {
                 patients={patients}
                 quotations={quotations}
                 onRefreshPatients={initializeAppData}
+                onUpdatePatient={handleUpdatePatient}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
-                onOpenAddPatient={() => setIsAddPatientOpen(true)}
+                onOpenAddPatient={currentUser?.role !== 'Doctor' ? () => setIsAddPatientOpen(true) : undefined}
                 onGoToConsultation={() => setActiveTab('consultation')}
+                currentUser={currentUser}
               />
             </div>
 
@@ -405,6 +423,7 @@ export default function App() {
                 professions={professions}
                 comments={comments}
                 onRefreshPatients={initializeAppData}
+                onUpdatePatient={handleUpdatePatient}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
                 onViewQuotation={handlePreviewPrint}
                 currentUser={currentUser}
@@ -474,7 +493,7 @@ export default function App() {
 
       {/* Modals */}
       <PatientModal
-        isOpen={isAddPatientOpen}
+        isOpen={isAddPatientOpen && currentUser?.role !== 'Doctor'}
         onClose={() => setIsAddPatientOpen(false)}
         onSave={handleSavePatient}
       />
