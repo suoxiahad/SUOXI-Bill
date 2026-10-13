@@ -224,6 +224,9 @@ export default function App() {
   };
 
   const handleSavePatient = async (patient: Patient) => {
+    if (currentUser?.role === 'Doctor') {
+      return;
+    }
     let patientToSave = { ...patient };
     // If registering from Consultation page or a fresh walk-in, automatically confirm for Pre Consultation
     if (!patientToSave.isConfirmed && (activeTab === 'consultation' || !patientToSave.id)) {
@@ -339,7 +342,10 @@ export default function App() {
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenAddPatient={() => setIsAddPatientOpen(true)}
+        onOpenAddPatient={() => {
+          if (currentUser?.role === 'Doctor') return;
+          setIsAddPatientOpen(true);
+        }}
         onSearchPhone={handleSearchPhoneInNavbar}
         patientCount={patients.length}
         quotationCount={quotations.length}
@@ -461,7 +467,7 @@ export default function App() {
           <p>© {new Date().getFullYear()} SUO XI Hospital (Acupuncture) • All Rights Reserved.</p>
           <p className="text-emerald-400 font-medium">Developed & Designed By SUOXI IT</p>
           <div className="flex items-center gap-2">
-            <span className="text-emerald-400 font-semibold">SUO XI Billing System v2.0</span>
+            <span className="text-emerald-400 font-semibold">SUO XI Billing System v2.1</span>
           </div>
         </div>
       </footer>

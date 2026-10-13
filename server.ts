@@ -391,7 +391,27 @@ async function initDatabase() {
           notes TEXT,
           remark TEXT,
           createdAt VARCHAR(64),
+          isConfirmed TINYINT DEFAULT 0,
+          confirmedAt VARCHAR(64) DEFAULT '',
+          consultationSerial INT DEFAULT NULL,
+          consultationStatus VARCHAR(64) DEFAULT '',
+          profession VARCHAR(128) DEFAULT '',
+          preDoctorName VARCHAR(128) DEFAULT '',
+          postDoctorName VARCHAR(128) DEFAULT '',
+          preConsultationAt VARCHAR(64) DEFAULT '',
+          postConsultationAt VARCHAR(64) DEFAULT '',
+          consultationComment TEXT,
+          postConsultationConfirmed TINYINT DEFAULT 0,
+          postConfirmedAt VARCHAR(64) DEFAULT '',
           INDEX idx_patients_phone (phone)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS app_settings (
+          setting_key VARCHAR(64) PRIMARY KEY,
+          setting_value LONGTEXT,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
 
@@ -400,7 +420,8 @@ async function initDatabase() {
         "ALTER TABLE patients ADD INDEX idx_patients_name (name)",
         "ALTER TABLE patients ADD INDEX idx_patients_serial (serialNo)",
         "ALTER TABLE patients ADD INDEX idx_patients_date (appointmentDate)",
-        "ALTER TABLE patients ADD INDEX idx_patients_doc (doctorName)"
+        "ALTER TABLE patients ADD INDEX idx_patients_doc (doctorName)",
+        "ALTER TABLE patients ADD INDEX idx_patients_confirmed (isConfirmed)"
       ];
       for (const idxQuery of patientIndexes) {
         try {
@@ -426,6 +447,18 @@ async function initDatabase() {
         "ALTER TABLE patients ADD COLUMN notes TEXT",
         "ALTER TABLE patients ADD COLUMN remark TEXT",
         "ALTER TABLE patients ADD COLUMN createdAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN isConfirmed TINYINT DEFAULT 0",
+        "ALTER TABLE patients ADD COLUMN confirmedAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN consultationSerial INT DEFAULT NULL",
+        "ALTER TABLE patients ADD COLUMN consultationStatus VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN profession VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN preDoctorName VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN postDoctorName VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN preConsultationAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN postConsultationAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN consultationComment TEXT",
+        "ALTER TABLE patients ADD COLUMN postConsultationConfirmed TINYINT DEFAULT 0",
+        "ALTER TABLE patients ADD COLUMN postConfirmedAt VARCHAR(64) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientId VARCHAR(64) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientName VARCHAR(128) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientPhone VARCHAR(32) DEFAULT ''",
@@ -616,19 +649,47 @@ function formatCatalogRow(r: any): any {
   };
 }
 
+function formatPatientRow(r: any): any {
+  if (!r) return r;
+  return {
+    ...r,
+    age: r.age !== null && r.age !== undefined ? String(r.age) : '',
+    gender: r.gender || 'Other',
+    isConfirmed: r.isConfirmed === 1 || r.isConfirmed === true || r.isConfirmed === '1' || r.isConfirmed === 'true',
+    confirmedAt: r.confirmedAt || '',
+    consultationSerial: (r.consultationSerial !== null && r.consultationSerial !== undefined && r.consultationSerial !== '') ? Number(r.consultationSerial) : null,
+    consultationStatus: r.consultationStatus || '',
+    profession: r.profession || '',
+    preDoctorName: r.preDoctorName || '',
+    postDoctorName: r.postDoctorName || '',
+    preConsultationAt: r.preConsultationAt || '',
+    postConsultationAt: r.postConsultationAt || '',
+    notes: r.notes || r.remark || '',
+    remark: r.remark || r.notes || '',
+    consultationComment: r.consultationComment || '',
+    postConsultationConfirmed: r.postConsultationConfirmed === 1 || r.postConsultationConfirmed === true || r.postConsultationConfirmed === '1',
+    postConfirmedAt: r.postConfirmedAt || '',
+    status: r.status || 'Pending Counseling',
+    createdAt: r.createdAt || ''
+  };
+}
+
 app.get('/api/init', authenticateToken, async (req: any, res) => {
   const user = req.user;
   let patients: any[] = [...localData.patients];
   let quotations: any[] = [...localData.quotations];
   let catalog: any[] = localData.catalog;
   let users: any[] = localData.users.map(({ password_hash, ...u }) => u);
+  let professions: string[] = (localData as any).professions || DEFAULT_PROFESSIONS;
+  let comments: string[] = (localData as any).comments || DEFAULT_CONSULTATION_COMMENTS;
 
   if (isMySqlActive && mysqlPool) {
     try {
       const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
       if (Array.isArray(pRows) && pRows.length > 0) {
-        const dbIds = new Set(pRows.map((r: any) => r.id));
-        patients = [...pRows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
+        const formattedPRows = pRows.map(formatPatientRow);
+        const dbIds = new Set(formattedPRows.map((r: any) => r.id));
+        patients = [...formattedPRows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
       }
 
       const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
@@ -648,6 +709,17 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
 
       const [uRows]: any = await mysqlPool.execute('SELECT id, username, name, role, phone, is_active FROM users ORDER BY id ASC');
       if (Array.isArray(uRows) && uRows.length > 0) users = uRows;
+
+      const [sRows]: any = await mysqlPool.execute('SELECT setting_key, setting_value FROM app_settings');
+      if (Array.isArray(sRows)) {
+        for (const row of sRows) {
+          if (row.setting_key === 'professions' && row.setting_value) {
+            try { professions = JSON.parse(row.setting_value); } catch {}
+          } else if (row.setting_key === 'comments' && row.setting_value) {
+            try { comments = JSON.parse(row.setting_value); } catch {}
+          }
+        }
+      }
     } catch (err) {
       console.error('MySQL init fetch error:', err);
     }
@@ -658,8 +730,8 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
     patients,
     quotations,
     catalog,
-    professions: (localData as any).professions || DEFAULT_PROFESSIONS,
-    comments: (localData as any).comments || DEFAULT_CONSULTATION_COMMENTS,
+    professions,
+    comments,
     users,
     dbMode: isMySqlActive ? 'MySQL Central Database' : 'Local File Persistence',
     dataVersion: serverDataVersion
@@ -885,11 +957,12 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin',
 
       const [rows]: any = await mysqlPool.execute(queryStr, queryParams);
       if (Array.isArray(rows)) {
+        const formattedRows = rows.map(formatPatientRow);
         if (limit > 0 || dateFilter) {
-          return res.json(rows);
+          return res.json(formattedRows);
         }
-        const dbIds = new Set(rows.map((r: any) => r.id));
-        allPatients = [...rows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
+        const dbIds = new Set(formattedRows.map((r: any) => r.id));
+        allPatients = [...formattedRows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
       }
     } catch (err) {
       console.error('Error fetching patients from MySQL:', err);
@@ -925,7 +998,7 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
         queryStr += ' ORDER BY createdAt DESC, id DESC LIMIT ?';
         queryParams.push(String(limit));
         const [rows]: any = await mysqlPool.execute(queryStr, queryParams);
-        return res.json(rows || []);
+        return res.json((rows || []).map(formatPatientRow));
       } catch (err) {
         console.error('MySQL recent patients error:', err);
       }
@@ -996,7 +1069,7 @@ app.get('/api/patients/search', authenticateToken, requireRole('System Admin', '
         rows.forEach((r: any) => {
           if (r && r.id && !seenIds.has(r.id)) {
             seenIds.add(r.id);
-            results.push(r);
+            results.push(formatPatientRow(r));
           }
         });
       }
@@ -1057,6 +1130,20 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
   // ONLY match by id, NEVER overwrite different appointments of the same phone number
   const existingIdx = p.id ? localData.patients.findIndex(x => x.id === p.id) : -1;
 
+  // Doctor role cannot create new patients
+  if ((req as any).user?.role === 'Doctor') {
+    let existsInDb = false;
+    if (existingIdx === -1 && p.id && isMySqlActive && mysqlPool) {
+      try {
+        const [rows]: any = await mysqlPool.execute('SELECT id FROM patients WHERE id = ?', [p.id]);
+        if (Array.isArray(rows) && rows.length > 0) existsInDb = true;
+      } catch {}
+    }
+    if (existingIdx === -1 && !existsInDb) {
+      return res.status(403).json({ error: 'Doctors are not permitted to add new patients. Only System Admin and Call Center can register new patients.' });
+    }
+  }
+
   let cleanSerial = '';
   if (p.serialNo) {
     const match = String(p.serialNo).match(/\b\d+\b/);
@@ -1078,19 +1165,22 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     appointmentDate: p.appointmentDate || new Date().toISOString().split('T')[0],
     appointmentTime: p.appointmentTime || '09:00 AM',
     department: p.department || 'Acupuncture',
-    status: p.status || 'Pending Counseling',
+    status: p.status || (existingIdx >= 0 ? localData.patients[existingIdx].status : 'Pending Counseling'),
     isConfirmed: p.isConfirmed !== undefined ? Boolean(p.isConfirmed) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].isConfirmed) : false),
     confirmedAt: p.confirmedAt !== undefined ? p.confirmedAt : (existingIdx >= 0 ? localData.patients[existingIdx].confirmedAt : ''),
-    consultationSerial: p.consultationSerial !== undefined ? p.consultationSerial : (existingIdx >= 0 ? localData.patients[existingIdx].consultationSerial : null),
+    consultationSerial: p.consultationSerial !== undefined ? (p.consultationSerial !== null ? Number(p.consultationSerial) : null) : (existingIdx >= 0 ? localData.patients[existingIdx].consultationSerial : null),
     consultationStatus: p.consultationStatus !== undefined ? p.consultationStatus : (existingIdx >= 0 ? localData.patients[existingIdx].consultationStatus : ''),
     profession: p.profession !== undefined ? p.profession : (existingIdx >= 0 ? localData.patients[existingIdx].profession : ''),
     preDoctorName: p.preDoctorName !== undefined ? p.preDoctorName : (existingIdx >= 0 ? localData.patients[existingIdx].preDoctorName : ''),
     postDoctorName: p.postDoctorName !== undefined ? p.postDoctorName : (existingIdx >= 0 ? localData.patients[existingIdx].postDoctorName : ''),
     preConsultationAt: p.preConsultationAt !== undefined ? p.preConsultationAt : (existingIdx >= 0 ? localData.patients[existingIdx].preConsultationAt : ''),
     postConsultationAt: p.postConsultationAt !== undefined ? p.postConsultationAt : (existingIdx >= 0 ? localData.patients[existingIdx].postConsultationAt : ''),
-    notes: p.notes || p.remark || '',
-    remark: p.remark || p.notes || '',
-    createdAt: p.createdAt || new Date().toISOString()
+    notes: p.notes !== undefined ? p.notes : (p.remark !== undefined ? p.remark : (existingIdx >= 0 ? localData.patients[existingIdx].notes : '')),
+    remark: p.remark !== undefined ? p.remark : (p.notes !== undefined ? p.notes : (existingIdx >= 0 ? localData.patients[existingIdx].remark : '')),
+    consultationComment: p.consultationComment !== undefined ? p.consultationComment : (existingIdx >= 0 ? localData.patients[existingIdx].consultationComment : ''),
+    postConsultationConfirmed: p.postConsultationConfirmed !== undefined ? Boolean(p.postConsultationConfirmed) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].postConsultationConfirmed) : false),
+    postConfirmedAt: p.postConfirmedAt !== undefined ? p.postConfirmedAt : (existingIdx >= 0 ? localData.patients[existingIdx].postConfirmedAt : ''),
+    createdAt: p.createdAt || (existingIdx >= 0 ? localData.patients[existingIdx].createdAt : new Date().toISOString())
   };
 
   if (existingIdx >= 0) {
@@ -1099,15 +1189,72 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     localData.patients.unshift({ ...formattedPatient, ...p });
   }
   saveLocalDb();
+  touchServerDataVersion();
 
   if (isMySqlActive && mysqlPool) {
     try {
       await mysqlPool.execute(
-        `INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE serialNo=?, name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
-        [formattedPatient.id, formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark, formattedPatient.createdAt,
-         formattedPatient.serialNo, formattedPatient.name, formattedPatient.phone, formattedPatient.age, formattedPatient.gender, formattedPatient.address, formattedPatient.doctorName, formattedPatient.appointmentDate, formattedPatient.appointmentTime, formattedPatient.department, formattedPatient.status, formattedPatient.notes, formattedPatient.remark]
+        `INSERT INTO patients (
+          id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
+          isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
+          consultationComment, postConsultationConfirmed, postConfirmedAt
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE 
+          serialNo = VALUES(serialNo),
+          name = VALUES(name),
+          phone = VALUES(phone),
+          age = VALUES(age),
+          gender = VALUES(gender),
+          address = VALUES(address),
+          doctorName = VALUES(doctorName),
+          appointmentDate = VALUES(appointmentDate),
+          appointmentTime = VALUES(appointmentTime),
+          department = VALUES(department),
+          status = VALUES(status),
+          notes = VALUES(notes),
+          remark = VALUES(remark),
+          isConfirmed = VALUES(isConfirmed),
+          confirmedAt = VALUES(confirmedAt),
+          consultationSerial = VALUES(consultationSerial),
+          consultationStatus = VALUES(consultationStatus),
+          profession = VALUES(profession),
+          preDoctorName = VALUES(preDoctorName),
+          postDoctorName = VALUES(postDoctorName),
+          preConsultationAt = VALUES(preConsultationAt),
+          postConsultationAt = VALUES(postConsultationAt),
+          consultationComment = VALUES(consultationComment),
+          postConsultationConfirmed = VALUES(postConsultationConfirmed),
+          postConfirmedAt = VALUES(postConfirmedAt)`,
+        [
+          formattedPatient.id,
+          formattedPatient.serialNo,
+          formattedPatient.name,
+          formattedPatient.phone,
+          formattedPatient.age,
+          formattedPatient.gender,
+          formattedPatient.address,
+          formattedPatient.doctorName,
+          formattedPatient.appointmentDate,
+          formattedPatient.appointmentTime,
+          formattedPatient.department,
+          formattedPatient.status,
+          formattedPatient.notes,
+          formattedPatient.remark,
+          formattedPatient.createdAt,
+          formattedPatient.isConfirmed ? 1 : 0,
+          formattedPatient.confirmedAt || '',
+          formattedPatient.consultationSerial !== null && formattedPatient.consultationSerial !== undefined ? formattedPatient.consultationSerial : null,
+          formattedPatient.consultationStatus || '',
+          formattedPatient.profession || '',
+          formattedPatient.preDoctorName || '',
+          formattedPatient.postDoctorName || '',
+          formattedPatient.preConsultationAt || '',
+          formattedPatient.postConsultationAt || '',
+          formattedPatient.consultationComment || '',
+          formattedPatient.postConsultationConfirmed ? 1 : 0,
+          formattedPatient.postConfirmedAt || ''
+        ]
       );
     } catch (err) {
       console.error('MySQL patient save error:', err);
@@ -1147,6 +1294,21 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
       }
     });
 
+    if (isMySqlActive && mysqlPool) {
+      try {
+        const [mRows]: any = await mysqlPool.execute(
+          'SELECT MAX(consultationSerial) AS maxDbSerial FROM patients WHERE appointmentDate = ?',
+          [targetDate]
+        );
+        if (mRows && mRows[0] && mRows[0].maxDbSerial !== null && mRows[0].maxDbSerial !== undefined) {
+          const dbMax = Number(mRows[0].maxDbSerial);
+          if (dbMax > maxSerial) maxSerial = dbMax;
+        }
+      } catch (err) {
+        console.warn('MySQL maxSerial query error:', err);
+      }
+    }
+
     const nextSerial = maxSerial + 1;
     localData.patients[idx] = {
       ...patient,
@@ -1160,6 +1322,28 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
 
   saveLocalDb();
   touchServerDataVersion();
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const updatedP = localData.patients[idx];
+      await mysqlPool.execute(
+        `UPDATE patients 
+         SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+         WHERE id = ?`,
+        [
+          updatedP.isConfirmed ? 1 : 0,
+          updatedP.confirmedAt || '',
+          updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
+          updatedP.consultationStatus || '',
+          updatedP.status || 'Pending Counseling',
+          updatedP.id
+        ]
+      );
+    } catch (err) {
+      console.error('MySQL patient confirm update error:', err);
+    }
+  }
+
   res.json({ success: true, patient: localData.patients[idx], patients: localData.patients });
 });
 
@@ -1197,6 +1381,29 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
 
   saveLocalDb();
   touchServerDataVersion();
+
+  if (isMySqlActive && mysqlPool && updated.length > 0) {
+    try {
+      for (const p of updated) {
+        await mysqlPool.execute(
+          `UPDATE patients 
+           SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+           WHERE id = ?`,
+          [
+            p.isConfirmed ? 1 : 0,
+            p.confirmedAt || '',
+            p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null,
+            p.consultationStatus || '',
+            p.status || 'Pending Counseling',
+            p.id
+          ]
+        );
+      }
+    } catch (err) {
+      console.error('MySQL batch confirm error:', err);
+    }
+  }
+
   res.json({ success: true, count: updated.length, patients: localData.patients });
 });
 
@@ -1637,7 +1844,7 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
   const batchSize = 50;
   for (let i = 0; i < patientsList.length; i += batchSize) {
     const chunk = patientsList.slice(i, i + batchSize);
-    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
     const values: any[] = [];
 
     for (const p of chunk) {
@@ -1656,12 +1863,28 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
         p.status || 'Pending Counseling',
         p.notes || '',
         p.remark || '',
-        p.createdAt || new Date().toISOString()
+        p.createdAt || new Date().toISOString(),
+        p.isConfirmed ? 1 : 0,
+        p.confirmedAt || '',
+        p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null,
+        p.consultationStatus || '',
+        p.profession || '',
+        p.preDoctorName || '',
+        p.postDoctorName || '',
+        p.preConsultationAt || '',
+        p.postConsultationAt || '',
+        p.consultationComment || '',
+        p.postConsultationConfirmed ? 1 : 0,
+        p.postConfirmedAt || ''
       );
     }
 
     const sql = `
-      INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
+      INSERT INTO patients (
+        id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
+        isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
+        consultationComment, postConsultationConfirmed, postConfirmedAt
+      )
       VALUES ${placeholders}
       ON DUPLICATE KEY UPDATE
         serialNo = VALUES(serialNo),
@@ -1676,7 +1899,19 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
         department = VALUES(department),
         status = VALUES(status),
         notes = VALUES(notes),
-        remark = VALUES(remark)
+        remark = VALUES(remark),
+        isConfirmed = VALUES(isConfirmed),
+        confirmedAt = VALUES(confirmedAt),
+        consultationSerial = VALUES(consultationSerial),
+        consultationStatus = VALUES(consultationStatus),
+        profession = VALUES(profession),
+        preDoctorName = VALUES(preDoctorName),
+        postDoctorName = VALUES(postDoctorName),
+        preConsultationAt = VALUES(preConsultationAt),
+        postConsultationAt = VALUES(postConsultationAt),
+        consultationComment = VALUES(consultationComment),
+        postConsultationConfirmed = VALUES(postConsultationConfirmed),
+        postConfirmedAt = VALUES(postConfirmedAt)
     `;
 
     try {
@@ -1686,12 +1921,42 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
       for (const p of chunk) {
         try {
           await mysqlPool.execute(
-            `INSERT INTO patients (id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE serialNo=?, name=?, phone=?, age=?, gender=?, address=?, doctorName=?, appointmentDate=?, appointmentTime=?, department=?, status=?, notes=?, remark=?`,
+            `INSERT INTO patients (
+              id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
+              isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
+              consultationComment, postConsultationConfirmed, postConfirmedAt
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              serialNo = VALUES(serialNo),
+              name = VALUES(name),
+              phone = VALUES(phone),
+              age = VALUES(age),
+              gender = VALUES(gender),
+              address = VALUES(address),
+              doctorName = VALUES(doctorName),
+              appointmentDate = VALUES(appointmentDate),
+              appointmentTime = VALUES(appointmentTime),
+              department = VALUES(department),
+              status = VALUES(status),
+              notes = VALUES(notes),
+              remark = VALUES(remark),
+              isConfirmed = VALUES(isConfirmed),
+              confirmedAt = VALUES(confirmedAt),
+              consultationSerial = VALUES(consultationSerial),
+              consultationStatus = VALUES(consultationStatus),
+              profession = VALUES(profession),
+              preDoctorName = VALUES(preDoctorName),
+              postDoctorName = VALUES(postDoctorName),
+              preConsultationAt = VALUES(preConsultationAt),
+              postConsultationAt = VALUES(postConsultationAt),
+              consultationComment = VALUES(consultationComment),
+              postConsultationConfirmed = VALUES(postConsultationConfirmed),
+              postConfirmedAt = VALUES(postConfirmedAt)`,
             [
-              p.id, p.serialNo, p.name, p.phone, p.age, p.gender, p.address, p.doctorName, p.appointmentDate, p.appointmentTime, p.department, p.status, p.notes, p.remark, p.createdAt,
-              p.serialNo, p.name, p.phone, p.age, p.gender, p.address, p.doctorName, p.appointmentDate, p.appointmentTime, p.department, p.status, p.notes, p.remark
+              p.id, p.serialNo || '', p.name || '', p.phone || '', p.age || '', p.gender || 'Other', p.address || '', p.doctorName || '', p.appointmentDate || '', p.appointmentTime || '', p.department || '', p.status || '', p.notes || '', p.remark || '', p.createdAt || '',
+              p.isConfirmed ? 1 : 0, p.confirmedAt || '', p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null, p.consultationStatus || '', p.profession || '', p.preDoctorName || '', p.postDoctorName || '', p.preConsultationAt || '', p.postConsultationAt || '',
+              p.consultationComment || '', p.postConsultationConfirmed ? 1 : 0, p.postConfirmedAt || ''
             ]
           );
         } catch (singleErr) {
@@ -1981,32 +2246,70 @@ app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor'
 });
 
 // Professions Settings API
-app.get('/api/settings/professions', authenticateToken, (req, res) => {
-  res.json({ professions: (localData as any).professions || DEFAULT_PROFESSIONS });
+app.get('/api/settings/professions', authenticateToken, async (req, res) => {
+  let list = (localData as any).professions || DEFAULT_PROFESSIONS;
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [rows]: any = await mysqlPool.execute('SELECT setting_value FROM app_settings WHERE setting_key = ?', ['professions']);
+      if (rows && rows[0] && rows[0].setting_value) {
+        list = JSON.parse(rows[0].setting_value);
+      }
+    } catch {}
+  }
+  res.json({ professions: list });
 });
 
-app.post('/api/settings/professions', authenticateToken, requireRole('System Admin', 'Doctor'), (req, res) => {
+app.post('/api/settings/professions', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
   const { professions } = req.body;
   if (Array.isArray(professions) && professions.length > 0) {
     (localData as any).professions = professions.map((p: string) => String(p).trim()).filter(Boolean);
     saveLocalDb();
     touchServerDataVersion();
+    if (isMySqlActive && mysqlPool) {
+      try {
+        await mysqlPool.execute(
+          'INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+          ['professions', JSON.stringify((localData as any).professions)]
+        );
+      } catch (err) {
+        console.error('MySQL save professions error:', err);
+      }
+    }
     return res.json({ success: true, professions: (localData as any).professions });
   }
   res.status(400).json({ error: 'Invalid professions data' });
 });
 
 // Consultation Comments / Decisions Settings API
-app.get('/api/settings/comments', authenticateToken, (req, res) => {
-  res.json({ comments: (localData as any).comments || DEFAULT_CONSULTATION_COMMENTS });
+app.get('/api/settings/comments', authenticateToken, async (req, res) => {
+  let list = (localData as any).comments || DEFAULT_CONSULTATION_COMMENTS;
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [rows]: any = await mysqlPool.execute('SELECT setting_value FROM app_settings WHERE setting_key = ?', ['comments']);
+      if (rows && rows[0] && rows[0].setting_value) {
+        list = JSON.parse(rows[0].setting_value);
+      }
+    } catch {}
+  }
+  res.json({ comments: list });
 });
 
-app.post('/api/settings/comments', authenticateToken, requireRole('System Admin', 'Doctor'), (req, res) => {
+app.post('/api/settings/comments', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
   const { comments } = req.body;
   if (Array.isArray(comments) && comments.length > 0) {
     (localData as any).comments = comments.map((c: string) => String(c).trim()).filter(Boolean);
     saveLocalDb();
     touchServerDataVersion();
+    if (isMySqlActive && mysqlPool) {
+      try {
+        await mysqlPool.execute(
+          'INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+          ['comments', JSON.stringify((localData as any).comments)]
+        );
+      } catch (err) {
+        console.error('MySQL save comments error:', err);
+      }
+    }
     return res.json({ success: true, comments: (localData as any).comments });
   }
   res.status(400).json({ error: 'Invalid comments data' });

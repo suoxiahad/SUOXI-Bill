@@ -61,7 +61,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const canAccessCatalog = userRole === 'System Admin';
   const canAccessUsers = !!currentUser;
   const canAccessCalculationToggle = userRole === 'System Admin' || userRole === 'Doctor';
-  const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center' || userRole === 'Doctor';
+  const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center';
 
   const getRoleBadge = () => {
     if (!currentUser) {
