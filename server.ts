@@ -25,11 +25,21 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://apis.google.com"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-        imgSrc: ["'self'", "data:", "blob:", "https://suoxigroup.com", "http://suoxigroup.com"],
-        connectSrc: ["'self'", "ws:", "wss:"],
+        imgSrc: ["'self'", "data:", "blob:", "https://suoxigroup.com", "http://suoxigroup.com", "https://*.googleusercontent.com"],
+        connectSrc: [
+          "'self'",
+          "ws:",
+          "wss:",
+          "https://identitytoolkit.googleapis.com",
+          "https://securetoken.googleapis.com",
+          "https://sheets.googleapis.com",
+          "https://www.googleapis.com",
+          "https://*.firebaseapp.com"
+        ],
+        frameSrc: ["'self'", "https://*.firebaseapp.com", "https://accounts.google.com"],
         frameAncestors: ["'self'", "*"],
       },
     },

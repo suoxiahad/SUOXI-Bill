@@ -37,6 +37,11 @@ import {
   invalidateLocalCaches
 } from './utils/storage';
 import { matchPatient, matchSearchQuery } from './utils/searchHelper';
+import { 
+  getSheetsConfig, 
+  getAccessToken, 
+  syncPatientsToDailySheet 
+} from './services/googleSheetsService';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
@@ -202,6 +207,24 @@ export default function App() {
       }
     }
   }, [currentUser, activeTab]);
+
+  // Silent debounced background auto-sync to Google Sheets whenever patients change
+  useEffect(() => {
+    const config = getSheetsConfig();
+    if (!config.autoSyncEnabled || patients.length === 0) return;
+
+    const timer = setTimeout(async () => {
+      const token = await getAccessToken();
+      if (!token) return; // Google account not connected yet, silently skip
+      try {
+        await syncPatientsToDailySheet(token, patients, new Date());
+      } catch (err) {
+        console.warn('Silent Google Sheets sync skipped:', err);
+      }
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [patients]);
 
   // Set initial default tab on login without strictly trapping the user
   const handleLoginSuccess = async (user: User) => {
@@ -466,6 +489,7 @@ export default function App() {
                 catalog={catalog}
                 professions={professions}
                 comments={comments}
+                patients={patients}
                 onSaveCatalog={handleSaveCatalog}
                 onSaveProfessions={handleSaveProfessions}
                 onSaveComments={handleSaveComments}

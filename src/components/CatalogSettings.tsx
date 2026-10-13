@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Save, Trash2, CheckCircle2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Hash, Briefcase, RotateCcw, Check, Sparkles, MessageSquare, Pencil, X } from 'lucide-react';
-import { CatalogItem } from '../types';
+import { Settings, Plus, Save, Trash2, CheckCircle2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Hash, Briefcase, RotateCcw, Check, Sparkles, MessageSquare, Pencil, X, FileSpreadsheet } from 'lucide-react';
+import { CatalogItem, Patient } from '../types';
 import { DEFAULT_PROFESSIONS, getProfessionsLocal, saveProfessionsApi, DEFAULT_CONSULTATION_COMMENTS, getConsultationCommentsLocal, saveConsultationCommentsApi } from '../utils/storage';
+import { GoogleSheetsSettings } from './GoogleSheetsSettings';
 
 interface ItemPositionControllerProps {
   currentPosition: number;
@@ -101,6 +102,7 @@ interface CatalogSettingsProps {
   catalog: CatalogItem[];
   professions?: string[];
   comments?: string[];
+  patients?: Patient[];
   onSaveCatalog: (catalog: CatalogItem[]) => void;
   onSaveProfessions?: (professions: string[]) => void;
   onSaveComments?: (comments: string[]) => void;
@@ -110,13 +112,14 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
   catalog,
   professions = [],
   comments = [],
+  patients = [],
   onSaveCatalog,
   onSaveProfessions,
   onSaveComments
 }) => {
   const [items, setItems] = useState<CatalogItem[]>(catalog);
   const [isSaved, setIsSaved] = useState(false);
-  const [activeSettingTab, setActiveSettingTab] = useState<'catalog' | 'professions' | 'comments'>('catalog');
+  const [activeSettingTab, setActiveSettingTab] = useState<'catalog' | 'professions' | 'comments' | 'google-sheets'>('catalog');
   
   const [professionList, setProfessionList] = useState<string[]>(() => {
     return professions && professions.length > 0 ? professions : getProfessionsLocal();
@@ -444,7 +447,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
             <Save className="w-4 h-4" />
             <span>{isProfessionSaved ? 'Professions Saved!' : 'Save Professions'}</span>
           </button>
-        ) : (
+        ) : activeSettingTab === 'comments' ? (
           <button
             onClick={handleSaveCommentsManual}
             className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
@@ -452,10 +455,10 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
             <Save className="w-4 h-4" />
             <span>{isCommentSaved ? 'Comments Saved!' : 'Save Comments'}</span>
           </button>
-        )}
+        ) : null}
       </div>
 
-      {/* Sub-Tabs: Service Catalog vs. Profession Settings vs. Patient Comments */}
+      {/* Sub-Tabs: Service Catalog vs. Profession Settings vs. Patient Comments vs. Google Sheets */}
       <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200 w-fit">
         <button
           type="button"
@@ -499,6 +502,22 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
           <span>Patient Comments / Decisions ({commentList.length})</span>
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">
             Post-Consult Dropdown
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSettingTab('google-sheets')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeSettingTab === 'google-sheets'
+              ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+          <span>Google Sheets Sync</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+            Live API
           </span>
         </button>
       </div>
@@ -770,6 +789,8 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
             </div>
           </div>
         </div>
+      ) : activeSettingTab === 'google-sheets' ? (
+        <GoogleSheetsSettings patients={patients} />
       ) : (
         /* Catalog Grid by Category */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
