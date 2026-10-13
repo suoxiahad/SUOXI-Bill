@@ -412,9 +412,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                     onChange={(e) => setRole(e.target.value as UserRole)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-slate-800"
                   >
-                    <option value="Doctor">Doctor (Quotation & Patient History)</option>
-                    <option value="Call Center">Call Center (Appointment Import & Intake)</option>
-                    <option value="Billing Counter">Billing Counter (Quotation History Only)</option>
+                    <option value="Doctor">Doctor (Consultation, Quotation & History)</option>
+                    <option value="Call Center">Call Center (Appointments Import & Consultation)</option>
+                    <option value="Billing Counter">Billing Counter (Consultation & Quotation History)</option>
                     <option value="System Admin">System Admin (Full System Access)</option>
                   </select>
                 </div>
@@ -427,7 +427,11 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                   <div className="space-y-1 text-[11px] text-slate-600">
                     <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Call Center' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                      <span>Appointments & Excel Import ({role === 'System Admin' || role === 'Call Center' ? 'Granted' : 'Denied'})</span>
+                      <span>Appointments Import ({role === 'System Admin' || role === 'Call Center' ? 'Granted' : 'Denied'})</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Doctor' || role === 'Call Center' || role === 'Billing Counter' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                      <span>Consultation ({role === 'System Admin' || role === 'Doctor' || role === 'Call Center' || role === 'Billing Counter' ? 'Granted' : 'Denied'})</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Doctor' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
@@ -439,7 +443,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${role === 'System Admin' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                      <span>Catalog & Rates ({role === 'System Admin' ? 'Granted' : 'Denied'})</span>
+                      <span>Settings & Rates ({role === 'System Admin' ? 'Granted' : 'Denied'})</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${role === 'System Admin' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>

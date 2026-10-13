@@ -100,7 +100,7 @@ const upload = multer({
   }
 });
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'suoxi_hospital_secure_jwt_secret_key_2026_default_32char_long';
 
 // Interface definitions
@@ -231,11 +231,43 @@ function touchServerDataVersion() {
   serverDataVersion = Date.now();
 }
 
+const DEFAULT_PROFESSIONS = [
+  'Business',
+  'Govt. Service',
+  'Private Job',
+  'Housewife',
+  'Student',
+  'Teacher',
+  'Doctor',
+  'Engineer',
+  'Lawyer',
+  'Banker',
+  'Retired',
+  'Farmer',
+  'Driver',
+  'Abroad / Expatriate',
+  'Freelancer / IT',
+  'Other'
+];
+
+const DEFAULT_CONSULTATION_COMMENTS = [
+  'Will take today',
+  'Will admit',
+  'Will take later',
+  'Costly',
+  'Follow-up needed',
+  'Consultation Only',
+  'Need Family Discussion',
+  'Attended Counseling'
+];
+
 let localData = {
   users: INITIAL_USERS,
   patients: INITIAL_PATIENTS,
   quotations: [] as any[],
-  catalog: DEFAULT_CATALOG
+  catalog: DEFAULT_CATALOG,
+  professions: DEFAULT_PROFESSIONS,
+  comments: DEFAULT_CONSULTATION_COMMENTS
 };
 
 function loadLocalDb() {
@@ -255,11 +287,27 @@ function loadLocalDb() {
         }
       }
 
+      // Ensure unconfirmed patients start clean in Appointments Import queue
+      patients = patients.map((p: any) => {
+        if (!p.isConfirmed) {
+          return {
+            ...p,
+            isConfirmed: false,
+            consultationSerial: null,
+            consultationStatus: undefined,
+            status: p.status === 'Post Consultation' ? 'Pending Counseling' : (p.status || 'Pending Counseling')
+          };
+        }
+        return p;
+      });
+
       localData = {
         users,
         patients,
         quotations,
-        catalog: Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : DEFAULT_CATALOG
+        catalog: Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : DEFAULT_CATALOG,
+        professions: Array.isArray(parsed.professions) && parsed.professions.length > 0 ? parsed.professions : DEFAULT_PROFESSIONS,
+        comments: Array.isArray(parsed.comments) && parsed.comments.length > 0 ? parsed.comments : DEFAULT_CONSULTATION_COMMENTS
       };
     } else {
       saveLocalDb();
@@ -610,6 +658,8 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
     patients,
     quotations,
     catalog,
+    professions: (localData as any).professions || DEFAULT_PROFESSIONS,
+    comments: (localData as any).comments || DEFAULT_CONSULTATION_COMMENTS,
     users,
     dbMode: isMySqlActive ? 'MySQL Central Database' : 'Local File Persistence',
     dataVersion: serverDataVersion
@@ -1029,15 +1079,24 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     appointmentTime: p.appointmentTime || '09:00 AM',
     department: p.department || 'Acupuncture',
     status: p.status || 'Pending Counseling',
+    isConfirmed: p.isConfirmed !== undefined ? Boolean(p.isConfirmed) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].isConfirmed) : false),
+    confirmedAt: p.confirmedAt !== undefined ? p.confirmedAt : (existingIdx >= 0 ? localData.patients[existingIdx].confirmedAt : ''),
+    consultationSerial: p.consultationSerial !== undefined ? p.consultationSerial : (existingIdx >= 0 ? localData.patients[existingIdx].consultationSerial : null),
+    consultationStatus: p.consultationStatus !== undefined ? p.consultationStatus : (existingIdx >= 0 ? localData.patients[existingIdx].consultationStatus : ''),
+    profession: p.profession !== undefined ? p.profession : (existingIdx >= 0 ? localData.patients[existingIdx].profession : ''),
+    preDoctorName: p.preDoctorName !== undefined ? p.preDoctorName : (existingIdx >= 0 ? localData.patients[existingIdx].preDoctorName : ''),
+    postDoctorName: p.postDoctorName !== undefined ? p.postDoctorName : (existingIdx >= 0 ? localData.patients[existingIdx].postDoctorName : ''),
+    preConsultationAt: p.preConsultationAt !== undefined ? p.preConsultationAt : (existingIdx >= 0 ? localData.patients[existingIdx].preConsultationAt : ''),
+    postConsultationAt: p.postConsultationAt !== undefined ? p.postConsultationAt : (existingIdx >= 0 ? localData.patients[existingIdx].postConsultationAt : ''),
     notes: p.notes || p.remark || '',
     remark: p.remark || p.notes || '',
     createdAt: p.createdAt || new Date().toISOString()
   };
 
   if (existingIdx >= 0) {
-    localData.patients[existingIdx] = { ...localData.patients[existingIdx], ...formattedPatient };
+    localData.patients[existingIdx] = { ...localData.patients[existingIdx], ...formattedPatient, ...p };
   } else {
-    localData.patients.unshift(formattedPatient);
+    localData.patients.unshift({ ...formattedPatient, ...p });
   }
   saveLocalDb();
 
@@ -1055,7 +1114,90 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     }
   }
 
-  res.json({ message: 'Patient saved successfully', patient: formattedPatient, patients: localData.patients });
+  res.json({ message: 'Patient saved successfully', patient: localData.patients[existingIdx >= 0 ? existingIdx : 0], patients: localData.patients });
+});
+
+// Single patient confirm / un-confirm endpoint with sequential consultation serial per appointment date
+app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
+  const { id, isConfirmed = true } = req.body;
+  if (!id) return res.status(400).json({ error: 'Patient ID is required' });
+
+  const idx = localData.patients.findIndex(p => p.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
+
+  const patient = localData.patients[idx];
+  const targetDate = patient.appointmentDate || new Date().toISOString().split('T')[0];
+
+  if (isConfirmed === false) {
+    // Un-confirm: revert back to waiting in Appointments Import
+    localData.patients[idx] = {
+      ...patient,
+      isConfirmed: false,
+      confirmedAt: undefined,
+      consultationSerial: null,
+      consultationStatus: undefined,
+      status: 'Pending Counseling'
+    };
+  } else {
+    // Confirm patient: calculate next sequential consultation serial for that specific appointment date
+    let maxSerial = 0;
+    localData.patients.forEach(p => {
+      if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+        if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+      }
+    });
+
+    const nextSerial = maxSerial + 1;
+    localData.patients[idx] = {
+      ...patient,
+      isConfirmed: true,
+      confirmedAt: new Date().toISOString(),
+      consultationSerial: nextSerial,
+      consultationStatus: 'Pre Consultation',
+      status: 'Pre Consultation'
+    };
+  }
+
+  saveLocalDb();
+  touchServerDataVersion();
+  res.json({ success: true, patient: localData.patients[idx], patients: localData.patients });
+});
+
+// Batch confirm endpoint
+app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No patient IDs provided' });
+
+  const updated: any[] = [];
+  for (const id of ids) {
+    const idx = localData.patients.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      const patient = localData.patients[idx];
+      if (!patient.isConfirmed) {
+        const targetDate = patient.appointmentDate || new Date().toISOString().split('T')[0];
+        let maxSerial = 0;
+        localData.patients.forEach(p => {
+          if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+            if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+          }
+        });
+        const nextSerial = maxSerial + 1;
+        localData.patients[idx] = {
+          ...patient,
+          isConfirmed: true,
+          confirmedAt: new Date().toISOString(),
+          consultationSerial: nextSerial,
+          consultationStatus: 'Pre Consultation',
+          status: 'Pre Consultation'
+        };
+        updated.push(localData.patients[idx]);
+      }
+    }
+  }
+
+  saveLocalDb();
+  touchServerDataVersion();
+  res.json({ success: true, count: updated.length, patients: localData.patients });
 });
 
 app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 'Call Center'), async (req, res) => {
@@ -1289,6 +1431,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
         if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str)) score += 1;
         if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str)) score += 1;
         if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str)) score += 2;
+        if (/(address|location|thana|district|city|addr|ঠিকানা|বাসা|এলাকা|লোকেশন|জেলা|থানা)/i.test(str)) score += 2;
       });
 
       if (score > maxScore && score >= 2) {
@@ -1302,6 +1445,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
     let phoneCol = -1;
     let ageCol = -1;
     let genderCol = -1;
+    let addressCol = -1;
     let remarkCol = -1;
 
     if (headerRowIdx !== -1) {
@@ -1322,11 +1466,13 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           ageCol = idx;
         } else if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str) && genderCol === -1) {
           genderCol = idx;
+        } else if (/(address|location|thana|district|city|addr|ঠিকানা|বাসা|এলাকা|লোকেশন|জেলা|থানা)/i.test(str) && addressCol === -1) {
+          addressCol = idx;
         }
       });
     }
 
-    const extractedPatients: Array<{ serialNo?: string; name: string; gender: string; age: string; phone: string; remark: string }> = [];
+    const extractedPatients: Array<{ serialNo?: string; name: string; gender: string; age: string; phone: string; address?: string; remark: string }> = [];
     const startRow = headerRowIdx !== -1 ? headerRowIdx + 1 : 0;
 
     for (let r = startRow; r < matrix.length; r++) {
@@ -1338,6 +1484,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
       let phone = phoneCol !== -1 ? String(row[phoneCol] || '').trim() : '';
       let age = ageCol !== -1 ? String(row[ageCol] || '').trim() : '';
       let gender = genderCol !== -1 ? String(row[genderCol] || '').trim() : '';
+      let address = addressCol !== -1 ? String(row[addressCol] || '').trim() : '';
       let remark = remarkCol !== -1 ? String(row[remarkCol] || '').trim() : '';
 
       row.forEach((cell, cIdx) => {
@@ -1388,6 +1535,20 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
             !/male|female|new patient|completed|robin|alamin|pending|cancel/i.test(val)
           ) {
             remark = val;
+          }
+        }
+
+        // Detect Address fallback
+        if (!address && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== remarkCol && cIdx !== serialCol) {
+          const isNumeric = /^\d+$/.test(val);
+          const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
+          if (
+            val.length >= 3 &&
+            !isNumeric &&
+            !isPhone &&
+            /(dhaka|chittagong|sylhet|rajshahi|khulna|barishal|rangpur|mymensingh|uttara|dhanmondi|mirpur|gulshan|banani|mohammadpur|badda|rampura|motijheel|savar|gazipur|narayanganj|road|sector|block|house|flat|thana|district|ঠিকানা|বাসা|এলাকা|লোকেশন|জেলা|থানা|রোড|বাড়ি)/i.test(val)
+          ) {
+            address = val;
           }
         }
       });
@@ -1446,6 +1607,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           gender: gender || 'Male',
           age: age || '',
           phone: finalPhone,
+          address: address || '',
           remark: remark || 'General Assessment',
         });
       }
@@ -1818,6 +1980,38 @@ app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor'
   res.status(400).json({ error: 'Invalid catalog data' });
 });
 
+// Professions Settings API
+app.get('/api/settings/professions', authenticateToken, (req, res) => {
+  res.json({ professions: (localData as any).professions || DEFAULT_PROFESSIONS });
+});
+
+app.post('/api/settings/professions', authenticateToken, requireRole('System Admin', 'Doctor'), (req, res) => {
+  const { professions } = req.body;
+  if (Array.isArray(professions) && professions.length > 0) {
+    (localData as any).professions = professions.map((p: string) => String(p).trim()).filter(Boolean);
+    saveLocalDb();
+    touchServerDataVersion();
+    return res.json({ success: true, professions: (localData as any).professions });
+  }
+  res.status(400).json({ error: 'Invalid professions data' });
+});
+
+// Consultation Comments / Decisions Settings API
+app.get('/api/settings/comments', authenticateToken, (req, res) => {
+  res.json({ comments: (localData as any).comments || DEFAULT_CONSULTATION_COMMENTS });
+});
+
+app.post('/api/settings/comments', authenticateToken, requireRole('System Admin', 'Doctor'), (req, res) => {
+  const { comments } = req.body;
+  if (Array.isArray(comments) && comments.length > 0) {
+    (localData as any).comments = comments.map((c: string) => String(c).trim()).filter(Boolean);
+    saveLocalDb();
+    touchServerDataVersion();
+    return res.json({ success: true, comments: (localData as any).comments });
+  }
+  res.status(400).json({ error: 'Invalid comments data' });
+});
+
 // 7. System Admin Clear Demo Data API
 app.post('/api/admin/clear-demo-data', authenticateToken, requireRole('System Admin'), async (req, res) => {
   try {
@@ -1873,8 +2067,12 @@ async function startServer() {
   }
 
   if (process.env.NODE_ENV !== 'production') {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: isHmrDisabled ? false : undefined,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

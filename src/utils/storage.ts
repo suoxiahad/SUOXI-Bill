@@ -6,6 +6,122 @@ const QUOTATIONS_KEY = 'suoxi_quotations_db';
 const CATALOG_KEY = 'suoxi_catalog_db';
 const AUTH_KEY = 'suoxi_auth_user';
 const DATA_VERSION_KEY = 'suoxi_data_version';
+const PROFESSIONS_KEY = 'suoxi_professions_db';
+const COMMENTS_KEY = 'suoxi_comments_db';
+
+export const DEFAULT_PROFESSIONS: string[] = [
+  'Business',
+  'Govt. Service',
+  'Private Job',
+  'Housewife',
+  'Student',
+  'Teacher',
+  'Doctor',
+  'Engineer',
+  'Lawyer',
+  'Banker',
+  'Retired',
+  'Farmer',
+  'Driver',
+  'Abroad / Expatriate',
+  'Freelancer / IT',
+  'Other'
+];
+
+export const DEFAULT_CONSULTATION_COMMENTS: string[] = [
+  'Will take today',
+  'Will admit',
+  'Will take later',
+  'Costly',
+  'Follow-up needed',
+  'Consultation Only',
+  'Need Family Discussion',
+  'Attended Counseling'
+];
+
+export const getProfessionsLocal = (): string[] => {
+  try {
+    const data = localStorage.getItem(PROFESSIONS_KEY);
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    // fallback
+  }
+  return DEFAULT_PROFESSIONS;
+};
+
+export const saveProfessionsLocal = (professions: string[]): void => {
+  try {
+    localStorage.setItem(PROFESSIONS_KEY, JSON.stringify(professions));
+  } catch (err) {
+    console.warn('Failed to save professions locally:', err);
+  }
+};
+
+export const saveProfessionsApi = async (professions: string[]): Promise<string[]> => {
+  saveProfessionsLocal(professions);
+  try {
+    const res = await fetch('/api/settings/professions', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ professions })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.professions) {
+        saveProfessionsLocal(data.professions);
+        return data.professions;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed saving professions to backend:', err);
+  }
+  return professions;
+};
+
+export const getConsultationCommentsLocal = (): string[] => {
+  try {
+    const data = localStorage.getItem(COMMENTS_KEY);
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    // fallback
+  }
+  return DEFAULT_CONSULTATION_COMMENTS;
+};
+
+export const saveConsultationCommentsLocal = (comments: string[]): void => {
+  try {
+    localStorage.setItem(COMMENTS_KEY, JSON.stringify(comments));
+  } catch (err) {
+    console.warn('Failed to save comments locally:', err);
+  }
+};
+
+export const saveConsultationCommentsApi = async (comments: string[]): Promise<string[]> => {
+  saveConsultationCommentsLocal(comments);
+  try {
+    const res = await fetch('/api/settings/comments', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ comments })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.comments) {
+        saveConsultationCommentsLocal(data.comments);
+        return data.comments;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed saving comments to backend:', err);
+  }
+  return comments;
+};
 
 export const getStoredDataVersion = (): number => {
   try {
@@ -153,6 +269,8 @@ export interface InitDataResponse {
   quotations: InvoiceQuotation[];
   catalog: CatalogItem[];
   users: User[];
+  professions?: string[];
+  comments?: string[];
   dbMode?: string;
   dataVersion?: number;
 }
@@ -163,13 +281,17 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
   const localQuotations = getQuotationsLocal();
   const localCatalog = getCatalogLocal();
   const localUsers = getUsersLocal();
+  const localProfessions = getProfessionsLocal();
+  const localComments = getConsultationCommentsLocal();
 
   if (!user || !user.token) {
     return {
       patients: localPatients,
       quotations: localQuotations,
       catalog: localCatalog,
-      users: localUsers
+      users: localUsers,
+      professions: localProfessions,
+      comments: localComments
     };
   }
 
@@ -183,11 +305,15 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
         const serverQuotations = Array.isArray(data.quotations) ? data.quotations : [];
         const serverCatalog = Array.isArray(data.catalog) && data.catalog.length > 0 ? data.catalog : localCatalog;
         const serverUsers = Array.isArray(data.users) && data.users.length > 0 ? data.users : localUsers;
+        const serverProfessions = Array.isArray(data.professions) && data.professions.length > 0 ? data.professions : localProfessions;
+        const serverComments = Array.isArray(data.comments) && data.comments.length > 0 ? data.comments : localComments;
 
         savePatientsLocal(serverPatients);
         saveQuotationsLocal(serverQuotations);
         saveCatalogLocal(serverCatalog);
         saveUsersLocal(serverUsers);
+        saveProfessionsLocal(serverProfessions);
+        saveConsultationCommentsLocal(serverComments);
 
         if (data.dataVersion) {
           setStoredDataVersion(Number(data.dataVersion));
@@ -198,6 +324,8 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
           quotations: serverQuotations,
           catalog: serverCatalog,
           users: serverUsers,
+          professions: serverProfessions,
+          comments: serverComments,
           dbMode: data.dbMode,
           dataVersion: data.dataVersion
         };
@@ -211,7 +339,9 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
     patients: localPatients,
     quotations: localQuotations,
     catalog: localCatalog,
-    users: localUsers
+    users: localUsers,
+    professions: localProfessions,
+    comments: localComments
   };
 };
 
@@ -305,7 +435,7 @@ export const getPatientsLocal = (): Patient[] => {
     if (data) {
       patients = JSON.parse(data);
     }
-    // Ensure strictly unique IDs across loaded patients
+    // Ensure strictly unique IDs across loaded patients and clean confirmation state
     const seen = new Set<string>();
     const uniquePatients: Patient[] = [];
     patients.forEach((p, idx) => {
@@ -314,7 +444,16 @@ export const getPatientsLocal = (): Patient[] => {
         id = `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`;
       }
       seen.add(id);
-      uniquePatients.push({ ...p, id });
+      let sanitized = { ...p, id };
+      if (!sanitized.isConfirmed) {
+        sanitized.isConfirmed = false;
+        sanitized.consultationSerial = null;
+        sanitized.consultationStatus = undefined;
+        if (sanitized.status === 'Post Consultation') {
+          sanitized.status = 'Pending Counseling';
+        }
+      }
+      uniquePatients.push(sanitized);
     });
     inMemoryPatients = uniquePatients;
     return uniquePatients;
@@ -372,6 +511,103 @@ export const addOrUpdatePatientApi = async (patient: Patient): Promise<Patient[]
     }
   } catch (err) {
     console.warn('Error saving patient to backend:', err);
+  }
+
+  return current;
+};
+
+export const confirmPatientApi = async (id: string, isConfirmed: boolean = true): Promise<{ patient?: Patient; patients: Patient[] }> => {
+  const current = getPatientsLocal();
+  const idx = current.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
+    if (isConfirmed) {
+      let maxSerial = 0;
+      current.forEach(p => {
+        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+        }
+      });
+      current[idx] = {
+        ...current[idx],
+        isConfirmed: true,
+        confirmedAt: new Date().toISOString(),
+        consultationSerial: maxSerial + 1,
+        consultationStatus: 'Pre Consultation',
+        status: 'Pre Consultation'
+      };
+    } else {
+      current[idx] = {
+        ...current[idx],
+        isConfirmed: false,
+        confirmedAt: undefined,
+        consultationSerial: null,
+        consultationStatus: undefined,
+        status: 'Pending Counseling'
+      };
+    }
+    savePatientsLocal([...current]);
+  }
+
+  try {
+    const res = await fetch('/api/patients/confirm', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ id, isConfirmed })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.patients) {
+        savePatientsLocal(data.patients);
+        return { patient: data.patient, patients: data.patients };
+      }
+    }
+  } catch (err) {
+    console.warn('Backend confirm error:', err);
+  }
+
+  return { patient: current[idx], patients: current };
+};
+
+export const confirmBatchPatientsApi = async (ids: string[]): Promise<Patient[]> => {
+  const current = getPatientsLocal();
+  for (const id of ids) {
+    const idx = current.findIndex(p => p.id === id);
+    if (idx !== -1 && !current[idx].isConfirmed) {
+      const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
+      let maxSerial = 0;
+      current.forEach(p => {
+        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+        }
+      });
+      current[idx] = {
+        ...current[idx],
+        isConfirmed: true,
+        confirmedAt: new Date().toISOString(),
+        consultationSerial: maxSerial + 1,
+        consultationStatus: 'Pre Consultation',
+        status: 'Pre Consultation'
+      };
+    }
+  }
+  savePatientsLocal([...current]);
+
+  try {
+    const res = await fetch('/api/patients/confirm-batch', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ ids })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.patients) {
+        savePatientsLocal(data.patients);
+        return data.patients;
+      }
+    }
+  } catch (err) {
+    console.warn('Backend confirm batch error:', err);
   }
 
   return current;

@@ -26,11 +26,13 @@ import {
   CheckSquare,
   Square,
   ShieldCheck,
-  FileX
+  FileX,
+  Stethoscope,
+  Undo2
 } from 'lucide-react';
 import { Patient, InvoiceQuotation } from '../types';
 import { parseExcelAppointmentFile, downloadSampleExcelTemplate, ParsedExcelPatient } from '../utils/excelHelper';
-import { importPatientsFromExcelApi, deletePatientsApi } from '../utils/storage';
+import { importPatientsFromExcelApi, deletePatientsApi, confirmPatientApi, confirmBatchPatientsApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
 
 interface AppointmentImporterProps {
@@ -39,6 +41,7 @@ interface AppointmentImporterProps {
   onRefreshPatients: () => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
   onOpenAddPatient: () => void;
+  onGoToConsultation?: () => void;
 }
 
 export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
@@ -46,12 +49,15 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   quotations = [],
   onRefreshPatients,
   onSelectPatientForQuotation,
-  onOpenAddPatient
+  onOpenAddPatient,
+  onGoToConsultation
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
-  const [activeSubTab, setActiveSubTab] = useState<'all' | 'no-quotation'>('all');
+  const [activeSubTab, setActiveSubTab] = useState<'all' | 'confirmed'>('all');
+  const [isConfirmingId, setIsConfirmingId] = useState<string | null>(null);
+  const [patientToUndo, setPatientToUndo] = useState<Patient | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -71,6 +77,69 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     setCurrentPage(1);
     setSelectedPatientIds([]);
   }, [filterText, selectedDateFilter, activeSubTab]);
+
+  const handleConfirmPatient = async (p: Patient) => {
+    setIsConfirmingId(p.id);
+    try {
+      const res = await confirmPatientApi(p.id, true);
+      const serialNum = res.patient?.consultationSerial;
+      setUploadMessage({
+        type: 'success',
+        text: `✓ ${p.name} confirmed for Pre Consultation (Serial #${serialNum || '✓'}).`
+      });
+      onRefreshPatients();
+      setTimeout(() => setUploadMessage(null), 4000);
+    } catch (err: any) {
+      setUploadMessage({
+        type: 'error',
+        text: `Failed to confirm patient: ${err?.message || 'Error occurred'}`
+      });
+    } finally {
+      setIsConfirmingId(null);
+    }
+  };
+
+  const handleUnconfirmPatient = async (p: Patient) => {
+    setIsConfirmingId(p.id);
+    try {
+      await confirmPatientApi(p.id, false);
+      setUploadMessage({
+        type: 'info',
+        text: `${p.name} removed from Pre Consultation and reverted to unconfirmed.`
+      });
+      onRefreshPatients();
+      setTimeout(() => setUploadMessage(null), 3000);
+    } catch (err: any) {
+      setUploadMessage({
+        type: 'error',
+        text: `Failed to revert: ${err?.message || 'Error occurred'}`
+      });
+    } finally {
+      setIsConfirmingId(null);
+    }
+  };
+
+  const handleBulkConfirmPatients = async () => {
+    if (selectedPatientIds.length === 0) return;
+    setIsDeleting(true);
+    try {
+      await confirmBatchPatientsApi(selectedPatientIds);
+      setUploadMessage({
+        type: 'success',
+        text: `✓ Successfully confirmed ${selectedPatientIds.length} patient(s) in sequential order for Pre Consultation.`
+      });
+      setSelectedPatientIds([]);
+      onRefreshPatients();
+      setTimeout(() => setUploadMessage(null), 4000);
+    } catch (err: any) {
+      setUploadMessage({
+        type: 'error',
+        text: `Failed to bulk confirm: ${err?.message || 'Error occurred'}`
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleConfirmDelete = async () => {
     if (selectedPatientIds.length === 0) return;
@@ -263,13 +332,13 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   };
 
   // Compute counts for the tabs
-  const noQuotationCountTotal = useMemo(() => {
-    return patients.filter(isPatientWithoutQuotation).length;
-  }, [patients, patientsWithQuotationsSet]);
+  const confirmedCountTotal = useMemo(() => {
+    return patients.filter(p => !!p.isConfirmed).length;
+  }, [patients]);
 
   const filteredPatients = patients.filter(p => {
-    if (activeSubTab === 'no-quotation') {
-      if (!isPatientWithoutQuotation(p)) return false;
+    if (activeSubTab === 'confirmed') {
+      if (!p.isConfirmed) return false;
     }
 
     const matchesText = matchPatient(filterText, p);
@@ -297,17 +366,28 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
           <div>
             <div className="inline-flex items-center gap-2 bg-emerald-800/80 text-emerald-200 text-xs px-3 py-1 rounded-full font-bold border border-emerald-700/60 mb-2">
               <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-              <span>Call Center Daily Intake • Excel & CSV Appointment Importer</span>
+              <span>Call Center Daily Intake • Appointments Import</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Daily Appointment List & Excel Importer
+              Appointments Import & Excel Intake
             </h2>
             <p className="text-emerald-200/90 text-xs sm:text-sm mt-1 max-w-2xl leading-relaxed">
-              Upload daily appointment Excel (.xlsx / .xls / .csv) files from Call Center or manually register patients to generate billing quotations instantly.
+              Upload daily appointment Excel (.xlsx / .xls / .csv) files from Call Center to register patients and populate the Consultation desk queue.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onGoToConsultation && (
+              <button
+                onClick={onGoToConsultation}
+                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg transition cursor-pointer"
+                title="View Patient List in Consultation Desk"
+              >
+                <Stethoscope className="w-4 h-4" />
+                <span>Go to Consultation Tab</span>
+              </button>
+            )}
+
             <button
               onClick={downloadSampleExcelTemplate}
               className="flex items-center gap-2 bg-emerald-800/90 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl border border-emerald-600/50 shadow transition cursor-pointer"
@@ -318,7 +398,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
             <button
               onClick={onOpenAddPatient}
-              className="flex items-center gap-2 bg-emerald-400 hover:bg-emerald-300 text-emerald-950 text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg transition cursor-pointer"
+              className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl border border-emerald-500/50 shadow transition cursor-pointer"
             >
               <UserPlus className="w-4 h-4" />
               <span>New Patient Entry</span>
@@ -335,7 +415,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
             <span>Upload Daily Appointment Excel Sheet</span>
           </h3>
           <span className="text-[11px] text-slate-500 font-medium">
-            Target Columns: Serial No., Patient Name, Age, Contact Number, Disease Name
+            Target Columns: Serial No., Patient Name, Age, Contact Number, Address, Disease Name
           </span>
         </div>
 
@@ -462,9 +542,10 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                     <th className="px-3 py-2">SL No.</th>
                     <th className="px-3 py-2">Appt Date</th>
                     <th className="px-3 py-2">Patient Name</th>
+                    <th className="px-3 py-2">Phone Number</th>
                     <th className="px-3 py-2">Gender</th>
                     <th className="px-3 py-2">Age</th>
-                    <th className="px-3 py-2">Phone Number</th>
+                    <th className="px-3 py-2">Address</th>
                     <th className="px-3 py-2">Remark (Disease / Condition)</th>
                   </tr>
                 </thead>
@@ -488,9 +569,12 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                         {formatDateDisplay(p.appointmentDate || selectedDate)}
                       </td>
                       <td className="px-3 py-2 font-semibold text-slate-900">{p.name}</td>
+                      <td className="px-3 py-2 font-mono text-slate-700">{p.phone}</td>
                       <td className="px-3 py-2">{p.gender}</td>
                       <td className="px-3 py-2">{p.age || '—'}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{p.phone}</td>
+                      <td className="px-3 py-2 text-slate-700 max-w-xs truncate" title={p.address || ''}>
+                        {p.address || '—'}
+                      </td>
                       <td className="px-3 py-2 text-slate-600">{p.remark}</td>
                     </tr>
                   ))}
@@ -504,9 +588,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
       {/* Patient Database List */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
         
-        {/* Sub-Tabs: All Patients vs No Quotation Created */}
+        {/* Sub-Tabs: All Appointments & Confirmed */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-          <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl w-fit">
+          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-2xl w-fit">
             <button
               type="button"
               onClick={() => setActiveSubTab('all')}
@@ -517,7 +601,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
               }`}
             >
               <User className="w-3.5 h-3.5 text-emerald-600" />
-              <span>All Registered Patients</span>
+              <span>All Appointments</span>
               <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
                 {patients.length}
               </span>
@@ -525,33 +609,34 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
             <button
               type="button"
-              onClick={() => setActiveSubTab('no-quotation')}
+              onClick={() => setActiveSubTab('confirmed')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeSubTab === 'no-quotation'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'text-amber-700 hover:text-amber-900 hover:bg-amber-50'
+                activeSubTab === 'confirmed'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50'
               }`}
             >
-              <FileX className="w-3.5 h-3.5" />
-              <span>No Quotation Created</span>
+              <CheckCircle className="w-3.5 h-3.5" />
+              <span>Confirmed</span>
               <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold ${
-                activeSubTab === 'no-quotation'
-                  ? 'bg-amber-700 text-amber-100'
-                  : 'bg-amber-100 text-amber-800'
+                activeSubTab === 'confirmed' ? 'bg-emerald-700 text-emerald-100' : 'bg-emerald-100 text-emerald-800'
               }`}>
-                {noQuotationCountTotal}
+                {confirmedCountTotal}
               </span>
             </button>
           </div>
 
           <div className="text-xs text-slate-500 font-medium">
-            {activeSubTab === 'no-quotation' ? (
-              <span className="text-amber-700 flex items-center gap-1">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                <span>Unused appointment entries that have no financial/treatment quotation.</span>
+            {activeSubTab === 'confirmed' ? (
+              <span className="text-emerald-700 flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>Confirmed patients transferred to the Pre Consultation queue in sequential serial.</span>
               </span>
             ) : (
-              <span>Select any patient below to generate quotation or manage records.</span>
+              <span className="text-slate-600 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>All imported appointments. Click <strong>Confirm</strong> to assign sequential Pre Consultation serial.</span>
+              </span>
             )}
           </div>
         </div>
@@ -560,9 +645,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
           <div>
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-              <span>
-                {activeSubTab === 'no-quotation' ? 'Unused Appointments List' : 'Patient List'} ({filteredPatients.length} shown)
-              </span>
+              <span>Patient List ({filteredPatients.length} shown)</span>
               {selectedPatientIds.length > 0 && (
                 <span className="ml-2 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                   {selectedPatientIds.length} Selected
@@ -572,8 +655,8 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            {/* Quick Bulk Select Button for No Quotation Tab */}
-            {activeSubTab === 'no-quotation' && filteredPatients.length > 0 && (
+            {/* Quick Bulk Select Button */}
+            {filteredPatients.length > 0 && (
               <button
                 type="button"
                 onClick={() => {
@@ -593,12 +676,27 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                 ) : (
                   <>
                     <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Select All in this View ({filteredPatients.length})</span>
+                    <span>Select All ({filteredPatients.length})</span>
                   </>
                 )}
               </button>
             )}
 
+            {/* Bulk Confirm Button */}
+            {selectedPatientIds.length > 0 && (
+              <button
+                type="button"
+                onClick={handleBulkConfirmPatients}
+                disabled={isDeleting}
+                className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                title="Confirm all selected patients in sequential order for Pre Consultation"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span>Confirm Selected ({selectedPatientIds.length})</span>
+              </button>
+            )}
+
+            {/* Bulk Delete Button */}
             {selectedPatientIds.length > 0 && (
               <button
                 type="button"
@@ -606,9 +704,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                 className="text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>
-                  {activeSubTab === 'no-quotation' ? 'Clean / Delete Selected' : 'Delete Selected'} ({selectedPatientIds.length})
-                </span>
+                <span>Delete Selected ({selectedPatientIds.length})</span>
               </button>
             )}
 
@@ -654,32 +750,11 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
           </div>
         </div>
 
-        {/* Helpful Info Alert for No Quotation Tab */}
-        {activeSubTab === 'no-quotation' && (
-          <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-3 flex items-center justify-between text-xs text-amber-900 gap-2">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>
-                <strong>Safe Database Clean-up:</strong> Only patients without any quotation are listed here. Deleting from this tab will keep all generated quotations and medical records 100% safe.
-              </span>
-            </div>
-            {filteredPatients.length > 0 && selectedPatientIds.length === 0 && (
-              <button
-                type="button"
-                onClick={() => setSelectedPatientIds(filteredPatients.map(p => p.id))}
-                className="shrink-0 text-xs font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
-              >
-                Select all {filteredPatients.length} to clean
-              </button>
-            )}
-          </div>
-        )}
-
         {filteredPatients.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs space-y-2">
             <p>
-              {activeSubTab === 'no-quotation' 
-                ? 'All patients in this view already have quotations created! No unused entries found.'
+              {activeSubTab === 'confirmed'
+                ? 'No confirmed patients found for the selected date or search filter.'
                 : 'No registered patients found for the selected date or search filter.'}
             </p>
             {selectedDateFilter !== 'all' && (
@@ -693,9 +768,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
           </div>
         ) : (
           <div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
+            <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-2xs">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-100 text-slate-700 uppercase text-xs font-semibold tracking-wider border-b border-slate-200">
                   <tr>
                     <th className="px-3 py-3 w-10 text-center">
                       <input
@@ -712,14 +787,14 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                         title="Select All"
                       />
                     </th>
-                    <th className="px-3 py-3 font-bold">SL No.</th>
-                    <th className="px-3 py-3 font-bold">Appt Date</th>
-                    <th className="px-4 py-3 font-bold">Patient Name</th>
-                    <th className="px-4 py-3 font-bold">Phone Number</th>
-                    <th className="px-3 py-3 font-bold">Gender / Age</th>
-                    <th className="px-4 py-3 font-bold">Remark (Disease)</th>
-                    <th className="px-3 py-3 font-bold">Status</th>
-                    <th className="px-4 py-3 font-bold text-right">Action</th>
+                    <th className="px-3 py-3 font-semibold whitespace-nowrap">SL No.</th>
+                    <th className="px-3 py-3 font-semibold whitespace-nowrap">Appt Date</th>
+                    <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Patient Name</th>
+                    <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Phone Number</th>
+                    <th className="px-3 py-3 font-semibold whitespace-nowrap">Gender / Age</th>
+                    <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Address</th>
+                    <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Remark (Disease)</th>
+                    <th className="px-3.5 py-3 font-semibold text-right whitespace-nowrap">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -729,7 +804,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                     const itemDisplayIndex = startIndex + idx + 1;
                     return (
                       <tr key={p.id ? `${p.id}-${itemDisplayIndex}` : `pat-row-${itemDisplayIndex}`} className={`hover:bg-emerald-50/40 transition-colors ${isSelected ? 'bg-emerald-50/50' : ''}`}>
-                        <td className="px-3 py-3.5 w-10 text-center">
+                        <td className="px-3 py-3 w-10 text-center">
                           <input
                             type="checkbox"
                             checked={isSelected}
@@ -741,48 +816,72 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                             className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
                           />
                         </td>
-                        <td className="px-3 py-3.5 font-mono text-slate-500 font-bold">
+                        <td className="px-3 py-3 font-mono text-slate-800 font-medium whitespace-nowrap text-sm">
                           {p.serialNo || itemDisplayIndex}
                         </td>
-                        <td className="px-3 py-3.5 font-medium text-emerald-800 whitespace-nowrap text-[11px]">
-                          <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md font-semibold text-emerald-900">
+                        <td className="px-3 py-3 font-medium text-emerald-900 whitespace-nowrap text-sm">
+                          <span className="px-2.5 py-1 bg-emerald-50 border border-emerald-300 rounded-md font-semibold text-emerald-950 text-xs">
                             {p.appointmentDate ? formatDateDisplay(p.appointmentDate) : 'Today'}
                           </span>
                         </td>
-                        <td className="px-4 py-3.5 font-bold text-slate-900">
+                        <td className="px-3.5 py-3 font-normal text-slate-800 text-sm whitespace-nowrap">
                           {p.name}
                         </td>
-                        <td className="px-4 py-3.5 font-mono text-slate-700">
+                        <td className="px-3.5 py-3 font-mono text-slate-800 font-normal text-sm whitespace-nowrap">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span>{p.phone}</span>
                             {phoneDuplicates > 1 && (
-                              <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded-md border border-purple-200" title={`${phoneDuplicates} appointments registered under this mobile number`}>
+                              <span className="px-1.5 py-0.2 bg-purple-100 text-purple-900 text-[11px] font-normal rounded border border-purple-200" title={`${phoneDuplicates} appointments registered under this mobile number`}>
                                 {phoneDuplicates} Appts
                               </span>
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-3.5 text-slate-600 whitespace-nowrap">
+                        <td className="px-3 py-3 text-slate-600 whitespace-nowrap font-normal text-sm">
                           {p.gender || 'Male'} • {p.age ? `${p.age} Yrs` : 'N/A'}
                         </td>
-                        <td className="px-4 py-3.5 text-slate-600 max-w-xs truncate">
+                        <td className="px-3.5 py-3 text-slate-600 text-sm max-w-[180px] truncate font-normal" title={p.address || ''}>
+                          {p.address || '—'}
+                        </td>
+                        <td className="px-3.5 py-3 text-slate-700 text-sm max-w-xs font-normal truncate">
                           {p.remark || p.notes || 'General Assessment'}
                         </td>
-                        <td className="px-3 py-3.5">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap ${
-                            p.status === 'Quotation Created' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {p.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3.5 text-right">
-                          <button
-                            onClick={() => onSelectPatientForQuotation(p)}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow transition cursor-pointer flex items-center gap-1 ml-auto whitespace-nowrap"
-                          >
-                            <span>Create Quotation</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
+                        <td className="px-3.5 py-3 text-right whitespace-nowrap">
+                          {!p.isConfirmed ? (
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmPatient(p)}
+                              disabled={isConfirmingId === p.id}
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-sm rounded-xl shadow-xs transition cursor-pointer flex items-center gap-2 ml-auto disabled:opacity-50"
+                              title="Confirm appointment and assign sequential Pre Consultation serial"
+                            >
+                              {isConfirmingId === p.id ? (
+                                <Activity className="w-4 h-4 animate-spin text-white" />
+                              ) : (
+                                <CheckCircle className="w-4 h-4 text-emerald-200" />
+                              )}
+                              <span>Confirm</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setPatientToUndo(p)}
+                              disabled={isConfirmingId === p.id}
+                              className="px-4 py-2 bg-emerald-50 hover:bg-rose-50 text-emerald-800 hover:text-rose-700 border border-emerald-300 hover:border-rose-300 font-bold text-sm rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-2 ml-auto disabled:opacity-50 group"
+                              title="Click to Undo confirmation"
+                            >
+                              {isConfirmingId === p.id ? (
+                                <Activity className="w-4 h-4 animate-spin text-emerald-700" />
+                              ) : (
+                                <>
+                                  <CheckCircle className="w-4 h-4 text-emerald-600 group-hover:hidden" />
+                                  <Undo2 className="w-4 h-4 text-rose-600 hidden group-hover:inline" />
+                                </>
+                              )}
+                              <span className="group-hover:hidden">Confirmed #{p.consultationSerial || 1}</span>
+                              <span className="hidden group-hover:inline text-rose-700">Undo #{p.consultationSerial || 1}?</span>
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -861,6 +960,77 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         )}
 
       </div>
+
+      {/* Undo Patient Confirmation Warning Modal */}
+      {patientToUndo && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-base">
+                  Undo Patient Confirmation?
+                </h4>
+                <p className="text-xs text-slate-600 mt-1">
+                  Are you sure you want to undo this patient's confirmation?
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50/70 p-3.5 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600 font-medium">Patient:</span>
+                <strong className="text-slate-900">{patientToUndo.name}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600 font-medium">Current Status:</span>
+                <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
+                  Confirmed #{patientToUndo.consultationSerial || 1}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600 font-medium">Phone:</span>
+                <span className="font-mono text-slate-800">{patientToUndo.phone}</span>
+              </div>
+              <p className="text-[11px] text-amber-800 pt-1.5 border-t border-amber-200/60 leading-relaxed">
+                Clicking <strong>Yes</strong> will remove the patient from the <strong>Pre Consultation</strong> list and return them to the unconfirmed list.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isConfirmingId === patientToUndo.id}
+                onClick={() => setPatientToUndo(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isConfirmingId === patientToUndo.id}
+                onClick={async () => {
+                  const target = patientToUndo;
+                  setPatientToUndo(null);
+                  if (target) {
+                    await handleUnconfirmPatient(target);
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isConfirmingId === patientToUndo.id ? (
+                  <Activity className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Undo2 className="w-3.5 h-3.5" />
+                )}
+                <span>Yes, Undo Confirmation</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {isDeleteModalOpen && (

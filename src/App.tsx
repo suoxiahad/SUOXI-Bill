@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Lock, LogIn } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { AppointmentImporter } from './components/AppointmentImporter';
+import { Consultation } from './components/Consultation';
 import { QuotationBuilder } from './components/QuotationBuilder';
 import { QuotationPrintView } from './components/QuotationPrintView';
 import { QuotationHistory } from './components/QuotationHistory';
@@ -26,6 +27,10 @@ import {
   deleteQuotationsApi,
   getCatalogLocal,
   saveCatalogApi,
+  getProfessionsLocal,
+  saveProfessionsApi,
+  getConsultationCommentsLocal,
+  saveConsultationCommentsApi,
   getStoredDataVersion,
   setStoredDataVersion,
   invalidateLocalCaches
@@ -33,7 +38,7 @@ import {
 import { matchPatient, matchSearchQuery } from './utils/searchHelper';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'appointments' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
+  const [activeTab, setActiveTab] = useState<'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
   
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -42,6 +47,8 @@ export default function App() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [quotations, setQuotations] = useState<InvoiceQuotation[]>([]);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [professions, setProfessions] = useState<string[]>([]);
+  const [comments, setComments] = useState<string[]>([]);
 
   const [selectedPatientForQuotation, setSelectedPatientForQuotation] = useState<Patient | null>(null);
   const [editingQuotation, setEditingQuotation] = useState<InvoiceQuotation | null>(null);
@@ -72,16 +79,22 @@ export default function App() {
         setPatients(initData.patients);
         setQuotations(initData.quotations);
         setCatalog(initData.catalog);
+        if (initData.professions) setProfessions(initData.professions);
+        if (initData.comments) setComments(initData.comments);
       } else {
         setPatients(getPatientsLocal());
         setQuotations(getQuotationsLocal());
         setCatalog(getCatalogLocal());
+        setProfessions(getProfessionsLocal());
+        setComments(getConsultationCommentsLocal());
       }
     } else {
       setCurrentUser(null);
       setPatients(getPatientsLocal());
       setQuotations(getQuotationsLocal());
       setCatalog(getCatalogLocal());
+      setProfessions(getProfessionsLocal());
+      setComments(getConsultationCommentsLocal());
       setIsLoginModalOpen(true);
     }
     setIsLoading(false);
@@ -162,16 +175,16 @@ export default function App() {
     if (!currentUser) return;
     const role = currentUser.role;
     if (role === 'Call Center') {
-      if (activeTab !== 'appointments' && activeTab !== 'users') {
+      if (activeTab !== 'appointments' && activeTab !== 'consultation' && activeTab !== 'users') {
         setActiveTab('appointments');
       }
     } else if (role === 'Billing Counter') {
-      if (activeTab !== 'history' && activeTab !== 'users') {
+      if (activeTab !== 'consultation' && activeTab !== 'history' && activeTab !== 'users') {
         setActiveTab('history');
       }
     } else if (role === 'Doctor') {
-      if (activeTab !== 'quotation' && activeTab !== 'history' && activeTab !== 'users') {
-        setActiveTab('quotation');
+      if (activeTab !== 'consultation' && activeTab !== 'quotation' && activeTab !== 'history' && activeTab !== 'users') {
+        setActiveTab('consultation');
       }
     }
   }, [currentUser, activeTab]);
@@ -183,11 +196,11 @@ export default function App() {
     if (user.role === 'Call Center') {
       setActiveTab('appointments');
     } else if (user.role === 'Doctor') {
-      setActiveTab('quotation');
+      setActiveTab('consultation');
     } else if (user.role === 'Billing Counter') {
       setActiveTab('history');
     } else {
-      setActiveTab('quotation');
+      setActiveTab('consultation');
     }
     await initializeAppData();
   };
@@ -211,7 +224,23 @@ export default function App() {
   };
 
   const handleSavePatient = async (patient: Patient) => {
-    const updated = await addOrUpdatePatientApi(patient);
+    let patientToSave = { ...patient };
+    // If registering from Consultation page or a fresh walk-in, automatically confirm for Pre Consultation
+    if (!patientToSave.isConfirmed && (activeTab === 'consultation' || !patientToSave.id)) {
+      const targetDate = patientToSave.appointmentDate || new Date().toISOString().split('T')[0];
+      let maxSerial = 0;
+      patients.forEach(p => {
+        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+        }
+      });
+      patientToSave.isConfirmed = true;
+      patientToSave.confirmedAt = new Date().toISOString();
+      patientToSave.consultationSerial = maxSerial + 1;
+      patientToSave.consultationStatus = 'Pre Consultation';
+      patientToSave.status = 'Pre Consultation';
+    }
+    const updated = await addOrUpdatePatientApi(patientToSave);
     setPatients(updated);
   };
 
@@ -293,6 +322,16 @@ export default function App() {
     setCatalog(updated);
   };
 
+  const handleSaveProfessions = async (newProfessions: string[]) => {
+    const updated = await saveProfessionsApi(newProfessions);
+    setProfessions(updated);
+  };
+
+  const handleSaveComments = async (newComments: string[]) => {
+    const updated = await saveConsultationCommentsApi(newComments);
+    setComments(updated);
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans selection:bg-emerald-200 selection:text-emerald-900">
       
@@ -314,7 +353,7 @@ export default function App() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-[1720px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         
         {!currentUser ? (
           <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-8 sm:p-12 text-center max-w-xl mx-auto my-12 space-y-6">
@@ -349,10 +388,24 @@ export default function App() {
                 onRefreshPatients={initializeAppData}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
                 onOpenAddPatient={() => setIsAddPatientOpen(true)}
+                onGoToConsultation={() => setActiveTab('consultation')}
               />
             </div>
 
-            <div className={activeTab === 'quotation' ? 'block' : 'hidden'}>
+            <div className={activeTab === 'consultation' ? 'block' : 'hidden'}>
+              <Consultation
+                patients={patients}
+                quotations={quotations}
+                professions={professions}
+                comments={comments}
+                onRefreshPatients={initializeAppData}
+                onSelectPatientForQuotation={handleSelectPatientForQuotation}
+                onViewQuotation={handlePreviewPrint}
+                currentUser={currentUser}
+              />
+            </div>
+
+            <div className={activeTab === 'quotation' ? 'block max-w-7xl mx-auto w-full' : 'hidden'}>
               <QuotationBuilder
                 initialPatient={selectedPatientForQuotation}
                 patients={patients}
@@ -386,7 +439,11 @@ export default function App() {
             <div className={activeTab === 'catalog' ? 'block' : 'hidden'}>
               <CatalogSettings
                 catalog={catalog}
+                professions={professions}
+                comments={comments}
                 onSaveCatalog={handleSaveCatalog}
+                onSaveProfessions={handleSaveProfessions}
+                onSaveComments={handleSaveComments}
               />
             </div>
 
@@ -400,7 +457,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="bg-slate-900 text-slate-400 py-6 border-t border-slate-800 text-xs text-center print:hidden">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <div className="max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
           <p>© {new Date().getFullYear()} SUO XI Hospital (Acupuncture) • All Rights Reserved.</p>
           <p className="text-emerald-400 font-medium">Developed & Designed By SUOXI IT</p>
           <div className="flex items-center gap-2">

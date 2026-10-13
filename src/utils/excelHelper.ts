@@ -7,6 +7,7 @@ export interface ParsedExcelPatient {
   gender: string;
   age: string;
   phone: string;
+  address?: string;
   remark: string;
   notes?: string;
   doctorName?: string;
@@ -91,6 +92,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str)) score += 1;
       if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str)) score += 1;
       if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str)) score += 2;
+      if (/(address|location|thana|district|city|addr|ঠিকানা|বাসা|এলাকা|লোকেশন|জেলা|থানা)/i.test(str)) score += 2;
     });
 
     if (score > maxScore && score >= 2) {
@@ -104,6 +106,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
   let phoneCol = -1;
   let ageCol = -1;
   let genderCol = -1;
+  let addressCol = -1;
   let remarkCol = -1;
 
   if (headerRowIdx !== -1) {
@@ -124,6 +127,8 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
         ageCol = idx;
       } else if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str) && genderCol === -1) {
         genderCol = idx;
+      } else if (/(address|location|thana|district|city|addr|ঠিকানা|বাসা|এলাকা|লোকেশন|জেলা|থানা)/i.test(str) && addressCol === -1) {
+        addressCol = idx;
       }
     });
   }
@@ -140,6 +145,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
     let phone = phoneCol !== -1 ? String(row[phoneCol] || '').trim() : '';
     let age = ageCol !== -1 ? String(row[ageCol] || '').trim() : '';
     let gender = genderCol !== -1 ? String(row[genderCol] || '').trim() : '';
+    let address = addressCol !== -1 ? String(row[addressCol] || '').trim() : '';
     let remark = remarkCol !== -1 ? String(row[remarkCol] || '').trim() : '';
     let doctorName = '';
     let appointmentDate = '';
@@ -198,6 +204,20 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
           !/male|female|new patient|completed|robin|alamin|pending|cancel/i.test(val)
         ) {
           remark = val;
+        }
+      }
+
+      // Detect Address fallback
+      if (!address && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== remarkCol && cIdx !== serialCol) {
+        const isNumeric = /^\d+$/.test(val);
+        const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
+        if (
+          val.length >= 3 &&
+          !isNumeric &&
+          !isPhone &&
+          /(dhaka|chittagong|sylhet|rajshahi|khulna|barishal|rangpur|mymensingh|uttara|dhanmondi|mirpur|gulshan|banani|mohammadpur|badda|rampura|motijheel|savar|gazipur|narayanganj|road|sector|block|house|flat|thana|district|ঠিকানা|বাসা|এলাকা|লোকেশন|জেলা|থানা|রোড|বাড়ি)/i.test(val)
+        ) {
+          address = val;
         }
       }
     });
@@ -265,6 +285,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
         gender: gender || 'Male',
         age: age || '',
         phone: finalPhone,
+        address: address || '',
         remark: remark || 'General Assessment',
         doctorName: doctorName || 'Senior Counseling Doctor',
         appointmentDate: appointmentDate || new Date().toISOString().split('T')[0],
@@ -341,6 +362,7 @@ export function downloadSampleExcelTemplate(): void {
       'Patient Name': 'Md. Rafiqul Islam',
       'Age': 52,
       'Contact Number': '01711223344',
+      'Address': 'Dhanmondi, Dhaka',
       'Disease Name': 'Severe L4-L5 Back Pain & Sciatica',
     },
     {
@@ -348,6 +370,7 @@ export function downloadSampleExcelTemplate(): void {
       'Patient Name': 'Nazmun Nahar',
       'Age': 44,
       'Contact Number': '01819876543',
+      'Address': 'Mirpur-10, Dhaka',
       'Disease Name': 'Stroke Rehab & Facial Palsy',
     },
     {
@@ -355,6 +378,7 @@ export function downloadSampleExcelTemplate(): void {
       'Patient Name': 'Kabir Hossain',
       'Age': 60,
       'Contact Number': '01912345678',
+      'Address': 'Uttara Sector-4, Dhaka',
       'Disease Name': 'Cervical Spondylosis & Neck Pain',
     },
     {
@@ -362,6 +386,7 @@ export function downloadSampleExcelTemplate(): void {
       'Patient Name': 'Sultana Razia',
       'Age': 38,
       'Contact Number': '01678901234',
+      'Address': 'Agrabad, Chattogram',
       'Disease Name': 'Knee Osteoarthritis & Joint Stiffness',
     },
     {
@@ -369,6 +394,7 @@ export function downloadSampleExcelTemplate(): void {
       'Patient Name': 'Tariqul Alam',
       'Age': 49,
       'Contact Number': '01555667788',
+      'Address': 'Zindabazar, Sylhet',
       'Disease Name': 'Frozen Shoulder & Paralysis Care',
     },
   ];
@@ -381,6 +407,7 @@ export function downloadSampleExcelTemplate(): void {
     { wch: 26 }, // Patient Name
     { wch: 8 },  // Age
     { wch: 18 }, // Contact Number
+    { wch: 24 }, // Address
     { wch: 40 }, // Disease Name
   ];
 

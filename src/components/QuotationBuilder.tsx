@@ -3071,7 +3071,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   return (
     <>
-      <div className="space-y-8 print:hidden">
+      <div className="max-w-7xl mx-auto w-full space-y-8 print:hidden">
 
       {/* Editing Quotation Notification Banner */}
       {editingQuotation && (

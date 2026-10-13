@@ -7,13 +7,25 @@ export interface Patient {
   gender?: 'Male' | 'Female' | 'Other' | string;
   address?: string;
   doctorName?: string;
+  profession?: string;
+  preDoctorName?: string;
+  postDoctorName?: string;
+  preConsultationAt?: string;
+  postConsultationAt?: string;
   appointmentDate?: string;
   appointmentTime?: string;
   department?: string;
-  status: 'Pending Counseling' | 'Quotation Created' | 'Treatment Ongoing' | 'Completed';
+  status: 'Pending Counseling' | 'Quotation Created' | 'Treatment Ongoing' | 'Completed' | 'Pre Consultation' | 'Post Consultation' | string;
+  isConfirmed?: boolean;
+  confirmedAt?: string;
+  consultationSerial?: number | null;
+  consultationStatus?: 'Pre Consultation' | 'Post Consultation' | string;
   createdAt: string;
   notes?: string; // Remark / Disease / Medical Condition
   remark?: string;
+  consultationComment?: string;
+  postConsultationConfirmed?: boolean;
+  postConfirmedAt?: string;
 }
 
 export interface IndividualTreatment {

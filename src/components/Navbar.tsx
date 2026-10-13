@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { 
   FileSpreadsheet, 
   UserPlus, 
-  Search, 
   FileText, 
   History, 
   Settings, 
@@ -23,8 +22,8 @@ import { User } from '../types';
 import { SuoxiLogo } from './SuoxiLogo';
 
 interface NavbarProps {
-  activeTab: 'appointments' | 'quotation' | 'history' | 'catalog' | 'users';
-  setActiveTab: (tab: 'appointments' | 'quotation' | 'history' | 'catalog' | 'users') => void;
+  activeTab: 'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users';
+  setActiveTab: (tab: 'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users') => void;
   onOpenAddPatient: () => void;
   onSearchPhone: (phone: string) => void;
   patientCount: number;
@@ -53,24 +52,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   isSyncing = false,
   onRefreshData
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      onSearchPhone(searchQuery.trim());
-    }
-  };
-
   const userRole = currentUser?.role;
 
   const canAccessAppointments = userRole === 'System Admin' || userRole === 'Call Center';
+  const canAccessConsultation = !!currentUser;
   const canAccessQuotation = userRole === 'System Admin' || userRole === 'Doctor';
   const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter';
   const canAccessCatalog = userRole === 'System Admin';
   const canAccessUsers = !!currentUser;
   const canAccessCalculationToggle = userRole === 'System Admin' || userRole === 'Doctor';
-  const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center';
+  const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center' || userRole === 'Doctor';
 
   const getRoleBadge = () => {
     if (!currentUser) {
@@ -111,11 +102,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="bg-slate-900 text-white shadow-xl sticky top-0 z-40 print:hidden">
       {/* Top Banner / Hospital Branding */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+      <div className="max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           
           {/* Logo & Brand */}
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab(canAccessAppointments ? 'appointments' : (canAccessQuotation ? 'quotation' : 'history'))}>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab(canAccessConsultation ? 'consultation' : (canAccessAppointments ? 'appointments' : (canAccessQuotation ? 'quotation' : 'history')))}>
             <div className="bg-white/95 p-1.5 rounded-xl shadow border border-slate-700/50 flex items-center justify-center">
               <SuoxiLogo size="sm" />
             </div>
@@ -124,9 +115,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
                   SUO XI Hospital <span className="text-emerald-400 font-normal text-base sm:text-lg">(Acupuncture)</span>
                 </h1>
-                <span className="hidden sm:inline-block bg-slate-800 text-emerald-300 text-[11px] px-2.5 py-0.5 rounded-full font-semibold border border-slate-700">
-                  Billing Counter
-                </span>
               </div>
               <p className="text-xs text-slate-300 font-medium flex items-center gap-1.5 mt-0.5">
                 <Stethoscope className="w-3.5 h-3.5 text-emerald-400" />
@@ -134,26 +122,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               </p>
             </div>
           </div>
-
-          {/* Quick Search Patient by Phone */}
-          <form onSubmit={handleSearchSubmit} className="w-full md:w-72 relative">
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search by name or phone..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-950/80 text-emerald-100 placeholder-slate-400 text-xs sm:text-sm rounded-xl pl-9 pr-16 py-2 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:bg-slate-950 transition-all"
-              />
-              <Search className="w-4 h-4 text-emerald-400 absolute left-3 top-2.5" />
-              <button
-                type="submit"
-                className="absolute right-1 top-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-2.5 py-1 rounded-lg transition-colors shadow cursor-pointer"
-              >
-                Search
-              </button>
-            </div>
-          </form>
 
           {/* User Profile & Actions */}
           <div className="flex items-center gap-2">
@@ -203,7 +171,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Navigation Tabs */}
       <div className="bg-slate-950 border-t border-slate-800 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex items-center gap-2 overflow-x-auto py-2 scrollbar-none text-xs sm:text-sm">
+        <div className="max-w-[1720px] mx-auto flex items-center gap-2 overflow-x-auto py-2.5 scrollbar-none text-xs sm:text-sm">
           
           {canAccessAppointments && (
             <button
@@ -215,9 +183,23 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span>Appointments & Excel Import</span>
+              <span>Appointments Import</span>
+            </button>
+          )}
+
+          {canAccessConsultation && (
+            <button
+              onClick={() => setActiveTab('consultation')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === 'consultation'
+                  ? 'bg-emerald-500 text-slate-950 font-bold shadow'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <Stethoscope className="w-4 h-4" />
+              <span>Consultation</span>
               {patientCount > 0 && (
-                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'appointments' ? 'bg-slate-900 text-emerald-300' : 'bg-slate-800 text-emerald-400'}`}>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${activeTab === 'consultation' ? 'bg-slate-900 text-emerald-300' : 'bg-slate-800 text-emerald-400'}`}>
                   {patientCount}
                 </span>
               )}
@@ -267,7 +249,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Settings className="w-4 h-4" />
-              <span>Catalog & Rates</span>
+              <span>Settings</span>
             </button>
           )}
 

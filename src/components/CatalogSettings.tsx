@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Plus, Save, Trash2, CheckCircle2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Hash } from 'lucide-react';
+import { Settings, Plus, Save, Trash2, CheckCircle2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Hash, Briefcase, RotateCcw, Check, Sparkles, MessageSquare, Pencil, X } from 'lucide-react';
 import { CatalogItem } from '../types';
+import { DEFAULT_PROFESSIONS, getProfessionsLocal, saveProfessionsApi, DEFAULT_CONSULTATION_COMMENTS, getConsultationCommentsLocal, saveConsultationCommentsApi } from '../utils/storage';
 
 interface ItemPositionControllerProps {
   currentPosition: number;
@@ -98,15 +99,229 @@ const ItemPositionController: React.FC<ItemPositionControllerProps> = ({
 
 interface CatalogSettingsProps {
   catalog: CatalogItem[];
+  professions?: string[];
+  comments?: string[];
   onSaveCatalog: (catalog: CatalogItem[]) => void;
+  onSaveProfessions?: (professions: string[]) => void;
+  onSaveComments?: (comments: string[]) => void;
 }
 
 export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
   catalog,
-  onSaveCatalog
+  professions = [],
+  comments = [],
+  onSaveCatalog,
+  onSaveProfessions,
+  onSaveComments
 }) => {
   const [items, setItems] = useState<CatalogItem[]>(catalog);
   const [isSaved, setIsSaved] = useState(false);
+  const [activeSettingTab, setActiveSettingTab] = useState<'catalog' | 'professions' | 'comments'>('catalog');
+  
+  const [professionList, setProfessionList] = useState<string[]>(() => {
+    return professions && professions.length > 0 ? professions : getProfessionsLocal();
+  });
+  const [newProfessionInput, setNewProfessionInput] = useState('');
+  const [isProfessionSaved, setIsProfessionSaved] = useState(false);
+  const [editingProfession, setEditingProfession] = useState<string | null>(null);
+  const [editingProfessionValue, setEditingProfessionValue] = useState<string>('');
+
+  const [commentList, setCommentList] = useState<string[]>(() => {
+    return comments && comments.length > 0 ? comments : getConsultationCommentsLocal();
+  });
+  const [newCommentInput, setNewCommentInput] = useState('');
+  const [isCommentSaved, setIsCommentSaved] = useState(false);
+  const [editingComment, setEditingComment] = useState<string | null>(null);
+  const [editingCommentValue, setEditingCommentValue] = useState<string>('');
+
+  useEffect(() => {
+    if (Array.isArray(professions) && professions.length > 0) {
+      setProfessionList(professions);
+    }
+  }, [professions]);
+
+  useEffect(() => {
+    if (Array.isArray(comments) && comments.length > 0) {
+      setCommentList(comments);
+    }
+  }, [comments]);
+
+  const handleAddProfession = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newProfessionInput.trim();
+    if (!clean) return;
+    if (professionList.some(p => p.toLowerCase() === clean.toLowerCase())) {
+      setNewProfessionInput('');
+      return;
+    }
+    const updated = [...professionList, clean];
+    setProfessionList(updated);
+    setNewProfessionInput('');
+    if (onSaveProfessions) {
+      onSaveProfessions(updated);
+    } else {
+      saveProfessionsApi(updated);
+    }
+    setIsProfessionSaved(true);
+    setTimeout(() => setIsProfessionSaved(false), 2500);
+  };
+
+  const handleRemoveProfession = (profToRemove: string) => {
+    const updated = professionList.filter(p => p !== profToRemove);
+    setProfessionList(updated);
+    if (editingProfession === profToRemove) {
+      setEditingProfession(null);
+    }
+    if (onSaveProfessions) {
+      onSaveProfessions(updated);
+    } else {
+      saveProfessionsApi(updated);
+    }
+    setIsProfessionSaved(true);
+    setTimeout(() => setIsProfessionSaved(false), 2500);
+  };
+
+  const handleStartEditProfession = (prof: string) => {
+    setEditingProfession(prof);
+    setEditingProfessionValue(prof);
+  };
+
+  const handleSaveEditedProfession = (oldProf: string) => {
+    const clean = editingProfessionValue.trim();
+    if (!clean || clean === oldProf) {
+      setEditingProfession(null);
+      return;
+    }
+    if (professionList.some(p => p.toLowerCase() === clean.toLowerCase() && p.toLowerCase() !== oldProf.toLowerCase())) {
+      setEditingProfession(null);
+      return;
+    }
+    const updated = professionList.map(p => p === oldProf ? clean : p);
+    setProfessionList(updated);
+    setEditingProfession(null);
+    if (onSaveProfessions) {
+      onSaveProfessions(updated);
+    } else {
+      saveProfessionsApi(updated);
+    }
+    setIsProfessionSaved(true);
+    setTimeout(() => setIsProfessionSaved(false), 2500);
+  };
+
+  const handleCancelEditProfession = () => {
+    setEditingProfession(null);
+    setEditingProfessionValue('');
+  };
+
+  const handleResetProfessions = () => {
+    setProfessionList(DEFAULT_PROFESSIONS);
+    if (onSaveProfessions) {
+      onSaveProfessions(DEFAULT_PROFESSIONS);
+    } else {
+      saveProfessionsApi(DEFAULT_PROFESSIONS);
+    }
+    setIsProfessionSaved(true);
+    setTimeout(() => setIsProfessionSaved(false), 2500);
+  };
+
+  const handleSaveProfessionsManual = async () => {
+    if (onSaveProfessions) {
+      onSaveProfessions(professionList);
+    } else {
+      await saveProfessionsApi(professionList);
+    }
+    setIsProfessionSaved(true);
+    setTimeout(() => setIsProfessionSaved(false), 3000);
+  };
+
+  // Comment Handlers
+  const handleAddComment = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newCommentInput.trim();
+    if (!clean) return;
+    if (commentList.some(c => c.toLowerCase() === clean.toLowerCase())) {
+      setNewCommentInput('');
+      return;
+    }
+    const updated = [...commentList, clean];
+    setCommentList(updated);
+    setNewCommentInput('');
+    if (onSaveComments) {
+      onSaveComments(updated);
+    } else {
+      saveConsultationCommentsApi(updated);
+    }
+    setIsCommentSaved(true);
+    setTimeout(() => setIsCommentSaved(false), 2500);
+  };
+
+  const handleRemoveComment = (commentToRemove: string) => {
+    const updated = commentList.filter(c => c !== commentToRemove);
+    setCommentList(updated);
+    if (editingComment === commentToRemove) {
+      setEditingComment(null);
+    }
+    if (onSaveComments) {
+      onSaveComments(updated);
+    } else {
+      saveConsultationCommentsApi(updated);
+    }
+    setIsCommentSaved(true);
+    setTimeout(() => setIsCommentSaved(false), 2500);
+  };
+
+  const handleStartEditComment = (comm: string) => {
+    setEditingComment(comm);
+    setEditingCommentValue(comm);
+  };
+
+  const handleSaveEditedComment = (oldComment: string) => {
+    const clean = editingCommentValue.trim();
+    if (!clean || clean === oldComment) {
+      setEditingComment(null);
+      return;
+    }
+    if (commentList.some(c => c.toLowerCase() === clean.toLowerCase() && c.toLowerCase() !== oldComment.toLowerCase())) {
+      setEditingComment(null);
+      return;
+    }
+    const updated = commentList.map(c => c === oldComment ? clean : c);
+    setCommentList(updated);
+    setEditingComment(null);
+    if (onSaveComments) {
+      onSaveComments(updated);
+    } else {
+      saveConsultationCommentsApi(updated);
+    }
+    setIsCommentSaved(true);
+    setTimeout(() => setIsCommentSaved(false), 2500);
+  };
+
+  const handleCancelEditComment = () => {
+    setEditingComment(null);
+    setEditingCommentValue('');
+  };
+
+  const handleResetComments = () => {
+    setCommentList(DEFAULT_CONSULTATION_COMMENTS);
+    if (onSaveComments) {
+      onSaveComments(DEFAULT_CONSULTATION_COMMENTS);
+    } else {
+      saveConsultationCommentsApi(DEFAULT_CONSULTATION_COMMENTS);
+    }
+    setIsCommentSaved(true);
+    setTimeout(() => setIsCommentSaved(false), 2500);
+  };
+
+  const handleSaveCommentsManual = async () => {
+    if (onSaveComments) {
+      onSaveComments(commentList);
+    } else {
+      await saveConsultationCommentsApi(commentList);
+    }
+    setIsCommentSaved(true);
+    setTimeout(() => setIsCommentSaved(false), 3000);
+  };
 
   useEffect(() => {
     if (Array.isArray(catalog)) {
@@ -206,19 +421,85 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Settings className="w-5 h-5 text-emerald-600" />
-            <span>Service Catalog & Standard Pricing Rates</span>
+            <span>Hospital Settings & Rates</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Configure default prices and rates for Acupuncture Therapies, Outdoor Packages, and Accommodation Cabins.
+            Configure Service Pricing, Treatment Packages, and Patient Profession Categories for the Consultation Desk.
           </p>
         </div>
 
+        {activeSettingTab === 'catalog' ? (
+          <button
+            onClick={handleSave}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>{isSaved ? 'Catalog Saved!' : 'Save Catalog Rates'}</span>
+          </button>
+        ) : activeSettingTab === 'professions' ? (
+          <button
+            onClick={handleSaveProfessionsManual}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>{isProfessionSaved ? 'Professions Saved!' : 'Save Professions'}</span>
+          </button>
+        ) : (
+          <button
+            onClick={handleSaveCommentsManual}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>{isCommentSaved ? 'Comments Saved!' : 'Save Comments'}</span>
+          </button>
+        )}
+      </div>
+
+      {/* Sub-Tabs: Service Catalog vs. Profession Settings vs. Patient Comments */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200 w-fit">
         <button
-          onClick={handleSave}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+          type="button"
+          onClick={() => setActiveSettingTab('catalog')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeSettingTab === 'catalog'
+              ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+          }`}
         >
-          <Save className="w-4 h-4" />
-          <span>{isSaved ? 'Catalog Saved!' : 'Save Catalog Rates'}</span>
+          <Settings className="w-4 h-4 text-emerald-600" />
+          <span>Treatment & Service Catalog ({items.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSettingTab('professions')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeSettingTab === 'professions'
+              ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+          }`}
+        >
+          <Briefcase className="w-4 h-4 text-emerald-600" />
+          <span>Profession Settings ({professionList.length})</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+            Dropdown
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSettingTab('comments')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeSettingTab === 'comments'
+              ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+          }`}
+        >
+          <MessageSquare className="w-4 h-4 text-emerald-600" />
+          <span>Patient Comments / Decisions ({commentList.length})</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">
+            Post-Consult Dropdown
+          </span>
         </button>
       </div>
 
@@ -229,8 +510,269 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
         </div>
       )}
 
-      {/* Catalog Grid by Category */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {isProfessionSaved && (
+        <div className="p-4 bg-emerald-100 text-emerald-900 rounded-xl border border-emerald-300 font-bold text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+          <span>Professions list updated successfully! Consultation dropdown is now in sync.</span>
+        </div>
+      )}
+
+      {isCommentSaved && (
+        <div className="p-4 bg-emerald-100 text-emerald-900 rounded-xl border border-emerald-300 font-bold text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+          <span>Patient comments and decisions list updated successfully! Post Consultation dropdown is now in sync.</span>
+        </div>
+      )}
+
+      {activeSettingTab === 'professions' ? (
+        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                <Briefcase className="w-5 h-5 text-emerald-600" />
+                <span>Patient Profession Categories</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Configure the list of patient professions that appear in the Consultation Table (Pre & Post Consultation) dropdown selector.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleResetProfessions}
+              className="text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset to Defaults</span>
+            </button>
+          </div>
+
+          {/* Add New Profession Form */}
+          <form onSubmit={handleAddProfession} className="flex gap-2 max-w-lg">
+            <input
+              type="text"
+              value={newProfessionInput}
+              onChange={(e) => setNewProfessionInput(e.target.value)}
+              placeholder="Type new profession name (e.g. Banker, Advocate)..."
+              className="flex-1 px-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <button
+              type="submit"
+              disabled={!newProfessionInput.trim()}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Profession</span>
+            </button>
+          </form>
+
+          {/* Professions Badges / Grid */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span className="font-semibold">Active Professions in Consultation Dropdown ({professionList.length}):</span>
+              <span className="text-[11px]">Click edit or ✕ to update or remove</span>
+            </div>
+
+            <div className="flex flex-wrap gap-2.5 p-4 bg-slate-50/80 rounded-2xl border border-slate-200 min-h-[120px]">
+              {professionList.map((prof) => {
+                const isEditing = editingProfession === prof;
+                if (isEditing) {
+                  return (
+                    <div
+                      key={prof}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white rounded-xl border-2 border-emerald-500 shadow-sm"
+                    >
+                      <Briefcase className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <input
+                        type="text"
+                        autoFocus
+                        value={editingProfessionValue}
+                        onChange={(e) => setEditingProfessionValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveEditedProfession(prof);
+                          } else if (e.key === 'Escape') {
+                            handleCancelEditProfession();
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-slate-50 border border-slate-300 rounded text-xs font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500 w-32"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSaveEditedProfession(prof)}
+                        className="p-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded transition cursor-pointer"
+                        title="Save Changes"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelEditProfession}
+                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition cursor-pointer"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={prof}
+                    className="group flex items-center gap-2 px-3.5 py-2 bg-white rounded-xl border border-slate-200/90 text-slate-800 text-xs font-bold shadow-2xs hover:border-emerald-300 hover:shadow-xs transition"
+                  >
+                    <Briefcase className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>{prof}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleStartEditProfession(prof)}
+                      className="ml-1 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 p-1 transition cursor-pointer"
+                      title={`Edit "${prof}"`}
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveProfession(prof)}
+                      className="text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 p-1 transition cursor-pointer"
+                      title={`Delete "${prof}"`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : activeSettingTab === 'comments' ? (
+        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-emerald-600" />
+                <span>Patient Decision & Consultation Comments</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Configure patient feedback, decisions, and counseling remarks that appear in the Post Consultation Table "Comment" dropdown (e.g. Will take today, Will admit, Will take later, Costly).
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleResetComments}
+              className="text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset to Defaults</span>
+            </button>
+          </div>
+
+          {/* Add New Comment Form */}
+          <form onSubmit={handleAddComment} className="flex gap-2 max-w-lg">
+            <input
+              type="text"
+              value={newCommentInput}
+              onChange={(e) => setNewCommentInput(e.target.value)}
+              placeholder="Type new decision or comment (e.g. Financial issue, Ready for outdoor)..."
+              className="flex-1 px-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <button
+              type="submit"
+              disabled={!newCommentInput.trim()}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Comment</span>
+            </button>
+          </form>
+
+          {/* Comments Badges / Grid */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span className="font-semibold">Active Decisions / Comments in Post Consultation ({commentList.length}):</span>
+              <span className="text-[11px]">Click edit or ✕ to update or remove</span>
+            </div>
+
+            <div className="flex flex-wrap gap-2.5 p-4 bg-slate-50/80 rounded-2xl border border-slate-200 min-h-[120px]">
+              {commentList.map((comm) => {
+                const isEditing = editingComment === comm;
+                if (isEditing) {
+                  return (
+                    <div
+                      key={comm}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white rounded-xl border-2 border-blue-500 shadow-sm"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                      <input
+                        type="text"
+                        autoFocus
+                        value={editingCommentValue}
+                        onChange={(e) => setEditingCommentValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveEditedComment(comm);
+                          } else if (e.key === 'Escape') {
+                            handleCancelEditComment();
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-slate-50 border border-slate-300 rounded text-xs font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 w-40"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSaveEditedComment(comm)}
+                        className="p-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition cursor-pointer"
+                        title="Save Changes"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelEditComment}
+                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition cursor-pointer"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={comm}
+                    className="group flex items-center gap-2 px-3.5 py-2 bg-white rounded-xl border border-slate-200/90 text-slate-800 text-xs font-bold shadow-2xs hover:border-emerald-300 hover:shadow-xs transition"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                    <span>{comm}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleStartEditComment(comm)}
+                      className="ml-1 text-slate-400 hover:text-blue-600 rounded-full hover:bg-blue-50 p-1 transition cursor-pointer"
+                      title={`Edit "${comm}"`}
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveComment(comm)}
+                      className="text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 p-1 transition cursor-pointer"
+                      title={`Delete "${comm}"`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Catalog Grid by Category */
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         
         {/* Category 1: Treatments */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
@@ -588,7 +1130,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <span>4. Weekly Treatments</span>
                 <span className="text-[10px] font-bold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full border border-sky-200">
-                  Catalog & Rates
+                  Settings & Rates
                 </span>
               </h3>
               <p className="text-[11px] text-slate-500">Configure default rates, fixed discounts, outdoor discounts, and 10-day ratio calculation settings for Weekly Treatments (Ozon, ED, etc.).</p>
@@ -801,6 +1343,7 @@ export const CatalogSettings: React.FC<CatalogSettingsProps> = ({
         </div>
 
       </div>
+      )}
 
     </div>
   );
