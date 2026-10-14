@@ -377,10 +377,24 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     return true;
   };
 
-  // Compute counts for the tabs
+  const getPatientDate = (p: Patient) => p.appointmentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
+
+  // Compute counts for the tabs respecting the selected date filter (or all if 'all' is selected)
+  const isDateFiltering = selectedDateFilter !== 'all' && !!selectedDateFilter;
+
+  const totalAppointmentsCount = useMemo(() => {
+    if (isDateFiltering) {
+      return patients.filter(p => getPatientDate(p) === selectedDateFilter).length;
+    }
+    return patients.length;
+  }, [patients, isDateFiltering, selectedDateFilter]);
+
   const confirmedCountTotal = useMemo(() => {
+    if (isDateFiltering) {
+      return patients.filter(p => !!p.isConfirmed && getPatientDate(p) === selectedDateFilter).length;
+    }
     return patients.filter(p => !!p.isConfirmed).length;
-  }, [patients]);
+  }, [patients, isDateFiltering, selectedDateFilter]);
 
   const filteredPatients = useMemo(() => {
     return patients.filter(p => {
@@ -393,7 +407,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
       const matchesDate = 
         selectedDateFilter === 'all' || 
         !selectedDateFilter || 
-        p.appointmentDate === selectedDateFilter;
+        getPatientDate(p) === selectedDateFilter;
 
       return matchesText && matchesDate;
     });
@@ -655,7 +669,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
               <User className="w-3.5 h-3.5 text-emerald-600" />
               <span>All Appointments</span>
               <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
-                {patients.length}
+                {totalAppointmentsCount}
               </span>
             </button>
 

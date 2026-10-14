@@ -18,8 +18,11 @@ import {
   MessageSquare,
   Pencil,
   Check,
-  X
+  X,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { Patient, InvoiceQuotation, User as UserModel } from '../types';
 import { 
   addOrUpdatePatientApi, 
@@ -468,6 +471,79 @@ export const Consultation: React.FC<ConsultationProps> = ({
     });
   };
 
+  // Action: Download Excel for Post Consultation patients based on currently displayed date filter
+  const handleDownloadExcel = () => {
+    if (filteredPatients.length === 0) {
+      setActionMessage({
+        type: 'error',
+        text: 'No Post Consultation patients found to export.'
+      });
+      setTimeout(() => setActionMessage(null), 3000);
+      return;
+    }
+
+    const dataToExport = filteredPatients.map((p, index) => {
+      const existingQuotation = quotationsByPatient.get(p.id) || quotationsByPatient.get(p.phone);
+      const apptDate = p.appointmentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
+      const docName = p.postDoctorName || p.doctorName || p.preDoctorName || '—';
+
+      return {
+        'SL NO.': p.consultationSerial || (index + 1),
+        'Date': apptDate || '—',
+        'Patient Name': p.name || '—',
+        'Phone Number': p.phone || '—',
+        'Gender': p.gender || 'Male',
+        'Age': p.age ? `${p.age}` : '—',
+        'Address': p.address || '—',
+        'Disease / Complaint': p.remark || p.notes || 'General Assessment',
+        'Profession': p.profession || '—',
+        'Decision / Comment': p.consultationComment || '—',
+        'Attending Doctor': docName,
+        'Post Status': p.postConsultationConfirmed ? 'Confirmed' : 'Pending',
+        'Quotation Status': existingQuotation ? 'Quotation Created' : 'Pending',
+        'Quotation No.': existingQuotation?.quotationNumber || '—',
+        'Quotation Amount (BDT)': existingQuotation?.grandTotal != null ? Number(existingQuotation.grandTotal) : '—'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+
+    // Auto-fit column widths for clear presentation
+    worksheet['!cols'] = [
+      { wch: 10 }, // SL NO.
+      { wch: 14 }, // Date
+      { wch: 26 }, // Patient Name
+      { wch: 16 }, // Phone Number
+      { wch: 10 }, // Gender
+      { wch: 8 },  // Age
+      { wch: 25 }, // Address
+      { wch: 32 }, // Disease / Complaint
+      { wch: 18 }, // Profession
+      { wch: 22 }, // Decision / Comment
+      { wch: 22 }, // Attending Doctor
+      { wch: 14 }, // Post Status
+      { wch: 18 }, // Quotation Status
+      { wch: 18 }, // Quotation No.
+      { wch: 22 }  // Quotation Amount (BDT)
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    const sheetTitle = selectedDateFilter === 'all' ? 'All_Post_Consultation' : `Post_${selectedDateFilter}`;
+    const safeSheetTitle = sheetTitle.replace(/[:\\/?*\[\]]/g, '_').substring(0, 31);
+    XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetTitle);
+
+    const dateLabel = selectedDateFilter === 'all' ? 'All_Dates' : selectedDateFilter;
+    const filename = `SUO_XI_Post_Consultation_${dateLabel}.xlsx`;
+
+    XLSX.writeFile(workbook, filename);
+
+    setActionMessage({
+      type: 'success',
+      text: `✓ Downloaded Excel for ${dateLabel.replace(/_/g, ' ')} (${dataToExport.length} patients).`
+    });
+    setTimeout(() => setActionMessage(null), 3500);
+  };
+
   return (
     <div className="space-y-6">
       
@@ -646,6 +722,25 @@ export const Consultation: React.FC<ConsultationProps> = ({
                   ))}
                 </select>
               </div>
+            )}
+
+            {/* Download Excel Button (Only in Post Consultation) */}
+            {activeSubTab === 'post' && (
+              <button
+                type="button"
+                onClick={handleDownloadExcel}
+                disabled={filteredPatients.length === 0}
+                className="flex items-center gap-2 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white rounded-xl text-sm font-semibold shadow-xs transition-all cursor-pointer shrink-0"
+                title={filteredPatients.length === 0 ? "No records to export" : `Export ${filteredPatients.length} Post Consultation records to Excel`}
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Excel</span>
+                {filteredPatients.length > 0 && (
+                  <span className="px-1.5 py-0.2 bg-emerald-800 text-[11px] font-bold rounded-full text-white">
+                    {filteredPatients.length}
+                  </span>
+                )}
+              </button>
             )}
 
             {/* Search Input */}

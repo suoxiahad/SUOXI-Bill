@@ -19,8 +19,7 @@ const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.setCustomParameters({
-  prompt: 'consent',
-  access_type: 'offline'
+  prompt: 'select_account'
 });
 
 // In-memory token management (per security guidelines: never in localStorage)
@@ -110,6 +109,27 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Google Sign in error:', error);
+    if (error?.code === 'auth/unauthorized-domain') {
+      const currentHost = window.location.hostname;
+      const projId = firebaseConfig.projectId;
+      throw new Error(
+        `[auth/unauthorized-domain]: The domain "${currentHost}" is not authorized in your Firebase Project ("${projId}"). ` +
+        `Please open Firebase Console -> Authentication -> Settings -> Authorized domains, and click "Add domain" to add "${currentHost}".`
+      );
+    }
+    if (error?.code === 'auth/popup-closed-by-user') {
+      throw new Error(
+        'ব্রাউজারের পপ-আপ উইন্ডোটি সাইন-ইন সম্পন্ন হওয়ার আগেই বন্ধ হয়ে গেছে। সাধারণত পপ-আপ ব্লকার, এক্সটেনশন (Ad blocker/Privacy guard) অথবা ব্রাউজারের থার্ড-পার্টি কুকি ব্লক থাকার কারণে ব্রাউজার নিজে থেকেই পপ-আপটি বন্ধ করে দেয়। অনুগ্রহ করে ব্রাউজারের পপ-আপ পারমিশন এলাও করুন এবং আবার চেষ্টা করুন।'
+      );
+    }
+    if (error?.code === 'auth/popup-blocked') {
+      throw new Error(
+        'ব্রাউজার স্বয়ংক্রিয়ভাবে গুগল সাইন-ইন পপ-আপ উইন্ডোটি ব্লক করেছে। অ্যাড্রেস বারের ডান পাশে পপ-আপ আইকনটিতে ক্লিক করে "Always allow pop-ups" সিলেক্ট করুন এবং আবার সাইন-ইন বাটনে ক্লিক করুন।'
+      );
+    }
+    if (error?.code === 'auth/cancelled-popup-request') {
+      throw new Error('পূর্বের পপ-আপ রিকোয়েস্টটি বাতিল হয়েছে। দয়া করে কয়েক সেকেন্ড অপেক্ষা করে আবার চেষ্টা করুন।');
+    }
     throw error;
   } finally {
     isSigningIn = false;
