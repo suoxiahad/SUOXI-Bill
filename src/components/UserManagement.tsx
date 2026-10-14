@@ -413,8 +413,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-slate-800"
                   >
                     <option value="Doctor">Doctor (Consultation, Quotation & History)</option>
-                    <option value="Call Center">Call Center (Appointments Import & Consultation)</option>
-                    <option value="Billing Counter">Billing Counter (Consultation & Quotation History)</option>
+                    <option value="Call Center">Call Center (Appointments Import)</option>
+                    <option value="Billing Counter">Billing Counter (Quotation History)</option>
                     <option value="System Admin">System Admin (Full System Access)</option>
                   </select>
                 </div>
@@ -430,8 +430,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                       <span>Appointments Import ({role === 'System Admin' || role === 'Call Center' ? 'Granted' : 'Denied'})</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Doctor' || role === 'Call Center' || role === 'Billing Counter' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                      <span>Consultation ({role === 'System Admin' || role === 'Doctor' || role === 'Call Center' || role === 'Billing Counter' ? 'Granted' : 'Denied'})</span>
+                      <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Doctor' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                      <span>Consultation ({role === 'System Admin' || role === 'Doctor' ? 'Granted' : 'Denied'})</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Doctor' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>

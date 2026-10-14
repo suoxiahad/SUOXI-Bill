@@ -193,12 +193,24 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
     const role = currentUser.role;
+    const isDoctorOrAdmin = role === 'System Admin' || role === 'Doctor';
+
+    // Strictly protect Consultation tab for Doctor & System Admin only
+    if (activeTab === 'consultation' && !isDoctorOrAdmin) {
+      if (role === 'Call Center') {
+        setActiveTab('appointments');
+      } else {
+        setActiveTab('history');
+      }
+      return;
+    }
+
     if (role === 'Call Center') {
-      if (activeTab !== 'appointments' && activeTab !== 'consultation' && activeTab !== 'users') {
+      if (activeTab !== 'appointments' && activeTab !== 'users') {
         setActiveTab('appointments');
       }
     } else if (role === 'Billing Counter') {
-      if (activeTab !== 'consultation' && activeTab !== 'history' && activeTab !== 'users') {
+      if (activeTab !== 'history' && activeTab !== 'users') {
         setActiveTab('history');
       }
     } else if (role === 'Doctor') {
@@ -434,23 +446,34 @@ export default function App() {
                 onUpdatePatient={handleUpdatePatient}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
                 onOpenAddPatient={currentUser?.role !== 'Doctor' ? () => setIsAddPatientOpen(true) : undefined}
-                onGoToConsultation={() => setActiveTab('consultation')}
                 currentUser={currentUser}
               />
             </div>
 
             <div className={activeTab === 'consultation' ? 'block' : 'hidden'}>
-              <Consultation
-                patients={patients}
-                quotations={quotations}
-                professions={professions}
-                comments={comments}
-                onRefreshPatients={initializeAppData}
-                onUpdatePatient={handleUpdatePatient}
-                onSelectPatientForQuotation={handleSelectPatientForQuotation}
-                onViewQuotation={handlePreviewPrint}
-                currentUser={currentUser}
-              />
+              {(currentUser?.role === 'System Admin' || currentUser?.role === 'Doctor') ? (
+                <Consultation
+                  patients={patients}
+                  quotations={quotations}
+                  professions={professions}
+                  comments={comments}
+                  onRefreshPatients={initializeAppData}
+                  onUpdatePatient={handleUpdatePatient}
+                  onSelectPatientForQuotation={handleSelectPatientForQuotation}
+                  onViewQuotation={handlePreviewPrint}
+                  currentUser={currentUser}
+                />
+              ) : (
+                <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 max-w-md mx-auto my-12 space-y-4 shadow-sm">
+                  <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto border border-rose-100">
+                    <Lock className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800">Access Restricted</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed">
+                    Consultation tab is accessible only by Doctor and System Admin accounts.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className={activeTab === 'quotation' ? 'block max-w-7xl mx-auto w-full' : 'hidden'}>

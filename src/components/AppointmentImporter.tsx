@@ -27,7 +27,6 @@ import {
   Square,
   ShieldCheck,
   FileX,
-  Stethoscope,
   Undo2
 } from 'lucide-react';
 import { Patient, InvoiceQuotation, User as UserModel } from '../types';
@@ -42,7 +41,6 @@ interface AppointmentImporterProps {
   onUpdatePatient?: (patient: Patient) => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
   onOpenAddPatient?: () => void;
-  onGoToConsultation?: () => void;
   currentUser?: UserModel | null;
 }
 
@@ -53,7 +51,6 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   onUpdatePatient,
   onSelectPatientForQuotation,
   onOpenAddPatient,
-  onGoToConsultation,
   currentUser
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
@@ -441,17 +438,6 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {onGoToConsultation && (
-              <button
-                onClick={onGoToConsultation}
-                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg transition cursor-pointer"
-                title="View Patient List in Consultation Desk"
-              >
-                <Stethoscope className="w-4 h-4" />
-                <span>Go to Consultation Tab</span>
-              </button>
-            )}
-
             <button
               onClick={downloadSampleExcelTemplate}
               className="flex items-center gap-2 bg-emerald-800/90 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl border border-emerald-600/50 shadow transition cursor-pointer"
