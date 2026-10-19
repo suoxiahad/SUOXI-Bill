@@ -24,7 +24,8 @@ import {
   Users,
   PhoneCall,
   X,
-  Check
+  Check,
+  ArrowLeft
 } from 'lucide-react';
 import { PackageComparisonModal } from './PackageComparisonModal';
 import { 
@@ -39,7 +40,7 @@ import {
   User 
 } from '../types';
 import { DEFAULT_CATALOG } from '../data/defaultCatalog';
-import { searchPatientsLiveApi, fetchPatientsApi } from '../utils/storage';
+import { searchPatientsLiveApi, fetchPatientsApi, addOrUpdatePatientApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery, normalizePhoneDigits, normalizeSearchText } from '../utils/searchHelper';
 
 interface TreatmentListItem {
@@ -130,6 +131,8 @@ interface QuotationBuilderProps {
   setShowFullTreatmentCalculation?: React.Dispatch<React.SetStateAction<boolean>>;
   showFullIndoorCalculation?: boolean;
   setShowFullIndoorCalculation?: React.Dispatch<React.SetStateAction<boolean>>;
+  onBackToPostConsultation?: () => void;
+  onUpdatePatient?: (patient: Patient) => void;
 }
 
 export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
@@ -146,6 +149,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   setShowFullTreatmentCalculation: externalSetShowFullTreatmentCalculation,
   showFullIndoorCalculation: externalShowFullIndoorCalculation,
   setShowFullIndoorCalculation: externalSetShowFullIndoorCalculation,
+  onBackToPostConsultation,
+  onUpdatePatient,
 }) => {
   // Search patient by phone inside builder
   const [phoneSearch, setPhoneSearch] = useState('');
@@ -3069,6 +3074,45 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     return true;
   };
 
+  // Action: Return back to Post Consultation tab
+  const handleBackToPostConsultation = async () => {
+    let targetPatient = selectedPatient;
+    if (targetPatient) {
+      const updated: Patient = {
+        ...targetPatient,
+        quotationCreated: true,
+        status: targetPatient.status === 'Completed' ? 'Completed' : 'Quotation Created'
+      };
+      if (onUpdatePatient) {
+        onUpdatePatient(updated);
+      }
+      addOrUpdatePatientApi(updated).catch(err => {
+        console.error('Failed to update patient quotation flag in background:', err);
+      });
+    }
+
+    // Auto-save quotation draft if there are selected treatments so quotation is recorded
+    try {
+      const hasSelectedTreatments = treatmentList.some(t => t.selected);
+      if (hasSelectedTreatments) {
+        const quot = generateQuotationData();
+        if (targetPatient) {
+          quot.patientName = quot.patientName || targetPatient.name || 'Patient';
+          quot.patientPhone = quot.patientPhone || targetPatient.phone || '';
+          quot.patientId = targetPatient.id;
+        }
+        await onSaveQuotation(quot);
+      }
+    } catch (e) {
+      console.warn('Silent save before returning to post consultation:', e);
+    }
+
+    setIsCompareModalOpen(false);
+    if (onBackToPostConsultation) {
+      onBackToPostConsultation();
+    }
+  };
+
   return (
     <>
       <div className="max-w-7xl mx-auto w-full space-y-8 print:hidden">
@@ -3140,6 +3184,17 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               >
                 {editingQuotation ? 'Reset Form' : 'Clear Form'}
               </button>
+              {onBackToPostConsultation && (
+                <button
+                  type="button"
+                  onClick={handleBackToPostConsultation}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-lg border border-blue-200 transition-all shadow-2xs cursor-pointer active:scale-95 ml-1"
+                  title="Return to Post Consultation tab"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Post Consultation</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -5297,6 +5352,18 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               <Save className="w-4 h-4" />
               <span>{isSaved ? 'Quotation Saved!' : 'Save Quotation Record'}</span>
             </button>
+
+            {onBackToPostConsultation && (
+              <button
+                type="button"
+                onClick={handleBackToPostConsultation}
+                className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs py-2.5 px-4 rounded-xl border border-blue-200 transition-colors cursor-pointer active:scale-95"
+                title="Return to Post Consultation tab"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back to Post Consultation</span>
+              </button>
+            )}
           </div>
 
         </div>
@@ -5350,6 +5417,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         }}
         onApplyPackage={handleApplyPackageFromComparison}
         onBeforePrint={handleSaveBeforeComparisonPrint}
+        onBackToPostConsultation={handleBackToPostConsultation}
       />
     </>
   );

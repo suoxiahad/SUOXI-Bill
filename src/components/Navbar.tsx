@@ -16,14 +16,18 @@ import {
   Receipt,
   Eye,
   EyeOff,
-  RefreshCw
+  RefreshCw,
+  FlaskConical,
+  Leaf,
+  Apple,
+  BarChart3
 } from 'lucide-react';
 import { User } from '../types';
 import { SuoxiLogo } from './SuoxiLogo';
 
 interface NavbarProps {
-  activeTab: 'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users';
-  setActiveTab: (tab: 'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users') => void;
+  activeTab: 'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users' | 'departments' | 'reports';
+  setActiveTab: (tab: 'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users' | 'departments' | 'reports') => void;
   onOpenAddPatient: () => void;
   onSearchPhone: (phone: string) => void;
   patientCount: number;
@@ -59,6 +63,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   const canAccessQuotation = userRole === 'System Admin' || userRole === 'Doctor';
   const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter';
   const canAccessCatalog = userRole === 'System Admin';
+  const canAccessDeptClearance = userRole === 'System Admin' || userRole === 'Pathology' || userRole === 'Organic' || userRole === 'Nutrition';
+  const canAccessReports = userRole === 'System Admin' || userRole === 'SSD';
   const canAccessUsers = !!currentUser;
   const canAccessCalculationToggle = userRole === 'System Admin' || userRole === 'Doctor';
   const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center';
@@ -92,6 +98,34 @@ export const Navbar: React.FC<NavbarProps> = ({
         </span>
       );
     }
+    if (userRole === 'Pathology') {
+      return (
+        <span className="bg-purple-500/20 text-purple-200 border border-purple-400/30 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+          <FlaskConical className="w-3 h-3 text-purple-300" /> Pathology Dept
+        </span>
+      );
+    }
+    if (userRole === 'Organic') {
+      return (
+        <span className="bg-emerald-500/20 text-emerald-200 border border-emerald-400/30 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+          <Leaf className="w-3 h-3 text-emerald-300" /> Organic Dept
+        </span>
+      );
+    }
+    if (userRole === 'Nutrition') {
+      return (
+        <span className="bg-amber-500/20 text-amber-200 border border-amber-400/30 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+          <Apple className="w-3 h-3 text-amber-300" /> Nutrition Dept
+        </span>
+      );
+    }
+    if (userRole === 'SSD') {
+      return (
+        <span className="bg-teal-500/20 text-teal-200 border border-teal-400/30 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+          <BarChart3 className="w-3 h-3 text-teal-300" /> SSD
+        </span>
+      );
+    }
     return (
       <span className="bg-emerald-500/20 text-emerald-200 border border-emerald-400/30 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
         <Shield className="w-3 h-3 text-emerald-300" /> System Admin
@@ -106,7 +140,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           
           {/* Logo & Brand */}
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab(canAccessConsultation ? 'consultation' : (canAccessAppointments ? 'appointments' : (canAccessQuotation ? 'quotation' : 'history')))}>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab(userRole === 'SSD' ? 'reports' : (canAccessConsultation ? 'consultation' : (canAccessAppointments ? 'appointments' : (canAccessQuotation ? 'quotation' : 'history'))))}>
             <div className="bg-white/95 p-1.5 rounded-xl shadow border border-slate-700/50 flex items-center justify-center">
               <SuoxiLogo size="sm" />
             </div>
@@ -239,6 +273,34 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
+          {canAccessDeptClearance && (
+            <button
+              onClick={() => setActiveTab('departments')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === 'departments'
+                  ? 'bg-emerald-500 text-slate-950 font-bold shadow'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <FlaskConical className="w-4 h-4" />
+              <span>Department Updates</span>
+            </button>
+          )}
+
+          {canAccessReports && (
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === 'reports'
+                  ? 'bg-emerald-500 text-slate-950 font-bold shadow'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>Reporting</span>
+            </button>
+          )}
+
           {canAccessCatalog && (
             <button
               onClick={() => setActiveTab('catalog')}
@@ -263,7 +325,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Users className="w-4 h-4" />
-              <span>{userRole === 'System Admin' ? 'User Accounts' : 'My Account'}</span>
+              <span>{userRole === 'System Admin' ? 'User Accounts' : (userRole === 'SSD' ? 'My Profile & Password' : 'My Account')}</span>
             </button>
           )}
 

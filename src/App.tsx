@@ -8,6 +8,8 @@ import { QuotationPrintView } from './components/QuotationPrintView';
 import { QuotationHistory } from './components/QuotationHistory';
 import { CatalogSettings } from './components/CatalogSettings';
 import { UserManagement } from './components/UserManagement';
+import { DepartmentClearance } from './components/DepartmentClearance';
+import { ReportingDashboard } from './components/ReportingDashboard';
 import { PatientModal } from './components/PatientModal';
 import { LoginModal } from './components/LoginModal';
 import { FloatingCalculatorDrawer } from './components/FloatingCalculatorDrawer';
@@ -44,7 +46,7 @@ import {
 } from './services/googleSheetsService';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users'>('appointments');
+  const [activeTab, setActiveTab] = useState<'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users' | 'departments' | 'reports'>('appointments');
   
   const [currentUser, setCurrentUser] = useState<User | null>(() => getActiveUser());
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -61,6 +63,7 @@ export default function App() {
   const [editingQuotation, setEditingQuotation] = useState<InvoiceQuotation | null>(null);
   const [printQuotation, setPrintQuotation] = useState<InvoiceQuotation | null>(null);
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
+  const [consultationSubTab, setConsultationSubTab] = useState<'pre' | 'post'>('pre');
 
   // Global calculation view mode for Section 1 (Treatments) and Section 4 (Indoor Rooms)
   const [showFullTreatmentCalculation, setShowFullTreatmentCalculation] = useState<boolean>(false);
@@ -199,13 +202,41 @@ export default function App() {
     if (activeTab === 'consultation' && !isDoctorOrAdmin) {
       if (role === 'Call Center') {
         setActiveTab('appointments');
+      } else if (role === 'Pathology' || role === 'Organic' || role === 'Nutrition') {
+        setActiveTab('departments');
       } else {
         setActiveTab('history');
       }
       return;
     }
 
-    if (role === 'Call Center') {
+    // Strictly protect Department Updates tab for Pathology, Organic, Nutrition, and System Admin
+    const isDeptOrAdmin = role === 'System Admin' || role === 'Pathology' || role === 'Organic' || role === 'Nutrition';
+    if (activeTab === 'departments' && !isDeptOrAdmin) {
+      if (role === 'Call Center') {
+        setActiveTab('appointments');
+      } else if (role === 'Doctor') {
+        setActiveTab('consultation');
+      } else {
+        setActiveTab('history');
+      }
+      return;
+    }
+
+    // Strictly protect SSD user to reports and my profile & password (users tab) only
+    if (role === 'SSD') {
+      if (activeTab !== 'reports' && activeTab !== 'users') {
+        setActiveTab('reports');
+      }
+      return;
+    }
+
+    // Restrict all other roles from reports tab (only System Admin and SSD have access to reports)
+    if (role === 'Pathology' || role === 'Organic' || role === 'Nutrition') {
+      if (activeTab !== 'departments' && activeTab !== 'users') {
+        setActiveTab('departments');
+      }
+    } else if (role === 'Call Center') {
       if (activeTab !== 'appointments' && activeTab !== 'users') {
         setActiveTab('appointments');
       }
@@ -248,6 +279,10 @@ export default function App() {
       setActiveTab('consultation');
     } else if (user.role === 'Billing Counter') {
       setActiveTab('history');
+    } else if (user.role === 'Pathology' || user.role === 'Organic' || user.role === 'Nutrition') {
+      setActiveTab('departments');
+    } else if (user.role === 'SSD') {
+      setActiveTab('reports');
     } else {
       setActiveTab('consultation');
     }
@@ -266,6 +301,11 @@ export default function App() {
     setActiveTab('quotation');
   };
 
+  const handleBackToPostConsultation = () => {
+    setConsultationSubTab('post');
+    setActiveTab('consultation');
+  };
+
   const handleEditQuotation = (quotation: InvoiceQuotation) => {
     setEditingQuotation(quotation);
     setSelectedPatientForQuotation(null);
@@ -273,7 +313,7 @@ export default function App() {
   };
 
   const handleSavePatient = async (patient: Patient) => {
-    if (currentUser?.role === 'Doctor') {
+    if (currentUser?.role === 'Doctor' || currentUser?.role === 'SSD') {
       return;
     }
     let patientToSave = { ...patient };
@@ -462,6 +502,8 @@ export default function App() {
                   onSelectPatientForQuotation={handleSelectPatientForQuotation}
                   onViewQuotation={handlePreviewPrint}
                   currentUser={currentUser}
+                  initialSubTab={consultationSubTab}
+                  onSubTabChange={setConsultationSubTab}
                 />
               ) : (
                 <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 max-w-md mx-auto my-12 space-y-4 shadow-sm">
@@ -491,6 +533,8 @@ export default function App() {
                 setShowFullTreatmentCalculation={setShowFullTreatmentCalculation}
                 showFullIndoorCalculation={showFullIndoorCalculation}
                 setShowFullIndoorCalculation={setShowFullIndoorCalculation}
+                onBackToPostConsultation={handleBackToPostConsultation}
+                onUpdatePatient={handleUpdatePatient}
               />
             </div>
 
@@ -517,6 +561,53 @@ export default function App() {
                 onSaveProfessions={handleSaveProfessions}
                 onSaveComments={handleSaveComments}
               />
+            </div>
+
+            <div className={activeTab === 'departments' ? 'block' : 'hidden'}>
+              {(currentUser?.role === 'System Admin' || currentUser?.role === 'Pathology' || currentUser?.role === 'Organic' || currentUser?.role === 'Nutrition') ? (
+                <DepartmentClearance
+                  patients={patients}
+                  quotations={quotations}
+                  currentUser={currentUser}
+                  onRefreshPatients={() => initializeAppData(true)}
+                  onUpdatePatient={handleUpdatePatient}
+                />
+              ) : (
+                <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 max-w-md mx-auto my-12 space-y-4 shadow-sm">
+                  <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto border border-rose-100">
+                    <Lock className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800">Access Restricted</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed">
+                    Department Updates tab is accessible only by Pathology, Organic, Nutrition, and System Admin accounts.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
+              {currentUser?.role === 'System Admin' || currentUser?.role === 'SSD' ? (
+                <ReportingDashboard
+                  patients={patients}
+                  quotations={quotations}
+                  currentUser={currentUser}
+                  onSelectPatient={(p) => {
+                    if (currentUser?.role === 'SSD') return;
+                    setSelectedPatientForQuotation(p);
+                    setActiveTab('quotation');
+                  }}
+                />
+              ) : (
+                <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 max-w-md mx-auto my-12 space-y-4 shadow-sm">
+                  <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto border border-rose-100">
+                    <Lock className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800">Access Restricted</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed">
+                    Reporting page is accessible only by System Admin and SSD accounts.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className={activeTab === 'users' ? 'block' : 'hidden'}>

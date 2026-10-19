@@ -26,7 +26,7 @@ export const VpsGuideModal: React.FC = () => {
           <span>System User Roles & Access Overview:</span>
         </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-1">
             <span className="bg-emerald-700 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
               1. System Admin
@@ -52,6 +52,15 @@ export const VpsGuideModal: React.FC = () => {
             <p className="text-xs font-bold text-slate-900 mt-2">Daily Appointment Sheet Import</p>
             <p className="text-[11px] text-amber-800 font-mono font-semibold">ID: callcenter | Pass: cc123</p>
             <p className="text-[11px] text-slate-500">Daily appointment Excel upload & new patient registration.</p>
+          </div>
+
+          <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 space-y-1">
+            <span className="bg-teal-700 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
+              4. SSD
+            </span>
+            <p className="text-xs font-bold text-slate-900 mt-2">Reporting Dashboard & My Profile</p>
+            <p className="text-[11px] text-teal-800 font-mono font-semibold">ID: ssd | Pass: ssd123</p>
+            <p className="text-[11px] text-slate-500">Exclusive reporting & analytics access: funnels, doctor insights, demographic reports, personal profile & password change.</p>
           </div>
         </div>
       </div>

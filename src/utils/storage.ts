@@ -551,7 +551,10 @@ export const confirmPatientApi = async (id: string, isConfirmed: boolean = true)
         confirmedAt: new Date().toISOString(),
         consultationSerial: maxSerial + 1,
         consultationStatus: 'Pre Consultation',
-        status: 'Pre Consultation'
+        status: 'Pre Consultation',
+        isOnHold: false,
+        heldAt: undefined,
+        holdReason: undefined
       };
     } else {
       current[idx] = {
@@ -581,6 +584,107 @@ export const confirmPatientApi = async (id: string, isConfirmed: boolean = true)
     }
   } catch (err) {
     console.warn('Backend confirm error:', err);
+  }
+
+  return { patient: current[idx], patients: current };
+};
+
+export const holdPatientApi = async (id: string, isOnHold: boolean = true, holdReason?: string): Promise<{ patient?: Patient; patients: Patient[] }> => {
+  const current = getPatientsLocal();
+  const idx = current.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
+    let assignedSerial = current[idx].consultationSerial;
+
+    if (isOnHold && (!assignedSerial || typeof assignedSerial !== 'number')) {
+      let maxSerial = 0;
+      current.forEach(p => {
+        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+        }
+      });
+      assignedSerial = maxSerial + 1;
+    }
+
+    current[idx] = {
+      ...current[idx],
+      isConfirmed: isOnHold ? false : true,
+      confirmedAt: isOnHold ? (current[idx].confirmedAt || '') : (current[idx].confirmedAt || new Date().toISOString()),
+      consultationSerial: assignedSerial,
+      consultationStatus: isOnHold ? (current[idx].consultationStatus || 'Pre Consultation') : 'Pre Consultation',
+      status: isOnHold ? (current[idx].status || 'Pending Counseling') : 'Pre Consultation',
+      isOnHold,
+      heldAt: isOnHold ? (current[idx].heldAt || new Date().toISOString()) : undefined,
+      holdReason: isOnHold ? (holdReason || 'Patient absent when turn called') : undefined
+    };
+    updatePatientLocal(current[idx]);
+  }
+
+  try {
+    const res = await fetch('/api/patients/hold', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ id, isOnHold, holdReason })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.patient) {
+        updatePatientLocal(data.patient);
+      }
+      return { patient: data.patient, patients: data.patients || inMemoryPatients };
+    }
+  } catch (err) {
+    console.warn('Backend hold error:', err);
+  }
+
+  return { patient: current[idx], patients: current };
+};
+
+export const updateDepartmentStatusApi = async (
+  patientId: string,
+  department: 'pathology' | 'organic' | 'nutrition',
+  status: 'Yes' | 'No' | ''
+): Promise<{ patient?: Patient; patients: Patient[] }> => {
+  const current = getPatientsLocal();
+  const idx = current.findIndex(p => p.id === patientId);
+  const now = new Date().toISOString();
+  const user = getActiveUser();
+  const updaterName = user?.name || user?.username || 'Department Staff';
+
+  if (idx !== -1) {
+    const updated = { ...current[idx] };
+    if (department === 'pathology') {
+      updated.pathologyStatus = status;
+      updated.pathologyUpdatedAt = status ? now : undefined;
+      updated.pathologyUpdatedBy = status ? updaterName : undefined;
+    } else if (department === 'organic') {
+      updated.organicStatus = status;
+      updated.organicUpdatedAt = status ? now : undefined;
+      updated.organicUpdatedBy = status ? updaterName : undefined;
+    } else if (department === 'nutrition') {
+      updated.nutritionStatus = status;
+      updated.nutritionUpdatedAt = status ? now : undefined;
+      updated.nutritionUpdatedBy = status ? updaterName : undefined;
+    }
+    current[idx] = updated;
+    updatePatientLocal(updated);
+  }
+
+  try {
+    const res = await fetch('/api/patients/department-status', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ patientId, department, status })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.patient) {
+        updatePatientLocal(data.patient);
+      }
+      return { patient: data.patient, patients: data.patients || inMemoryPatients };
+    }
+  } catch (err) {
+    console.warn('Backend updateDepartmentStatusApi error:', err);
   }
 
   return { patient: current[idx], patients: current };
@@ -874,7 +978,11 @@ const ALL_DEV_USERS: User[] = [
   ...ADMIN_ONLY_USER,
   { id: 'usr-doc1', username: 'doctor', name: 'Dr. S.M. Shahidul Islam PhD', role: 'Doctor', phone: '01711111111' },
   { id: 'usr-cc1', username: 'callcenter', name: 'Call Center Desk', role: 'Call Center', phone: '01722222222' },
-  { id: 'usr-bc1', username: 'billing', name: 'Billing Counter Desk', role: 'Billing Counter', phone: '01733333333' }
+  { id: 'usr-bc1', username: 'billing', name: 'Billing Counter Desk', role: 'Billing Counter', phone: '01733333333' },
+  { id: 'usr-path1', username: 'pathology', name: 'Pathology Department', role: 'Pathology', phone: '01744444444' },
+  { id: 'usr-org1', username: 'organic', name: 'Organic Health Store', role: 'Organic', phone: '01755555555' },
+  { id: 'usr-nut1', username: 'nutrition', name: 'Nutrition & Dietetics', role: 'Nutrition', phone: '01766666666' },
+  { id: 'usr-ssd1', username: 'ssd', name: 'SSD Desk', role: 'SSD', phone: '01777777777' }
 ];
 
 const DEFAULT_USERS_LIST: User[] = ALL_DEV_USERS;

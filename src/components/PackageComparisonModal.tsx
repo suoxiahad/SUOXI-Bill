@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, ArrowRight, Sparkles, Scale, TrendingDown, Info, Printer } from 'lucide-react';
+import { X, Check, ArrowRight, ArrowLeft, Sparkles, Scale, TrendingDown, Info, Printer } from 'lucide-react';
 import { SuoxiLogo } from './SuoxiLogo';
 
 export interface TreatmentItemForComparison {
@@ -85,6 +85,7 @@ interface PackageComparisonModalProps {
     discount: number
   ) => void;
   onBeforePrint?: () => boolean | void | Promise<boolean | void>;
+  onBackToPostConsultation?: () => void;
 }
 
 export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
@@ -107,6 +108,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
   onSaveComparison,
   onApplyPackage,
   onBeforePrint,
+  onBackToPostConsultation,
 }) => {
   const [benchmarkDays, setBenchmarkDays] = useState<number>(30);
   const [showOutdoor, setShowOutdoor] = useState<boolean>(true);
@@ -484,6 +486,20 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {onBackToPostConsultation && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleCloseModal();
+                    onBackToPostConsultation();
+                  }}
+                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition cursor-pointer shadow-xs active:scale-95"
+                  title="Back to Post Consultation tab"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Back to Post Consultation</span>
+                </button>
+              )}
               {saveSuccessMsg && (
                 <span className="hidden sm:inline-flex items-center gap-1.5 text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 text-[11px] font-bold px-2.5 py-1 rounded-lg animate-in fade-in">
                   <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -1045,6 +1061,20 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               <Printer className="w-4 h-4" />
               <span>{isSavingAndPrinting ? 'Saving Quotation...' : 'Print Comparison'}</span>
             </button>
+            {onBackToPostConsultation && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleCloseModal();
+                  onBackToPostConsultation();
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold transition cursor-pointer shadow-xs active:scale-95"
+                title="Back to Post Consultation tab"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back to Post Consultation</span>
+              </button>
+            )}
             <button
               onClick={handleCloseModal}
               className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-bold transition cursor-pointer"

@@ -120,7 +120,7 @@ interface UserRecord {
   username: string;
   password_hash: string;
   name: string;
-  role: 'System Admin' | 'Doctor' | 'Call Center' | 'Billing Counter';
+  role: 'System Admin' | 'Doctor' | 'Call Center' | 'Billing Counter' | 'Pathology' | 'Organic' | 'Nutrition' | 'SSD';
   phone?: string;
   is_active: number;
 }
@@ -193,6 +193,42 @@ const DEMO_STAFF_USERS: UserRecord[] = [
     name: 'Billing Counter Desk',
     role: 'Billing Counter',
     phone: '01733333333',
+    is_active: 1
+  },
+  {
+    id: 'usr-pathology',
+    username: 'pathology',
+    password_hash: bcrypt.hashSync('pathology123', 10),
+    name: 'Pathology Department',
+    role: 'Pathology',
+    phone: '01744444444',
+    is_active: 1
+  },
+  {
+    id: 'usr-organic',
+    username: 'organic',
+    password_hash: bcrypt.hashSync('organic123', 10),
+    name: 'Organic Health Store',
+    role: 'Organic',
+    phone: '01755555555',
+    is_active: 1
+  },
+  {
+    id: 'usr-nutrition',
+    username: 'nutrition',
+    password_hash: bcrypt.hashSync('nutrition123', 10),
+    name: 'Nutrition & Dietetics',
+    role: 'Nutrition',
+    phone: '01766666666',
+    is_active: 1
+  },
+  {
+    id: 'usr-ssd',
+    username: 'ssd',
+    password_hash: bcrypt.hashSync('ssd123', 10),
+    name: 'SSD Desk',
+    role: 'SSD',
+    phone: '01777777777',
     is_active: 1
   }
 ];
@@ -414,6 +450,18 @@ async function initDatabase() {
           consultationComment TEXT,
           postConsultationConfirmed TINYINT DEFAULT 0,
           postConfirmedAt VARCHAR(64) DEFAULT '',
+          isOnHold TINYINT DEFAULT 0,
+          heldAt VARCHAR(64) DEFAULT '',
+          holdReason VARCHAR(255) DEFAULT '',
+          pathologyStatus VARCHAR(16) DEFAULT '',
+          pathologyUpdatedAt VARCHAR(64) DEFAULT '',
+          pathologyUpdatedBy VARCHAR(128) DEFAULT '',
+          organicStatus VARCHAR(16) DEFAULT '',
+          organicUpdatedAt VARCHAR(64) DEFAULT '',
+          organicUpdatedBy VARCHAR(128) DEFAULT '',
+          nutritionStatus VARCHAR(16) DEFAULT '',
+          nutritionUpdatedAt VARCHAR(64) DEFAULT '',
+          nutritionUpdatedBy VARCHAR(128) DEFAULT '',
           INDEX idx_patients_phone (phone)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
@@ -470,6 +518,18 @@ async function initDatabase() {
         "ALTER TABLE patients ADD COLUMN consultationComment TEXT",
         "ALTER TABLE patients ADD COLUMN postConsultationConfirmed TINYINT DEFAULT 0",
         "ALTER TABLE patients ADD COLUMN postConfirmedAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN isOnHold TINYINT DEFAULT 0",
+        "ALTER TABLE patients ADD COLUMN heldAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN holdReason VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN pathologyStatus VARCHAR(16) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN pathologyUpdatedAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN pathologyUpdatedBy VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN organicStatus VARCHAR(16) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN organicUpdatedAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN organicUpdatedBy VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN nutritionStatus VARCHAR(16) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN nutritionUpdatedAt VARCHAR(64) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN nutritionUpdatedBy VARCHAR(128) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientId VARCHAR(64) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientName VARCHAR(128) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientPhone VARCHAR(32) DEFAULT ''",
@@ -760,7 +820,7 @@ app.post('/api/auth/login', async (req, res) => {
 
   if (isMySqlActive && mysqlPool) {
     try {
-      const [rows]: any = await mysqlPool.execute('SELECT * FROM users WHERE username = ? AND is_active = 1', [username]);
+      const [rows]: any = await mysqlPool.execute('SELECT * FROM users WHERE LOWER(username) = LOWER(?) AND is_active = 1', [(username || '').trim()]);
       if (rows.length > 0) {
         user = rows[0];
       }
@@ -770,7 +830,8 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   if (!user) {
-    user = localData.users.find(u => u.username === username);
+    const cleanUsername = (username || '').trim().toLowerCase();
+    user = localData.users.find(u => u.username.toLowerCase() === cleanUsername);
   }
 
   if (!user) {
@@ -915,7 +976,7 @@ app.delete('/api/users/:id', authenticateToken, requireRole('System Admin'), asy
 });
 
 // 4. Patients API & PDF Upload Parser
-app.get('/api/patients/summary', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+app.get('/api/patients/summary', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD'), async (req, res) => {
   let count = localData.patients.length;
   let latestCreatedAt = localData.patients[0]?.createdAt || '';
   let latestId = localData.patients[0]?.id || '';
@@ -944,7 +1005,7 @@ app.get('/api/patients/summary', authenticateToken, requireRole('System Admin', 
   });
 });
 
-app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD'), async (req, res) => {
   const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 0;
   const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
   const dateFilter = req.query.date ? String(req.query.date).trim() : '';
@@ -991,7 +1052,7 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin',
   res.json(allPatients);
 });
 
-app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter'), async (req, res) => {
+app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD'), async (req, res) => {
   const query = String(req.query.q || '').trim();
   const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
   const dateFilter = req.query.date ? String(req.query.date).trim() : '';
@@ -1191,6 +1252,18 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     consultationComment: p.consultationComment !== undefined ? p.consultationComment : (existingIdx >= 0 ? localData.patients[existingIdx].consultationComment : ''),
     postConsultationConfirmed: p.postConsultationConfirmed !== undefined ? Boolean(p.postConsultationConfirmed) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].postConsultationConfirmed) : false),
     postConfirmedAt: p.postConfirmedAt !== undefined ? p.postConfirmedAt : (existingIdx >= 0 ? localData.patients[existingIdx].postConfirmedAt : ''),
+    isOnHold: p.isOnHold !== undefined ? Boolean(p.isOnHold) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].isOnHold) : false),
+    heldAt: p.heldAt !== undefined ? p.heldAt : (existingIdx >= 0 ? localData.patients[existingIdx].heldAt : ''),
+    holdReason: p.holdReason !== undefined ? p.holdReason : (existingIdx >= 0 ? localData.patients[existingIdx].holdReason : ''),
+    pathologyStatus: p.pathologyStatus !== undefined ? p.pathologyStatus : (existingIdx >= 0 ? localData.patients[existingIdx].pathologyStatus : ''),
+    pathologyUpdatedAt: p.pathologyUpdatedAt !== undefined ? p.pathologyUpdatedAt : (existingIdx >= 0 ? localData.patients[existingIdx].pathologyUpdatedAt : ''),
+    pathologyUpdatedBy: p.pathologyUpdatedBy !== undefined ? p.pathologyUpdatedBy : (existingIdx >= 0 ? localData.patients[existingIdx].pathologyUpdatedBy : ''),
+    organicStatus: p.organicStatus !== undefined ? p.organicStatus : (existingIdx >= 0 ? localData.patients[existingIdx].organicStatus : ''),
+    organicUpdatedAt: p.organicUpdatedAt !== undefined ? p.organicUpdatedAt : (existingIdx >= 0 ? localData.patients[existingIdx].organicUpdatedAt : ''),
+    organicUpdatedBy: p.organicUpdatedBy !== undefined ? p.organicUpdatedBy : (existingIdx >= 0 ? localData.patients[existingIdx].organicUpdatedBy : ''),
+    nutritionStatus: p.nutritionStatus !== undefined ? p.nutritionStatus : (existingIdx >= 0 ? localData.patients[existingIdx].nutritionStatus : ''),
+    nutritionUpdatedAt: p.nutritionUpdatedAt !== undefined ? p.nutritionUpdatedAt : (existingIdx >= 0 ? localData.patients[existingIdx].nutritionUpdatedAt : ''),
+    nutritionUpdatedBy: p.nutritionUpdatedBy !== undefined ? p.nutritionUpdatedBy : (existingIdx >= 0 ? localData.patients[existingIdx].nutritionUpdatedBy : ''),
     createdAt: p.createdAt || (existingIdx >= 0 ? localData.patients[existingIdx].createdAt : new Date().toISOString())
   };
 
@@ -1208,9 +1281,10 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
         `INSERT INTO patients (
           id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
           isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
-          consultationComment, postConsultationConfirmed, postConfirmedAt
+          consultationComment, postConsultationConfirmed, postConfirmedAt, isOnHold, heldAt, holdReason,
+          pathologyStatus, pathologyUpdatedAt, pathologyUpdatedBy, organicStatus, organicUpdatedAt, organicUpdatedBy, nutritionStatus, nutritionUpdatedAt, nutritionUpdatedBy
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE 
           serialNo = VALUES(serialNo),
           name = VALUES(name),
@@ -1236,7 +1310,19 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
           postConsultationAt = VALUES(postConsultationAt),
           consultationComment = VALUES(consultationComment),
           postConsultationConfirmed = VALUES(postConsultationConfirmed),
-          postConfirmedAt = VALUES(postConfirmedAt)`,
+          postConfirmedAt = VALUES(postConfirmedAt),
+          isOnHold = VALUES(isOnHold),
+          heldAt = VALUES(heldAt),
+          holdReason = VALUES(holdReason),
+          pathologyStatus = VALUES(pathologyStatus),
+          pathologyUpdatedAt = VALUES(pathologyUpdatedAt),
+          pathologyUpdatedBy = VALUES(pathologyUpdatedBy),
+          organicStatus = VALUES(organicStatus),
+          organicUpdatedAt = VALUES(organicUpdatedAt),
+          organicUpdatedBy = VALUES(organicUpdatedBy),
+          nutritionStatus = VALUES(nutritionStatus),
+          nutritionUpdatedAt = VALUES(nutritionUpdatedAt),
+          nutritionUpdatedBy = VALUES(nutritionUpdatedBy)`,
         [
           formattedPatient.id,
           formattedPatient.serialNo,
@@ -1264,7 +1350,19 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
           formattedPatient.postConsultationAt || '',
           formattedPatient.consultationComment || '',
           formattedPatient.postConsultationConfirmed ? 1 : 0,
-          formattedPatient.postConfirmedAt || ''
+          formattedPatient.postConfirmedAt || '',
+          formattedPatient.isOnHold ? 1 : 0,
+          formattedPatient.heldAt || '',
+          formattedPatient.holdReason || '',
+          formattedPatient.pathologyStatus || '',
+          formattedPatient.pathologyUpdatedAt || '',
+          formattedPatient.pathologyUpdatedBy || '',
+          formattedPatient.organicStatus || '',
+          formattedPatient.organicUpdatedAt || '',
+          formattedPatient.organicUpdatedBy || '',
+          formattedPatient.nutritionStatus || '',
+          formattedPatient.nutritionUpdatedAt || '',
+          formattedPatient.nutritionUpdatedBy || ''
         ]
       );
     } catch (err) {
@@ -1327,7 +1425,10 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
       confirmedAt: new Date().toISOString(),
       consultationSerial: nextSerial,
       consultationStatus: 'Pre Consultation',
-      status: 'Pre Consultation'
+      status: 'Pre Consultation',
+      isOnHold: false,
+      heldAt: '',
+      holdReason: ''
     };
   }
 
@@ -1339,7 +1440,7 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
       const updatedP = localData.patients[idx];
       await mysqlPool.execute(
         `UPDATE patients 
-         SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+         SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?, isOnHold = ?, heldAt = ?, holdReason = ?
          WHERE id = ?`,
         [
           updatedP.isConfirmed ? 1 : 0,
@@ -1347,11 +1448,162 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
           updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
           updatedP.consultationStatus || '',
           updatedP.status || 'Pending Counseling',
+          updatedP.isOnHold ? 1 : 0,
+          updatedP.heldAt || '',
+          updatedP.holdReason || '',
           updatedP.id
         ]
       );
     } catch (err) {
       console.error('MySQL patient confirm update error:', err);
+    }
+  }
+
+  res.json({ success: true, patient: localData.patients[idx], patients: localData.patients });
+});
+
+// Single patient Hold / Un-Hold endpoint with sequential serial reservation
+app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
+  const { id, isOnHold = true, holdReason = '' } = req.body;
+  if (!id) return res.status(400).json({ error: 'Patient ID is required' });
+
+  const idx = localData.patients.findIndex(p => p.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
+
+  const patient = localData.patients[idx];
+  const willHold = Boolean(isOnHold);
+  const targetDate = patient.appointmentDate || new Date().toISOString().split('T')[0];
+  let assignedSerial = patient.consultationSerial;
+
+  // If putting on Hold and patient does not yet have a consultationSerial, reserve the next sequential serial!
+  if (willHold && (!assignedSerial || typeof assignedSerial !== 'number')) {
+    let maxSerial = 0;
+    localData.patients.forEach(p => {
+      if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+        if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+      }
+    });
+
+    if (isMySqlActive && mysqlPool) {
+      try {
+        const [mRows]: any = await mysqlPool.execute(
+          'SELECT MAX(consultationSerial) AS maxDbSerial FROM patients WHERE appointmentDate = ?',
+          [targetDate]
+        );
+        if (mRows && mRows[0] && mRows[0].maxDbSerial !== null && mRows[0].maxDbSerial !== undefined) {
+          const dbMax = Number(mRows[0].maxDbSerial);
+          if (dbMax > maxSerial) maxSerial = dbMax;
+        }
+      } catch (err) {
+        console.warn('MySQL maxSerial query error:', err);
+      }
+    }
+
+    assignedSerial = maxSerial + 1;
+  }
+
+  localData.patients[idx] = {
+    ...patient,
+    isConfirmed: willHold ? false : true,
+    confirmedAt: willHold ? (patient.confirmedAt || '') : (patient.confirmedAt || new Date().toISOString()),
+    consultationSerial: assignedSerial,
+    consultationStatus: willHold ? (patient.consultationStatus || 'Pre Consultation') : 'Pre Consultation',
+    status: willHold ? (patient.status || 'Pending Counseling') : 'Pre Consultation',
+    isOnHold: willHold,
+    heldAt: willHold ? (patient.heldAt || new Date().toISOString()) : '',
+    holdReason: willHold ? (holdReason || 'Patient absent when turn called') : ''
+  };
+
+  saveLocalDb();
+  touchServerDataVersion();
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const updatedP = localData.patients[idx];
+      await mysqlPool.execute(
+        `UPDATE patients 
+         SET isOnHold = ?, heldAt = ?, holdReason = ?, isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+         WHERE id = ?`,
+        [
+          willHold ? 1 : 0,
+          updatedP.heldAt || '',
+          updatedP.holdReason || '',
+          updatedP.isConfirmed ? 1 : 0,
+          updatedP.confirmedAt || '',
+          updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
+          updatedP.consultationStatus || '',
+          updatedP.status || 'Pre Consultation',
+          patient.id
+        ]
+      );
+    } catch (err) {
+      console.warn('MySQL patient hold update error:', err);
+    }
+  }
+
+  res.json({ success: true, patient: localData.patients[idx], patients: localData.patients });
+});
+
+// Update Department Clearance / Service Tracking (Pathology, Organic, Nutrition)
+app.post('/api/patients/department-status', authenticateToken, requireRole('System Admin', 'Pathology', 'Organic', 'Nutrition'), async (req: any, res: any) => {
+  const { patientId, department, status } = req.body;
+  if (!patientId || !department) {
+    return res.status(400).json({ error: 'Patient ID and department are required' });
+  }
+
+  const idx = localData.patients.findIndex(p => p.id === patientId);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Patient not found' });
+  }
+
+  const normalizedStatus = status === 'Yes' || status === 'No' ? status : '';
+  const now = new Date().toISOString();
+  const updaterName = req.user?.name || req.user?.username || 'Department Staff';
+
+  const patient = { ...localData.patients[idx] };
+  if (department === 'pathology') {
+    patient.pathologyStatus = normalizedStatus;
+    patient.pathologyUpdatedAt = normalizedStatus ? now : '';
+    patient.pathologyUpdatedBy = normalizedStatus ? updaterName : '';
+  } else if (department === 'organic') {
+    patient.organicStatus = normalizedStatus;
+    patient.organicUpdatedAt = normalizedStatus ? now : '';
+    patient.organicUpdatedBy = normalizedStatus ? updaterName : '';
+  } else if (department === 'nutrition') {
+    patient.nutritionStatus = normalizedStatus;
+    patient.nutritionUpdatedAt = normalizedStatus ? now : '';
+    patient.nutritionUpdatedBy = normalizedStatus ? updaterName : '';
+  } else {
+    return res.status(400).json({ error: 'Invalid department specified. Allowed: pathology, organic, nutrition' });
+  }
+
+  localData.patients[idx] = patient;
+  saveLocalDb();
+  touchServerDataVersion();
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      await mysqlPool.execute(
+        `UPDATE patients 
+         SET pathologyStatus = ?, pathologyUpdatedAt = ?, pathologyUpdatedBy = ?,
+             organicStatus = ?, organicUpdatedAt = ?, organicUpdatedBy = ?,
+             nutritionStatus = ?, nutritionUpdatedAt = ?, nutritionUpdatedBy = ?
+         WHERE id = ?`,
+        [
+          patient.pathologyStatus || '',
+          patient.pathologyUpdatedAt || '',
+          patient.pathologyUpdatedBy || '',
+          patient.organicStatus || '',
+          patient.organicUpdatedAt || '',
+          patient.organicUpdatedBy || '',
+          patient.nutritionStatus || '',
+          patient.nutritionUpdatedAt || '',
+          patient.nutritionUpdatedBy || '',
+          patient.id
+        ]
+      );
+    } catch (err) {
+      console.error('MySQL update department status error:', err);
     }
   }
 
@@ -2073,7 +2325,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
 });
 
 // 5. Quotations API
-app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
+app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center', 'SSD'), async (req, res) => {
   if (isMySqlActive && mysqlPool) {
     try {
       const [rows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
@@ -2186,7 +2438,7 @@ app.post('/api/quotations/delete', authenticateToken, requireRole('System Admin'
 });
 
 // 6. Catalog API
-app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
+app.get('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center', 'SSD'), async (req, res) => {
   if (isMySqlActive && mysqlPool) {
     try {
       const [rows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY orderIndex ASC, id ASC');

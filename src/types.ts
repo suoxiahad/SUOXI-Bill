@@ -26,6 +26,21 @@ export interface Patient {
   consultationComment?: string;
   postConsultationConfirmed?: boolean;
   postConfirmedAt?: string;
+  quotationCreated?: boolean;
+  isOnHold?: boolean;
+  heldAt?: string;
+  holdReason?: string;
+
+  // Cross-Department Tracking (Pathology, Organic, Nutrition)
+  pathologyStatus?: 'Yes' | 'No' | '';
+  pathologyUpdatedAt?: string;
+  pathologyUpdatedBy?: string;
+  organicStatus?: 'Yes' | 'No' | '';
+  organicUpdatedAt?: string;
+  organicUpdatedBy?: string;
+  nutritionStatus?: 'Yes' | 'No' | '';
+  nutritionUpdatedAt?: string;
+  nutritionUpdatedBy?: string;
 }
 
 export interface IndividualTreatment {
@@ -169,7 +184,7 @@ export interface CatalogItem {
   orderIndex?: number;
 }
 
-export type UserRole = 'System Admin' | 'Doctor' | 'Call Center' | 'Billing Counter';
+export type UserRole = 'System Admin' | 'Doctor' | 'Call Center' | 'Billing Counter' | 'Pathology' | 'Organic' | 'Nutrition' | 'SSD';
 
 export interface User {
   id: string;

@@ -1,6 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { UserPlus, Shield, Stethoscope, PhoneCall, Trash2, Key, Edit3, CheckCircle, AlertCircle, Receipt, UserCheck, Lock, User as UserIcon } from 'lucide-react';
+import { 
+  UserPlus, 
+  Shield, 
+  Stethoscope, 
+  PhoneCall, 
+  Trash2, 
+  Key, 
+  Edit3, 
+  CheckCircle, 
+  AlertCircle, 
+  Receipt, 
+  UserCheck, 
+  Lock, 
+  User as UserIcon,
+  FlaskConical,
+  Leaf,
+  Apple,
+  BarChart3
+} from 'lucide-react';
 import { getUsersLocal, fetchUsersApi, saveUserApi, deleteUserApi, clearDemoDataApi, changePasswordApi } from '../utils/storage';
 
 interface UserManagementProps {
@@ -180,6 +198,34 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
         </span>
       );
     }
+    if (uRole === 'Pathology') {
+      return (
+        <span className="bg-purple-100 text-purple-900 border border-purple-300 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 w-fit">
+          <FlaskConical className="w-3.5 h-3.5 text-purple-700" /> Pathology Dept
+        </span>
+      );
+    }
+    if (uRole === 'Organic') {
+      return (
+        <span className="bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 w-fit">
+          <Leaf className="w-3.5 h-3.5 text-emerald-700" /> Organic Dept
+        </span>
+      );
+    }
+    if (uRole === 'Nutrition') {
+      return (
+        <span className="bg-amber-100 text-amber-900 border border-amber-300 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 w-fit">
+          <Apple className="w-3.5 h-3.5 text-amber-700" /> Nutrition Dept
+        </span>
+      );
+    }
+    if (uRole === 'SSD') {
+      return (
+        <span className="bg-teal-100 text-teal-800 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 w-fit">
+          <BarChart3 className="w-3.5 h-3.5 text-teal-600" /> SSD
+        </span>
+      );
+    }
     return (
       <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1 w-fit">
         <Shield className="w-3.5 h-3.5 text-emerald-600" /> System Admin
@@ -197,12 +243,14 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
             <UserIcon className="w-3.5 h-3.5" /> User Account & Security
           </div>
           <h2 className="text-2xl font-bold">
-            {isAdmin ? 'User Account Management' : 'My User Account Profile'}
+            {isAdmin ? 'User Account Management' : (currentUser?.role === 'SSD' ? 'SSD Account — My Profile & Password' : 'My User Account Profile')}
           </h2>
           <p className="text-emerald-200/90 text-xs mt-1">
             {isAdmin
               ? 'View your personal account details, change password, or manage hospital staff accounts.'
-              : 'View your personal account details and update your account login password.'}
+              : (currentUser?.role === 'SSD'
+                  ? 'View your SSD profile details, assigned reporting permissions, and update your login password.'
+                  : 'View your personal account details and update your account login password.')}
           </p>
         </div>
 
@@ -292,6 +340,28 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                 <strong>Note:</strong> Personal profile details (Full Name, Username, Role Permissions) are read-only. Only the System Administrator can edit these details.
               </span>
             </div>
+
+            {currentUser?.role === 'SSD' && (
+              <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-xl space-y-2 text-xs">
+                <span className="text-[11px] font-bold text-teal-800 uppercase tracking-wider block">
+                  SSD User Access Privileges:
+                </span>
+                <div className="space-y-1 text-slate-700">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                    <span className="font-semibold text-emerald-900">Reporting & Analytics Dashboard (Granted)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                    <span className="font-semibold text-emerald-900">My Profile & Change Password (Granted)</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <span className="w-2 h-2 rounded-full bg-slate-300 shrink-0"></span>
+                    <span>Patient Consultation, Appointments & Billing Modules (Restricted)</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Card 2: Password Change Form */}
@@ -415,6 +485,10 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                     <option value="Doctor">Doctor (Consultation, Quotation & History)</option>
                     <option value="Call Center">Call Center (Appointments Import)</option>
                     <option value="Billing Counter">Billing Counter (Quotation History)</option>
+                    <option value="Pathology">Pathology (Pathology Dept. Clearance)</option>
+                    <option value="Organic">Organic (Organic Products Clearance)</option>
+                    <option value="Nutrition">Nutrition (Nutrition Advice Clearance)</option>
+                    <option value="SSD">SSD (Reporting Dashboard Only)</option>
                     <option value="System Admin">System Admin (Full System Access)</option>
                   </select>
                 </div>
@@ -442,12 +516,24 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser }) =
                       <span>Quotation History ({role === 'System Admin' || role === 'Doctor' || role === 'Billing Counter' ? 'Granted' : 'Denied'})</span>
                     </div>
                     <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'Pathology' || role === 'Organic' || role === 'Nutrition' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                      <span>Department Updates ({role === 'System Admin' || role === 'Pathology' || role === 'Organic' || role === 'Nutrition' ? 'Granted' : 'Denied'})</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${role === 'System Admin' || role === 'SSD' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                      <span>Reporting & Analytics ({role === 'System Admin' || role === 'SSD' ? 'Granted' : 'Denied'})</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${role === 'System Admin' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
                       <span>Settings & Rates ({role === 'System Admin' ? 'Granted' : 'Denied'})</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className={`w-2 h-2 rounded-full ${role === 'System Admin' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                      <span>User Accounts & Admin ({role === 'System Admin' ? 'Granted' : 'Denied'})</span>
+                      <span>Staff Accounts Management ({role === 'System Admin' ? 'Granted' : 'Denied'})</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      <span>My Profile & Password (Granted to all users)</span>
                     </div>
                   </div>
                 </div>

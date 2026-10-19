@@ -20,14 +20,18 @@ import {
   Check,
   X,
   Download,
-  FileSpreadsheet
+  FileSpreadsheet,
+  PauseCircle,
+  PlayCircle,
+  Lock
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Patient, InvoiceQuotation, User as UserModel } from '../types';
 import { 
   addOrUpdatePatientApi, 
   getProfessionsLocal, 
-  getConsultationCommentsLocal 
+  getConsultationCommentsLocal,
+  holdPatientApi
 } from '../utils/storage';
 
 interface ConsultationProps {
@@ -40,6 +44,8 @@ interface ConsultationProps {
   onSelectPatientForQuotation: (patient: Patient) => void;
   onViewQuotation?: (quotation: InvoiceQuotation) => void;
   currentUser: UserModel | null;
+  initialSubTab?: 'pre' | 'post';
+  onSubTabChange?: (tab: 'pre' | 'post') => void;
 }
 
 export const Consultation: React.FC<ConsultationProps> = ({
@@ -51,7 +57,9 @@ export const Consultation: React.FC<ConsultationProps> = ({
   onUpdatePatient,
   onSelectPatientForQuotation,
   onViewQuotation,
-  currentUser
+  currentUser,
+  initialSubTab,
+  onSubTabChange
 }) => {
   const activeProfessions = professions && professions.length > 0 ? professions : getProfessionsLocal();
   const activeComments = comments && comments.length > 0 ? comments : getConsultationCommentsLocal();
@@ -74,7 +82,21 @@ export const Consultation: React.FC<ConsultationProps> = ({
   
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
-  const [activeSubTab, setActiveSubTab] = useState<'pre' | 'post'>('pre');
+  const [activeSubTab, setActiveSubTab] = useState<'pre' | 'post'>(initialSubTab || 'pre');
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  const handleSubTabChange = (tab: 'pre' | 'post') => {
+    setActiveSubTab(tab);
+    if (onSubTabChange) {
+      onSubTabChange(tab);
+    }
+  };
+
   const [filterText, setFilterText] = useState('');
   const deferredFilterText = useDeferredValue(filterText);
   const [selectedCommentFilter, setSelectedCommentFilter] = useState<string>('all');
@@ -99,6 +121,8 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Helper to determine if a patient is confirmed for Consultation
   const isConfirmedForConsultation = (p: Patient): boolean => {
+    // Patients on Hold strictly remain on the All Appointments page and NEVER enter Pre/Post Consultation
+    if (p.isOnHold) return false;
     return p.isConfirmed === true || (p.consultationSerial !== null && p.consultationSerial !== undefined && Number(p.consultationSerial) > 0);
   };
 
@@ -376,9 +400,6 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Create Quotation in Post Consultation -> auto-records doctor and opens Quotation Builder
   const handleCreateQuotation = async (patient: Patient) => {
-    if (!patient.postConsultationConfirmed) {
-      return;
-    }
     setIsProcessingDone(patient.id);
     const attendingDoctor = currentUser?.name || currentUser?.username || patient.preDoctorName || 'Doctor';
     const updated: Patient = {
@@ -468,6 +489,38 @@ export const Consultation: React.FC<ConsultationProps> = ({
       setActionMessage({
         type: 'error',
         text: `Failed to move back: ${err?.message || 'Error occurred'}`
+      });
+    });
+  };
+
+  // Action: Hold / Un-Hold patient in Pre Consultation queue
+  const handleHoldPatient = (patient: Patient, willHold: boolean = true) => {
+    setIsProcessingDone(patient.id);
+    const updated: Patient = {
+      ...patient,
+      isOnHold: willHold,
+      heldAt: willHold ? (patient.heldAt || new Date().toISOString()) : undefined,
+      holdReason: willHold ? (patient.holdReason || 'Patient absent when turn called') : undefined
+    };
+
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
+    }
+    setIsProcessingDone(null);
+    setActionMessage({
+      type: 'success',
+      text: willHold
+        ? `⏸ ${patient.name} (Serial #${patient.consultationSerial || 1}) placed on Hold.`
+        : `▶ ${patient.name} (Serial #${patient.consultationSerial || 1}) resumed from Hold.`
+    });
+    setTimeout(() => setActionMessage(null), 3000);
+
+    holdPatientApi(patient.id, willHold).catch((err: any) => {
+      console.error('Failed to update patient hold in background:', err);
+      if (onUpdatePatient) onUpdatePatient(patient);
+      setActionMessage({
+        type: 'error',
+        text: `Failed to update hold: ${err?.message || 'Error occurred'}`
       });
     });
   };
@@ -609,7 +662,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
           <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit flex-wrap">
             <button
               type="button"
-              onClick={() => setActiveSubTab('pre')}
+              onClick={() => handleSubTabChange('pre')}
               className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer flex items-center gap-2.5 ${
                 activeSubTab === 'pre'
                   ? 'bg-white text-slate-900 shadow-sm border border-slate-200 ring-1 ring-slate-200'
@@ -629,7 +682,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
             <button
               type="button"
-              onClick={() => setActiveSubTab('post')}
+              onClick={() => handleSubTabChange('post')}
               className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer flex items-center gap-2.5 ${
                 activeSubTab === 'post'
                   ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-700'
@@ -793,7 +846,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
               )}
               {activeSubTab === 'post' && (
                 <button
-                  onClick={() => setActiveSubTab('pre')}
+                  onClick={() => handleSubTabChange('pre')}
                   className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold transition shadow-xs cursor-pointer text-sm"
                 >
                   Go to Pre Consultation Tab
@@ -829,16 +882,29 @@ export const Consultation: React.FC<ConsultationProps> = ({
                     const itemDisplayIndex = startIndex + idx + 1;
                     const existingQuotation = quotationsByPatient.get(p.id) || quotationsByPatient.get(p.phone);
                     const isCurrentlyProcessing = isProcessingDone === p.id;
+                    const hasQuotation = Boolean(existingQuotation) || p.status === 'Quotation Created' || Boolean(p.quotationCreated);
 
                     return (
                       <tr 
                         key={p.id ? `${p.id}-${itemDisplayIndex}` : `pat-row-${itemDisplayIndex}`} 
-                        className="hover:bg-emerald-50/30 transition-colors"
+                        className={`transition-colors ${
+                          p.isOnHold 
+                            ? 'bg-amber-50/40 hover:bg-amber-50/60' 
+                            : 'hover:bg-emerald-50/30'
+                        }`}
                       >
                         <td className="px-3 py-2.5 font-mono text-slate-800 whitespace-nowrap">
-                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-950 border border-emerald-300 rounded text-xs font-semibold inline-flex items-center">
-                            #{p.consultationSerial || itemDisplayIndex}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-950 border border-emerald-300 rounded text-xs font-semibold inline-flex items-center">
+                              #{p.consultationSerial || itemDisplayIndex}
+                            </span>
+                            {p.isOnHold && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-950 border border-amber-300 rounded text-[10px] font-bold inline-flex items-center gap-1" title="Patient currently on hold / absent">
+                                <PauseCircle className="w-3 h-3 text-amber-700" />
+                                <span>Hold</span>
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap font-normal text-slate-800 text-sm">
                           {p.name}
@@ -1001,6 +1067,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
                               ) : (
                                 <span className="text-slate-400 text-xs italic">—</span>
                               )
+                            ) : !hasQuotation ? (
+                              <div className="relative group inline-block" title="Please create quotation first before selecting comment">
+                                <div className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed flex items-center gap-1.5 min-w-[155px]">
+                                  <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  <span>Create Quotation First</span>
+                                </div>
+                              </div>
                             ) : customCommentPatientId === p.id ? (
                               <div className="flex items-center gap-1 min-w-[165px]">
                                 <input
@@ -1092,25 +1165,50 @@ export const Consultation: React.FC<ConsultationProps> = ({
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
-                            {/* In Pre Consultation: Display Done Button */}
+                            {/* In Pre Consultation: Display Hold / Un-Hold & Done Button */}
                             {activeSubTab === 'pre' ? (
-                              <button
-                                onClick={() => handleMarkDone(p)}
-                                disabled={isCurrentlyProcessing || !p.profession}
-                                className={`px-4 py-1.5 font-semibold text-sm rounded-xl shadow-xs transition flex items-center gap-1.5 ml-auto ${
-                                  !p.profession 
-                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
-                                    : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white cursor-pointer'
-                                }`}
-                                title={!p.profession ? 'Please select patient profession first to mark Done' : 'Click Done to record doctor and move patient to Post Consultation'}
-                              >
-                                {isCurrentlyProcessing ? (
-                                  <Activity className="w-4 h-4 animate-spin text-white" />
+                              <div className="flex items-center gap-1.5 ml-auto">
+                                {p.isOnHold ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleHoldPatient(p, false)}
+                                    disabled={isCurrentlyProcessing}
+                                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                                    title={`Patient arrived! Resume and un-hold Serial #${p.consultationSerial || 1}.`}
+                                  >
+                                    <PlayCircle className="w-3.5 h-3.5 text-white" />
+                                    <span>Un-Hold #{p.consultationSerial || 1}</span>
+                                  </button>
                                 ) : (
-                                  <CheckCircle className={`w-4 h-4 ${!p.profession ? 'text-slate-400' : 'text-emerald-200'}`} />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleHoldPatient(p, true)}
+                                    disabled={isCurrentlyProcessing}
+                                    className="p-1.5 bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-950 border border-slate-300 hover:border-amber-300 rounded-xl transition cursor-pointer"
+                                    title="Hold serial if patient is absent when called"
+                                  >
+                                    <PauseCircle className="w-4 h-4 text-amber-700" />
+                                  </button>
                                 )}
-                                <span>Done</span>
-                              </button>
+
+                                <button
+                                  onClick={() => handleMarkDone(p)}
+                                  disabled={isCurrentlyProcessing || !p.profession}
+                                  className={`px-4 py-1.5 font-semibold text-sm rounded-xl shadow-xs transition flex items-center gap-1.5 ${
+                                    !p.profession 
+                                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
+                                      : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white cursor-pointer'
+                                  }`}
+                                  title={!p.profession ? 'Please select patient profession first to mark Done' : 'Click Done to record doctor and move patient to Post Consultation'}
+                                >
+                                  {isCurrentlyProcessing ? (
+                                    <Activity className="w-4 h-4 animate-spin text-white" />
+                                  ) : (
+                                    <CheckCircle className={`w-4 h-4 ${!p.profession ? 'text-slate-400' : 'text-emerald-200'}`} />
+                                  )}
+                                  <span>Done</span>
+                                </button>
+                              </div>
                             ) : (
                               /* In Post Consultation: Done button (changes to Confirmed), Create Quotation (no arrow), and Revert button */
                               <div className="flex items-center gap-1.5">
@@ -1124,51 +1222,41 @@ export const Consultation: React.FC<ConsultationProps> = ({
                                   </button>
                                 )}
 
+                                {/* Create Quotation button - always accessible directly in Post Consultation */}
+                                <button
+                                  onClick={() => handleCreateQuotation(p)}
+                                  disabled={isCurrentlyProcessing}
+                                  className={`px-3 py-1.5 font-medium text-xs rounded-xl transition shadow-xs flex items-center whitespace-nowrap ${
+                                    existingQuotation
+                                      ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 cursor-pointer'
+                                      : 'bg-blue-600 hover:bg-blue-700 active:scale-95 text-white cursor-pointer shadow-xs'
+                                  }`}
+                                  title={existingQuotation ? 'Open / View Quotation for this patient' : 'Click to create Quotation and evaluate package comparison'}
+                                >
+                                  <span>{existingQuotation ? 'Quotation' : 'Create Quotation'}</span>
+                                </button>
+
+                                {/* Done button: Only visible after comment is selected; if confirmed, shows Confirmed badge */}
                                 {p.postConsultationConfirmed ? (
                                   <span className="px-2.5 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold inline-flex items-center gap-1 shadow-2xs">
                                     <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
                                     <span>Confirmed</span>
                                   </span>
-                                ) : (
+                                ) : (p.consultationComment && p.consultationComment.trim() && p.consultationComment !== 'Other') ? (
                                   <button
                                     onClick={() => handleConfirmPostConsultation(p)}
-                                    disabled={isCurrentlyProcessing || !p.consultationComment || !p.consultationComment.trim() || p.consultationComment === 'Other'}
-                                    className={`px-3 py-1.5 font-medium text-xs rounded-xl shadow-xs transition flex items-center gap-1 ${
-                                      !p.consultationComment || !p.consultationComment.trim() || p.consultationComment === 'Other'
-                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
-                                        : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white cursor-pointer'
-                                    }`}
-                                    title={
-                                      !p.consultationComment || !p.consultationComment.trim() || p.consultationComment === 'Other'
-                                        ? 'Please select or enter a comment before confirming Done'
-                                        : 'Click Done to confirm Post Consultation'
-                                    }
+                                    disabled={isCurrentlyProcessing}
+                                    className="px-3 py-1.5 font-medium text-xs rounded-xl shadow-xs transition flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white cursor-pointer"
+                                    title="Click Done to complete Post Consultation"
                                   >
                                     {isCurrentlyProcessing ? (
                                       <Activity className="w-3.5 h-3.5 animate-spin text-white" />
                                     ) : (
-                                      <CheckCircle className={`w-3.5 h-3.5 ${!p.consultationComment || !p.consultationComment.trim() || p.consultationComment === 'Other' ? 'text-slate-400' : 'text-emerald-200'}`} />
+                                      <CheckCircle className="w-3.5 h-3.5 text-emerald-200" />
                                     )}
                                     <span>Done</span>
                                   </button>
-                                )}
-
-                                <button
-                                  onClick={() => handleCreateQuotation(p)}
-                                  disabled={isCurrentlyProcessing || !p.postConsultationConfirmed}
-                                  className={`px-3 py-1.5 font-medium text-xs rounded-xl transition shadow-xs flex items-center whitespace-nowrap ${
-                                    !p.postConsultationConfirmed
-                                      ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                                      : 'bg-blue-600 hover:bg-blue-700 active:scale-95 text-white cursor-pointer disabled:opacity-50'
-                                  }`}
-                                  title={
-                                    !p.postConsultationConfirmed
-                                      ? 'Please click Done first to enable Quotation creation'
-                                      : 'Click to open Quotation Builder for this patient'
-                                  }
-                                >
-                                  <span>{existingQuotation ? 'Quotation' : 'Create Quotation'}</span>
-                                </button>
+                                ) : null}
 
                                 <button
                                   onClick={() => setPatientToRevert(p)}
