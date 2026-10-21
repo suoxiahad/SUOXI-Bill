@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, UserPlus, Phone, User, Stethoscope, FileText, Calendar, MapPin } from 'lucide-react';
+import { X, UserPlus, Phone, User, Stethoscope, FileText, Calendar, MapPin, Briefcase } from 'lucide-react';
 import { Patient } from '../types';
+import { DEFAULT_PROFESSIONS, getProfessionsLocal } from '../utils/storage';
 
 interface PatientModalProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<'Male' | 'Female' | 'Other'>('Male');
   const [address, setAddress] = useState('');
+  const [profession, setProfession] = useState('');
   const [doctorName, setDoctorName] = useState('Dr. S.M. Shahidul Islam PhD');
   const [appointmentDate, setAppointmentDate] = useState(todayStr);
   const [notes, setNotes] = useState('');
@@ -38,6 +40,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
       phone: phone.trim().replace(/[^0-9+]/g, ''),
       age: age ? Number(age) : '',
       gender,
+      profession: profession.trim(),
       address: address.trim(),
       doctorName,
       appointmentDate: appointmentDate || todayStr,
@@ -55,6 +58,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     setName('');
     setPhone('');
     setAge('');
+    setProfession('');
     setAddress('');
     setNotes('');
   };
@@ -170,6 +174,36 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                 value={doctorName}
                 onChange={(e) => setDoctorName(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase mb-1 flex items-center gap-1.5">
+              <Briefcase className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Profession</span>
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={DEFAULT_PROFESSIONS.includes(profession) ? profession : (profession ? 'Other' : '')}
+                onChange={(e) => {
+                  if (e.target.value !== 'Other') {
+                    setProfession(e.target.value);
+                  }
+                }}
+                className="w-1/2 px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              >
+                <option value="">-- Select Profession --</option>
+                {DEFAULT_PROFESSIONS.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                placeholder="Or custom profession..."
+                value={profession}
+                onChange={(e) => setProfession(e.target.value)}
+                className="w-1/2 px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               />
             </div>
           </div>

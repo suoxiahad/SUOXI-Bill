@@ -115,6 +115,10 @@ export const Consultation: React.FC<ConsultationProps> = ({
   const [customCommentPatientId, setCustomCommentPatientId] = useState<string | null>(null);
   const [customCommentText, setCustomCommentText] = useState<string>('');
 
+  // Active inline editing tracking for Profession and Comment
+  const [editingProfessionPatientId, setEditingProfessionPatientId] = useState<string | null>(null);
+  const [editingCommentPatientId, setEditingCommentPatientId] = useState<string | null>(null);
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
@@ -247,6 +251,8 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Update single patient profession (Instant 1ms UI update + Silent background sync)
   const handleUpdateProfession = (patient: Patient, newProfession: string) => {
+    setEditingProfessionPatientId(null);
+    setCustomProfessionPatientId(null);
     const updated: Patient = {
       ...patient,
       profession: newProfession
@@ -283,10 +289,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
       handleUpdateProfession(patient, clean);
     }
     setCustomProfessionPatientId(null);
+    setEditingProfessionPatientId(null);
   };
 
   // Action: Update single patient decision / comment (Instant 1ms UI update + Silent background sync)
   const handleUpdateComment = (patient: Patient, newComment: string) => {
+    setEditingCommentPatientId(null);
+    setCustomCommentPatientId(null);
     const updated: Patient = {
       ...patient,
       consultationComment: newComment
@@ -323,6 +332,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
       handleUpdateComment(patient, clean);
     }
     setCustomCommentPatientId(null);
+    setEditingCommentPatientId(null);
   };
 
   // Disease editing handlers
@@ -367,12 +377,12 @@ export const Consultation: React.FC<ConsultationProps> = ({
     }
 
     setIsProcessingDone(patient.id);
-    const attendingDoctor = currentUser?.name || currentUser?.username || patient.doctorName || 'Doctor';
+    const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
     const updated: Patient = {
       ...patient,
       status: 'Post Consultation',
       consultationStatus: 'Post Consultation',
-      preDoctorName: patient.preDoctorName || attendingDoctor,
+      preDoctorName: attendingDoctor,
       preConsultationAt: new Date().toISOString()
     };
 
@@ -383,7 +393,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
     setIsProcessingDone(null);
     setActionMessage({
       type: 'success',
-      text: `✓ ${patient.name} marked as Done by Dr. ${patient.preDoctorName || attendingDoctor} and moved to Post Consultation.`
+      text: `✓ ${patient.name} marked as Done by Dr. ${attendingDoctor} and moved to Post Consultation.`
     });
     setTimeout(() => setActionMessage(null), 3500);
 
@@ -401,11 +411,11 @@ export const Consultation: React.FC<ConsultationProps> = ({
   // Action: Create Quotation in Post Consultation -> auto-records doctor and opens Quotation Builder
   const handleCreateQuotation = async (patient: Patient) => {
     setIsProcessingDone(patient.id);
-    const attendingDoctor = currentUser?.name || currentUser?.username || patient.preDoctorName || 'Doctor';
+    const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
     const updated: Patient = {
       ...patient,
-      postDoctorName: patient.postDoctorName || attendingDoctor,
-      postConsultationAt: patient.postConsultationAt || new Date().toISOString()
+      postDoctorName: attendingDoctor,
+      postConsultationAt: new Date().toISOString()
     };
 
     if (onUpdatePatient) {
@@ -434,7 +444,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
     const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
     const updated: Patient = {
       ...patient,
-      postDoctorName: patient.postDoctorName || attendingDoctor,
+      postDoctorName: attendingDoctor,
       postConsultationConfirmed: true,
       postConfirmedAt: new Date().toISOString()
     };
@@ -446,7 +456,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
     setIsProcessingDone(null);
     setActionMessage({
       type: 'success',
-      text: `✓ Post Consultation confirmed for ${patient.name}.`
+      text: `✓ Post Consultation confirmed for ${patient.name} by Dr. ${attendingDoctor}.`
     });
     setTimeout(() => setActionMessage(null), 3000);
 
@@ -468,7 +478,12 @@ export const Consultation: React.FC<ConsultationProps> = ({
       ...patient,
       status: 'Pending Counseling',
       consultationStatus: 'Pre Consultation',
-      postConsultationConfirmed: false
+      postConsultationConfirmed: false,
+      preDoctorName: '',
+      preConsultationAt: '',
+      postDoctorName: '',
+      postConsultationAt: '',
+      postConfirmedAt: ''
     };
 
     // 1. Instant UI update
@@ -1034,47 +1049,95 @@ export const Consultation: React.FC<ConsultationProps> = ({
                               </select>
                             )
                           ) : (
-                            <span className="text-sm font-normal text-slate-800">
-                              {p.profession ? (
+                            /* Post Consultation Profession with Edit Permission */
+                            customProfessionPatientId === p.id ? (
+                              <div className="flex items-center gap-1 min-w-[155px]">
+                                <input
+                                  type="text"
+                                  value={customProfessionText}
+                                  onChange={(e) => setCustomProfessionText(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveCustomProfession(p);
+                                    if (e.key === 'Escape') setCustomProfessionPatientId(null);
+                                  }}
+                                  placeholder="Type profession..."
+                                  autoFocus
+                                  className="w-full px-2 py-1 text-xs border border-emerald-500 rounded bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-normal"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveCustomProfession(p)}
+                                  className="p-1 text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 rounded cursor-pointer"
+                                  title="Save Profession"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCustomProfessionPatientId(null)}
+                                  className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded cursor-pointer"
+                                  title="Cancel"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : editingProfessionPatientId === p.id || !p.profession ? (
+                              <div className="flex items-center gap-1">
+                                <select
+                                  value={professionOptions.includes(p.profession || '') ? (p.profession || '') : (p.profession ? 'Other' : '')}
+                                  onChange={(e) => {
+                                    if (e.target.value === 'Other') {
+                                      setCustomProfessionPatientId(p.id);
+                                      setCustomProfessionText(p.profession && !professionOptions.includes(p.profession) ? p.profession : '');
+                                    } else {
+                                      handleUpdateProfession(p, e.target.value);
+                                    }
+                                  }}
+                                  className="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg text-sm font-normal text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs cursor-pointer min-w-[125px] transition"
+                                  title="Select patient profession"
+                                >
+                                  <option value="">-- Select --</option>
+                                  {professionOptions.map(prof => (
+                                    <option key={prof} value={prof}>
+                                      {prof === 'Other' && p.profession && !professionOptions.includes(p.profession) 
+                                        ? `Other: ${p.profession}` 
+                                        : prof}
+                                    </option>
+                                  ))}
+                                </select>
+                                {editingProfessionPatientId === p.id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingProfessionPatientId(null)}
+                                    className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded cursor-pointer"
+                                    title="Cancel"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 group">
                                 <span className="px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-800 rounded-md text-xs font-medium inline-block">
                                   {p.profession}
                                 </span>
-                              ) : (
-                                <span className="text-slate-400 text-xs italic">—</span>
-                              )}
-                            </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingProfessionPatientId(p.id)}
+                                  className="p-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded transition cursor-pointer"
+                                  title="Edit Profession"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )
                           )}
                         </td>
 
-                        {/* Comment Column: Only in Post Consultation */}
+                        {/* Comment Column: Only in Post Consultation with Edit Permission */}
                         {activeSubTab === 'post' && (
                           <td className="px-3 py-2.5 whitespace-nowrap bg-blue-50/20 border-l border-r border-blue-100">
-                            {p.postConsultationConfirmed ? (
-                              p.consultationComment ? (
-                                <span className={`px-2.5 py-1 rounded-md text-xs font-medium border inline-block ${
-                                  p.consultationComment === 'Will take today'
-                                    ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
-                                    : p.consultationComment === 'Will admit'
-                                    ? 'bg-blue-50 text-blue-950 border-blue-300'
-                                    : p.consultationComment === 'Costly'
-                                    ? 'bg-rose-50 text-rose-950 border-rose-300'
-                                    : p.consultationComment === 'Will take later'
-                                    ? 'bg-amber-50 text-amber-950 border-amber-300'
-                                    : 'bg-slate-100 text-slate-800 border-slate-200'
-                                }`} title="Comment locked after confirmation">
-                                  {p.consultationComment}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400 text-xs italic">—</span>
-                              )
-                            ) : !hasQuotation ? (
-                              <div className="relative group inline-block" title="Please create quotation first before selecting comment">
-                                <div className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed flex items-center gap-1.5 min-w-[155px]">
-                                  <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                  <span>Create Quotation First</span>
-                                </div>
-                              </div>
-                            ) : customCommentPatientId === p.id ? (
+                            {customCommentPatientId === p.id ? (
                               <div className="flex items-center gap-1 min-w-[165px]">
                                 <input
                                   type="text"
@@ -1105,39 +1168,79 @@ export const Consultation: React.FC<ConsultationProps> = ({
                                   <X className="w-3.5 h-3.5" />
                                 </button>
                               </div>
+                            ) : p.postConsultationConfirmed && editingCommentPatientId !== p.id ? (
+                              <div className="flex items-center gap-1.5 group">
+                                {p.consultationComment ? (
+                                  <span className={`px-2.5 py-1 rounded-md text-xs font-medium border inline-block ${
+                                    p.consultationComment === 'Will take today'
+                                      ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
+                                      : p.consultationComment === 'Will admit'
+                                      ? 'bg-blue-50 text-blue-950 border-blue-300'
+                                      : p.consultationComment === 'Costly'
+                                      ? 'bg-rose-50 text-rose-950 border-rose-300'
+                                      : p.consultationComment === 'Will take later'
+                                      ? 'bg-amber-50 text-amber-950 border-amber-300'
+                                      : 'bg-slate-100 text-slate-800 border-slate-200'
+                                  }`} title="Click edit icon to modify comment">
+                                    {p.consultationComment}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 text-xs italic">—</span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingCommentPatientId(p.id)}
+                                  className="p-1 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded transition cursor-pointer"
+                                  title="Edit Comment"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             ) : (
-                              <select
-                                value={commentOptions.includes(p.consultationComment || '') ? (p.consultationComment || '') : (p.consultationComment ? 'Other' : '')}
-                                onChange={(e) => {
-                                  if (e.target.value === 'Other') {
-                                    setCustomCommentPatientId(p.id);
-                                    setCustomCommentText(p.consultationComment && !commentOptions.includes(p.consultationComment) ? p.consultationComment : '');
-                                  } else {
-                                    handleUpdateComment(p, e.target.value);
-                                  }
-                                }}
-                                className={`px-2.5 py-1.5 rounded-lg text-sm font-normal border shadow-2xs cursor-pointer min-w-[145px] transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                                  p.consultationComment === 'Will take today'
-                                    ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
-                                    : p.consultationComment === 'Will admit'
-                                    ? 'bg-blue-50 text-blue-950 border-blue-300'
-                                    : p.consultationComment === 'Costly'
-                                    ? 'bg-rose-50 text-rose-950 border-rose-300'
-                                    : p.consultationComment === 'Will take later'
-                                    ? 'bg-amber-50 text-amber-950 border-amber-300'
-                                    : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50'
-                                }`}
-                                title="Select patient decision or counseling comment (managed from Settings)"
-                              >
-                                <option value="">-- Select Decision --</option>
-                                {commentOptions.map(c => (
-                                  <option key={c} value={c}>
-                                    {c === 'Other' && p.consultationComment && !commentOptions.includes(p.consultationComment) 
-                                      ? `Other: ${p.consultationComment}` 
-                                      : c}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="flex items-center gap-1">
+                                <select
+                                  value={commentOptions.includes(p.consultationComment || '') ? (p.consultationComment || '') : (p.consultationComment ? 'Other' : '')}
+                                  onChange={(e) => {
+                                    if (e.target.value === 'Other') {
+                                      setCustomCommentPatientId(p.id);
+                                      setCustomCommentText(p.consultationComment && !commentOptions.includes(p.consultationComment) ? p.consultationComment : '');
+                                    } else {
+                                      handleUpdateComment(p, e.target.value);
+                                    }
+                                  }}
+                                  className={`px-2.5 py-1.5 rounded-lg text-sm font-normal border shadow-2xs cursor-pointer min-w-[145px] transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                                    p.consultationComment === 'Will take today'
+                                      ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
+                                      : p.consultationComment === 'Will admit'
+                                      ? 'bg-blue-50 text-blue-950 border-blue-300'
+                                      : p.consultationComment === 'Costly'
+                                      ? 'bg-rose-50 text-rose-950 border-rose-300'
+                                      : p.consultationComment === 'Will take later'
+                                      ? 'bg-amber-50 text-amber-950 border-amber-300'
+                                      : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50'
+                                  }`}
+                                  title="Select patient decision or counseling comment"
+                                >
+                                  <option value="">-- Select Decision --</option>
+                                  {commentOptions.map(c => (
+                                    <option key={c} value={c}>
+                                      {c === 'Other' && p.consultationComment && !commentOptions.includes(p.consultationComment) 
+                                        ? `Other: ${p.consultationComment}` 
+                                        : c}
+                                    </option>
+                                  ))}
+                                </select>
+                                {editingCommentPatientId === p.id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingCommentPatientId(null)}
+                                    className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded cursor-pointer"
+                                    title="Cancel"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </td>
                         )}
