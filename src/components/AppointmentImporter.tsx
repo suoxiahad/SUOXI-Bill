@@ -27,13 +27,11 @@ import {
   Square,
   ShieldCheck,
   FileX,
-  Undo2,
-  PauseCircle,
-  PlayCircle
+  Undo2
 } from 'lucide-react';
 import { Patient, InvoiceQuotation, User as UserModel } from '../types';
 import { parseExcelAppointmentFile, downloadSampleExcelTemplate, ParsedExcelPatient } from '../utils/excelHelper';
-import { importPatientsFromExcelApi, deletePatientsApi, confirmPatientApi, confirmBatchPatientsApi, holdPatientApi } from '../utils/storage';
+import { importPatientsFromExcelApi, deletePatientsApi, confirmPatientApi, confirmBatchPatientsApi, addOrUpdatePatientApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
 
 interface AppointmentImporterProps {
@@ -58,9 +56,8 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
-  const [activeSubTab, setActiveSubTab] = useState<'all' | 'confirmed' | 'hold' | 'pending'>('all');
+  const [activeSubTab, setActiveSubTab] = useState<'all' | 'confirmed' | 'pending'>('all');
   const [isConfirmingId, setIsConfirmingId] = useState<string | null>(null);
-  const [isHoldingId, setIsHoldingId] = useState<string | null>(null);
   const [patientToUndo, setPatientToUndo] = useState<Patient | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -83,88 +80,55 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     setSelectedPatientIds([]);
   }, [filterText, selectedDateFilter, activeSubTab]);
 
-  const handleHoldPatient = (p: Patient, willHold: boolean = true) => {
-    setIsHoldingId(p.id);
-    const targetDate = p.appointmentDate || selectedDate || new Date().toISOString().split('T')[0];
-    let assignedSerial = p.consultationSerial;
-
-    // When putting on Hold, assign next sequential consultation serial if not already assigned
-    if (willHold && (!assignedSerial || typeof assignedSerial !== 'number')) {
-      const sameDateSerials = patients
-        .filter(x => x.appointmentDate === targetDate && typeof x.consultationSerial === 'number')
-        .map(x => x.consultationSerial!);
-      assignedSerial = sameDateSerials.length > 0 ? Math.max(...sameDateSerials) + 1 : 1;
-    }
-
-    const optimisticPatient: Patient = {
+  // Action: Toggle Instant status for patient (Instant visit fee: 2000 BDT, regular: free)
+  const handleToggleInstant = (p: Patient) => {
+    const nextInstant = !p.isInstant;
+    const updated: Patient = {
       ...p,
-      isConfirmed: willHold ? false : true,
-      confirmedAt: willHold ? (p.confirmedAt || '') : (p.confirmedAt || new Date().toISOString()),
-      consultationSerial: assignedSerial,
-      consultationStatus: willHold ? (p.consultationStatus || 'Pre Consultation') : 'Pre Consultation',
-      status: willHold ? (p.status || 'Pending Counseling') : 'Pre Consultation',
-      isOnHold: willHold,
-      heldAt: willHold ? (p.heldAt || new Date().toISOString()) : undefined,
-      holdReason: willHold ? (p.holdReason || 'Patient absent when turn called') : undefined
+      isInstant: nextInstant,
+      instantFee: nextInstant ? 2000 : 0
     };
 
     if (onUpdatePatient) {
-      onUpdatePatient(optimisticPatient);
+      onUpdatePatient(updated);
     }
-
     setUploadMessage({
-      type: willHold ? 'info' : 'success',
-      text: willHold
-        ? `⏸ ${p.name} placed on Hold (Serial #${assignedSerial}). Patient will remain on this page and will NOT enter Pre/Post Consultation until confirmed.`
-        : `▶ ${p.name} released from Hold & confirmed for Pre Consultation (Serial #${assignedSerial}).`
+      type: 'success',
+      text: nextInstant 
+        ? `✓ ${p.name} marked as Instant Patient (Fee: ৳2,000).`
+        : `✓ ${p.name} set to Regular Appointment (Free).`
     });
-    setTimeout(() => setUploadMessage(null), 3500);
+    setTimeout(() => setUploadMessage(null), 2500);
 
-    holdPatientApi(p.id, willHold)
-      .then(res => {
-        if (res.patient && onUpdatePatient) {
-          onUpdatePatient(res.patient);
-        }
-      })
-      .catch(err => {
-        console.error('Failed to update patient hold in background:', err);
-        if (onUpdatePatient) {
-          onUpdatePatient(p);
-        }
-        setUploadMessage({
-          type: 'error',
-          text: `Failed to update hold: ${err?.message || 'Error occurred'}`
-        });
-      })
-      .finally(() => {
-        setIsHoldingId(null);
-      });
+    addOrUpdatePatientApi(updated).catch(err => {
+      console.error('Failed to update instant status:', err);
+      if (onUpdatePatient) onUpdatePatient(p);
+    });
   };
 
-  const handleBulkHoldPatients = async (willHold: boolean) => {
-    if (selectedPatientIds.length === 0) return;
-    setIsDeleting(true);
-    try {
-      for (const id of selectedPatientIds) {
-        await holdPatientApi(id, willHold);
-      }
-      setUploadMessage({
-        type: 'success',
-        text: willHold
-          ? `✓ Placed ${selectedPatientIds.length} patient(s) on Hold.`
-          : `✓ Released ${selectedPatientIds.length} patient(s) from Hold.`
-      });
-      setSelectedPatientIds([]);
-      onRefreshPatients();
-      setTimeout(() => setUploadMessage(null), 3500);
-    } catch (err: any) {
-      setUploadMessage({
-        type: 'error',
-        text: `Failed to bulk update hold: ${err?.message || 'Error occurred'}`
-      });
-    } finally {
-      setIsDeleting(false);
+  // Action: Toggle ED status for patient
+  const handleToggleEd = (p: Patient) => {
+    const nextEd = !p.isEd;
+    const updated: Patient = {
+      ...p,
+      isEd: nextEd
+    };
+
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
     }
+    setUploadMessage({
+      type: 'success',
+      text: nextEd 
+        ? `✓ ${p.name} tagged as ED patient.`
+        : `✓ ${p.name} ED tag removed.`
+    });
+    setTimeout(() => setUploadMessage(null), 2500);
+
+    addOrUpdatePatientApi(updated).catch(err => {
+      console.error('Failed to update ED status:', err);
+      if (onUpdatePatient) onUpdatePatient(p);
+    });
   };
 
   const handleConfirmPatient = (p: Patient) => {
@@ -400,7 +364,10 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     try {
       const recordsToSave = selectedRecords.map(p => ({
         ...p,
-        appointmentDate: selectedDate
+        appointmentDate: selectedDate,
+        isInstant: Boolean(p.isInstant),
+        instantFee: p.isInstant ? (p.instantFee != null ? p.instantFee : 2000) : 0,
+        isEd: Boolean(p.isEd)
       }));
 
       const summary = await importPatientsFromExcelApi(recordsToSave, (processed, total) => {
@@ -480,33 +447,24 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
   const confirmedCountTotal = useMemo(() => {
     if (isDateFiltering) {
-      return patients.filter(p => !!p.isConfirmed && !p.isOnHold && getPatientDate(p) === selectedDateFilter).length;
+      return patients.filter(p => !!p.isConfirmed && getPatientDate(p) === selectedDateFilter).length;
     }
-    return patients.filter(p => !!p.isConfirmed && !p.isOnHold).length;
-  }, [patients, isDateFiltering, selectedDateFilter]);
-
-  const onHoldCountTotal = useMemo(() => {
-    if (isDateFiltering) {
-      return patients.filter(p => !!p.isOnHold && getPatientDate(p) === selectedDateFilter).length;
-    }
-    return patients.filter(p => !!p.isOnHold).length;
+    return patients.filter(p => !!p.isConfirmed).length;
   }, [patients, isDateFiltering, selectedDateFilter]);
 
   const pendingCountTotal = useMemo(() => {
     if (isDateFiltering) {
-      return patients.filter(p => !p.isConfirmed && !p.isOnHold && p.consultationSerial == null && getPatientDate(p) === selectedDateFilter).length;
+      return patients.filter(p => !p.isConfirmed && p.consultationSerial == null && getPatientDate(p) === selectedDateFilter).length;
     }
-    return patients.filter(p => !p.isConfirmed && !p.isOnHold && p.consultationSerial == null).length;
+    return patients.filter(p => !p.isConfirmed && p.consultationSerial == null).length;
   }, [patients, isDateFiltering, selectedDateFilter]);
 
   const filteredPatients = useMemo(() => {
     return patients.filter(p => {
       if (activeSubTab === 'confirmed') {
-        if (!p.isConfirmed || p.isOnHold) return false;
-      } else if (activeSubTab === 'hold') {
-        if (!p.isOnHold) return false;
+        if (!p.isConfirmed) return false;
       } else if (activeSubTab === 'pending') {
-        if (p.isConfirmed || p.isOnHold || p.consultationSerial != null) return false;
+        if (p.isConfirmed || p.consultationSerial != null) return false;
       }
 
       const matchesText = matchPatient(deferredFilterText, p);
@@ -709,6 +667,8 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                     <th className="px-3 py-2">Age</th>
                     <th className="px-3 py-2">Address</th>
                     <th className="px-3 py-2">Remark (Disease / Condition)</th>
+                    <th className="px-3 py-2 text-center whitespace-nowrap">Instant</th>
+                    <th className="px-3 py-2 text-center whitespace-nowrap">ED</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -738,6 +698,56 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                         {p.address || '—'}
                       </td>
                       <td className="px-3 py-2 text-slate-600">{p.remark}</td>
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        {p.isInstant ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParsedPreview(prev => prev.map((item, i) => i === idx ? { ...item, isInstant: false, instantFee: 0 } : item));
+                            }}
+                            className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200 transition cursor-pointer shadow-2xs"
+                            title="Instant Patient: 2000 Visit Fee (Click to toggle)"
+                          >
+                            2000
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParsedPreview(prev => prev.map((item, i) => i === idx ? { ...item, isInstant: true, instantFee: 2000 } : item));
+                            }}
+                            className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 px-2 py-0.5 rounded text-xs transition cursor-pointer font-bold"
+                            title="Regular appointment (Free) — Click to mark as Instant (2000)"
+                          >
+                            -
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        {p.isEd ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParsedPreview(prev => prev.map((item, i) => i === idx ? { ...item, isEd: false } : item));
+                            }}
+                            className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-purple-100 text-purple-900 border border-purple-300 hover:bg-purple-200 transition cursor-pointer shadow-2xs"
+                            title="ED Patient (Click to toggle)"
+                          >
+                            ED
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParsedPreview(prev => prev.map((item, i) => i === idx ? { ...item, isEd: true } : item));
+                            }}
+                            className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 px-2 py-0.5 rounded text-xs transition cursor-pointer font-bold"
+                            title="Regular patient — Click to tag as ED"
+                          >
+                            -
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -789,24 +799,6 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
             <button
               type="button"
-              onClick={() => setActiveSubTab('hold')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeSubTab === 'hold'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'text-amber-800 hover:text-amber-950 hover:bg-amber-50'
-              }`}
-            >
-              <PauseCircle className="w-3.5 h-3.5" />
-              <span>On Hold</span>
-              <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold ${
-                activeSubTab === 'hold' ? 'bg-amber-700 text-amber-100' : 'bg-amber-100 text-amber-900 border border-amber-300'
-              }`}>
-                {onHoldCountTotal}
-              </span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => setActiveSubTab('pending')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeSubTab === 'pending'
@@ -830,11 +822,6 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                 <CheckCircle className="w-3.5 h-3.5 shrink-0" />
                 <span>Confirmed patients transferred to the Pre Consultation queue in sequential serial.</span>
               </span>
-            ) : activeSubTab === 'hold' ? (
-              <span className="text-amber-800 flex items-center gap-1">
-                <PauseCircle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
-                <span>Patients placed on Hold. They will remain on this page and will NOT proceed to Pre/Post Consultation until confirmed.</span>
-              </span>
             ) : activeSubTab === 'pending' ? (
               <span className="text-rose-800 flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 shrink-0 text-rose-600" />
@@ -843,7 +830,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
             ) : (
               <span className="text-slate-600 flex items-center gap-1">
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>All imported appointments. Click <strong>Confirm</strong> to assign sequential Pre Consultation serial, or <strong>Hold</strong> if absent.</span>
+                <span>All imported appointments. Click <strong>Confirm</strong> to assign sequential Pre Consultation serial.</span>
               </span>
             )}
           </div>
@@ -890,32 +877,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
               </button>
             )}
 
-            {/* Bulk Hold / Un-Hold Button */}
-            {selectedPatientIds.length > 0 && (
-              activeSubTab === 'hold' ? (
-                <button
-                  type="button"
-                  onClick={() => handleBulkHoldPatients(false)}
-                  disabled={isDeleting}
-                  className="text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-3 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-                  title="Release selected patients from Hold"
-                >
-                  <PlayCircle className="w-3.5 h-3.5 text-amber-800" />
-                  <span>Un-Hold Selected ({selectedPatientIds.length})</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => handleBulkHoldPatients(true)}
-                  disabled={isDeleting}
-                  className="text-xs font-bold text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-3 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-                  title="Put selected absent patients on Hold"
-                >
-                  <PauseCircle className="w-3.5 h-3.5 text-amber-800" />
-                  <span>Hold Selected ({selectedPatientIds.length})</span>
-                </button>
-              )
-            )}
+
 
             {/* Bulk Confirm Button */}
             {selectedPatientIds.length > 0 && (
@@ -1031,6 +993,8 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                     <th className="px-3 py-3 font-semibold whitespace-nowrap">Gender / Age</th>
                     <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Address</th>
                     <th className="px-3.5 py-3 font-semibold whitespace-nowrap">Remark (Disease)</th>
+                    <th className="px-3 py-3 font-semibold text-center whitespace-nowrap">Instant</th>
+                    <th className="px-3 py-3 font-semibold text-center whitespace-nowrap">ED</th>
                     <th className="px-3.5 py-3 font-semibold text-right whitespace-nowrap">Action</th>
                   </tr>
                 </thead>
@@ -1045,8 +1009,6 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                         className={`transition-colors ${
                           isSelected 
                             ? 'bg-emerald-50/50' 
-                            : p.isOnHold 
-                            ? 'bg-amber-50/40 hover:bg-amber-50/60' 
                             : 'hover:bg-emerald-50/40'
                         }`}
                       >
@@ -1073,15 +1035,6 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                         <td className="px-3.5 py-3 font-normal text-slate-800 text-sm whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <span>{p.name}</span>
-                            {p.isOnHold && (
-                              <span 
-                                className="px-2 py-0.5 bg-amber-100 text-amber-950 border border-amber-300 rounded-md text-[11px] font-bold inline-flex items-center gap-1 shadow-2xs"
-                                title={`Patient absent — confirmed serial #${p.consultationSerial || 1} reserved on hold${p.heldAt ? ' since ' + new Date(p.heldAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`}
-                              >
-                                <PauseCircle className="w-3 h-3 text-amber-700" />
-                                <span>Hold #{p.consultationSerial || 1}</span>
-                              </span>
-                            )}
                           </div>
                         </td>
                         <td className="px-3.5 py-3 font-mono text-slate-800 font-normal text-sm whitespace-nowrap">
@@ -1110,100 +1063,84 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                         <td className="px-3.5 py-3 text-slate-700 text-sm max-w-xs font-normal truncate">
                           {p.remark || p.notes || 'General Assessment'}
                         </td>
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          {p.isInstant ? (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleInstant(p)}
+                              className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer inline-flex items-center gap-1"
+                              title="Instant Patient (৳2,000 Visit Fee) - Click to toggle to Regular"
+                            >
+                              <span>৳2,000</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleInstant(p)}
+                              className="px-2.5 py-1 text-slate-400 hover:text-amber-800 hover:bg-amber-50 rounded-lg text-xs font-semibold transition cursor-pointer"
+                              title="Regular Appointment (Free) - Click to mark as Instant (৳2,000 Fee)"
+                            >
+                              -
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          {p.isEd ? (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEd(p)}
+                              className="px-2.5 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer inline-flex items-center gap-1"
+                              title="ED Patient - Click to toggle"
+                            >
+                              <span>ED</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEd(p)}
+                              className="px-2.5 py-1 text-slate-400 hover:text-purple-800 hover:bg-purple-50 rounded-lg text-xs font-semibold transition cursor-pointer"
+                              title="Click to tag as ED Patient"
+                            >
+                              -
+                            </button>
+                          )}
+                        </td>
                         <td className="px-3.5 py-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
-                            {p.isOnHold ? (
-                              <>
-                                {/* On Hold Action Buttons: Un-Hold (maintaining reserved serial) & Undo */}
-                                <button
-                                  type="button"
-                                  onClick={() => handleHoldPatient(p, false)}
-                                  disabled={isHoldingId === p.id}
-                                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                                  title={`Patient arrived! Click to activate Serial #${p.consultationSerial || 1}`}
-                                >
-                                  {isHoldingId === p.id ? (
-                                    <Activity className="w-3.5 h-3.5 animate-spin text-white" />
-                                  ) : (
-                                    <PlayCircle className="w-3.5 h-3.5 text-white" />
-                                  )}
-                                  <span>Un-Hold #{p.consultationSerial || 1}</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setPatientToUndo(p)}
-                                  disabled={isConfirmingId === p.id}
-                                  className="px-2.5 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-300 hover:border-rose-300 font-bold text-xs rounded-xl transition cursor-pointer flex items-center gap-1"
-                                  title="Undo confirmation and release reserved serial"
-                                >
-                                  <Undo2 className="w-3.5 h-3.5 text-rose-500" />
-                                  <span>Undo</span>
-                                </button>
-                              </>
-                            ) : !p.isConfirmed ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleHoldPatient(p, true)}
-                                  disabled={isHoldingId === p.id}
-                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-amber-50 hover:text-amber-900 hover:border-amber-300 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
-                                  title="Patient is absent. Put on Hold to skip and call the next patient."
-                                >
-                                  {isHoldingId === p.id ? (
-                                    <Activity className="w-3 h-3 animate-spin text-amber-700" />
-                                  ) : (
-                                    <PauseCircle className="w-3.5 h-3.5 text-amber-600" />
-                                  )}
-                                  <span>Hold</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleConfirmPatient(p)}
-                                  disabled={isConfirmingId === p.id}
-                                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-sm rounded-xl shadow-xs transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
-                                  title="Confirm appointment and assign sequential Pre Consultation serial"
-                                >
-                                  {isConfirmingId === p.id ? (
-                                    <Activity className="w-4 h-4 animate-spin text-white" />
-                                  ) : (
-                                    <CheckCircle className="w-4 h-4 text-emerald-200" />
-                                  )}
-                                  <span>Confirm</span>
-                                </button>
-                              </>
+                            {!p.isConfirmed ? (
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmPatient(p)}
+                                disabled={isConfirmingId === p.id}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-sm rounded-xl shadow-xs transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                                title="Confirm appointment and assign sequential Pre Consultation serial"
+                              >
+                                {isConfirmingId === p.id ? (
+                                  <Activity className="w-4 h-4 animate-spin text-white" />
+                                ) : (
+                                  <CheckCircle className="w-4 h-4 text-emerald-200" />
+                                )}
+                                <span>Confirm</span>
+                              </button>
                             ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleHoldPatient(p, true)}
-                                  disabled={isHoldingId === p.id}
-                                  className="p-2 bg-slate-100 hover:bg-amber-50 hover:text-amber-900 hover:border-amber-300 text-slate-600 border border-slate-300 rounded-xl transition cursor-pointer"
-                                  title="Patient absent in consultation queue. Put on Hold."
-                                >
-                                  <PauseCircle className="w-3.5 h-3.5 text-amber-700" />
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setPatientToUndo(p)}
-                                  disabled={isConfirmingId === p.id}
-                                  className="px-4 py-2 bg-emerald-50 hover:bg-rose-50 text-emerald-800 hover:text-rose-700 border border-emerald-300 hover:border-rose-300 font-bold text-sm rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50 group"
-                                  title="Click to Undo confirmation"
-                                >
-                                  {isConfirmingId === p.id ? (
-                                    <Activity className="w-4 h-4 animate-spin text-emerald-700" />
-                                  ) : (
-                                    <>
-                                      <CheckCircle className="w-4 h-4 text-emerald-600 group-hover:hidden" />
-                                      <Undo2 className="w-4 h-4 text-rose-600 hidden group-hover:inline" />
-                                    </>
-                                  )}
-                                  <span className="group-hover:hidden">Confirmed #{p.consultationSerial || 1}</span>
-                                  <span className="hidden group-hover:inline text-rose-700">Undo #{p.consultationSerial || 1}?</span>
-                                </button>
-                              </>
+                              <button
+                                type="button"
+                                onClick={() => setPatientToUndo(p)}
+                                disabled={isConfirmingId === p.id}
+                                className="px-4 py-2 bg-emerald-50 hover:bg-rose-50 text-emerald-800 hover:text-rose-700 border border-emerald-300 hover:border-rose-300 font-bold text-sm rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50 group"
+                                title="Click to Undo confirmation"
+                              >
+                                {isConfirmingId === p.id ? (
+                                  <Activity className="w-4 h-4 animate-spin text-emerald-700" />
+                                ) : (
+                                  <>
+                                    <CheckCircle className="w-4 h-4 text-emerald-600 group-hover:hidden" />
+                                    <Undo2 className="w-4 h-4 text-rose-600 hidden group-hover:inline" />
+                                  </>
+                                )}
+                                <span className="group-hover:hidden">Confirmed #{p.consultationSerial || 1}</span>
+                                <span className="hidden group-hover:inline text-rose-700">Undo #{p.consultationSerial || 1}?</span>
+                              </button>
                             )}
                           </div>
                         </td>

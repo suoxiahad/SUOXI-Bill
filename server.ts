@@ -530,6 +530,9 @@ async function initDatabase() {
         "ALTER TABLE patients ADD COLUMN nutritionStatus VARCHAR(16) DEFAULT ''",
         "ALTER TABLE patients ADD COLUMN nutritionUpdatedAt VARCHAR(64) DEFAULT ''",
         "ALTER TABLE patients ADD COLUMN nutritionUpdatedBy VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN isInstant TINYINT DEFAULT 0",
+        "ALTER TABLE patients ADD COLUMN instantFee DOUBLE DEFAULT 0",
+        "ALTER TABLE patients ADD COLUMN isEd TINYINT DEFAULT 0",
         "ALTER TABLE quotations ADD COLUMN patientId VARCHAR(64) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientName VARCHAR(128) DEFAULT ''",
         "ALTER TABLE quotations ADD COLUMN patientPhone VARCHAR(32) DEFAULT ''",
@@ -740,6 +743,9 @@ function formatPatientRow(r: any): any {
     consultationComment: r.consultationComment || '',
     postConsultationConfirmed: r.postConsultationConfirmed === 1 || r.postConsultationConfirmed === true || r.postConsultationConfirmed === '1',
     postConfirmedAt: r.postConfirmedAt || '',
+    isInstant: r.isInstant === 1 || r.isInstant === true || r.isInstant === '1' || r.isInstant === 'true',
+    instantFee: r.instantFee !== null && r.instantFee !== undefined ? Number(r.instantFee) : ((r.isInstant === 1 || r.isInstant === true || r.isInstant === '1' || r.isInstant === 'true') ? 2000 : 0),
+    isEd: r.isEd === 1 || r.isEd === true || r.isEd === '1' || r.isEd === 'true',
     status: r.status || 'Pending Counseling',
     createdAt: r.createdAt || ''
   };
@@ -1255,6 +1261,9 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     isOnHold: p.isOnHold !== undefined ? Boolean(p.isOnHold) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].isOnHold) : false),
     heldAt: p.heldAt !== undefined ? p.heldAt : (existingIdx >= 0 ? localData.patients[existingIdx].heldAt : ''),
     holdReason: p.holdReason !== undefined ? p.holdReason : (existingIdx >= 0 ? localData.patients[existingIdx].holdReason : ''),
+    isInstant: p.isInstant !== undefined ? Boolean(p.isInstant) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].isInstant) : false),
+    instantFee: p.instantFee !== undefined ? Number(p.instantFee) : (p.isInstant ? 2000 : (existingIdx >= 0 ? (localData.patients[existingIdx].instantFee || 0) : 0)),
+    isEd: p.isEd !== undefined ? Boolean(p.isEd) : (existingIdx >= 0 ? Boolean(localData.patients[existingIdx].isEd) : false),
     pathologyStatus: p.pathologyStatus !== undefined ? p.pathologyStatus : (existingIdx >= 0 ? localData.patients[existingIdx].pathologyStatus : ''),
     pathologyUpdatedAt: p.pathologyUpdatedAt !== undefined ? p.pathologyUpdatedAt : (existingIdx >= 0 ? localData.patients[existingIdx].pathologyUpdatedAt : ''),
     pathologyUpdatedBy: p.pathologyUpdatedBy !== undefined ? p.pathologyUpdatedBy : (existingIdx >= 0 ? localData.patients[existingIdx].pathologyUpdatedBy : ''),
@@ -1917,6 +1926,8 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
     let genderCol = -1;
     let addressCol = -1;
     let remarkCol = -1;
+    let instantCol = -1;
+    let edCol = -1;
 
     if (headerRowIdx !== -1) {
       const hRow = matrix[headerRowIdx];
@@ -1930,6 +1941,10 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           phoneCol = idx;
         } else if (/(patient\s*name|patient|customer|client|full\s*name|rogir?\s*nam|রোগীর\s*নাম|রোগী|^name$|^নাম$)/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
           nameCol = idx;
+        } else if (/(instant|ইন্সট্যান্ট|instant\s*fee|visit\s*fee|ভিজিট\s*ফি|fee|2000)/i.test(str) && instantCol === -1) {
+          instantCol = idx;
+        } else if (/(\bed\b|^ed$|ed\s*patient|erectile|ইরেক্টাইল|ইডি)/i.test(str) && edCol === -1) {
+          edCol = idx;
         } else if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str) && remarkCol === -1) {
           remarkCol = idx;
         } else if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str) && ageCol === -1) {
@@ -1942,7 +1957,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
       });
     }
 
-    const extractedPatients: Array<{ serialNo?: string; name: string; gender: string; age: string; phone: string; address?: string; remark: string }> = [];
+    const extractedPatients: Array<{ serialNo?: string; name: string; gender: string; age: string; phone: string; address?: string; remark: string; isInstant?: boolean; instantFee?: number; isEd?: boolean }> = [];
     const startRow = headerRowIdx !== -1 ? headerRowIdx + 1 : 0;
 
     for (let r = startRow; r < matrix.length; r++) {
@@ -1956,6 +1971,8 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
       let gender = genderCol !== -1 ? String(row[genderCol] || '').trim() : '';
       let address = addressCol !== -1 ? String(row[addressCol] || '').trim() : '';
       let remark = remarkCol !== -1 ? String(row[remarkCol] || '').trim() : '';
+      let rawInstant = instantCol !== -1 ? String(row[instantCol] || '').trim() : '';
+      let rawEd = edCol !== -1 ? String(row[edCol] || '').trim() : '';
 
       row.forEach((cell, cIdx) => {
         const val = String(cell || '').trim();
@@ -1976,7 +1993,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           }
         }
 
-        if (!age && cIdx !== phoneCol && cIdx !== nameCol) {
+        if (!age && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== instantCol && cIdx !== edCol) {
           const aMatch = val.match(/\b(\d{1,3})\s*(?:yrs|years|y|y\.o|y\/o|y\.|বছর)?\b/i);
           if (aMatch) {
             const num = parseInt(aMatch[1], 10);
@@ -1986,7 +2003,19 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           }
         }
 
-        if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol && cIdx !== genderCol && cIdx !== serialCol) {
+        if (instantCol === -1 && !rawInstant) {
+          if (/^(?:2000|2,000|২০০০|2000\/=)$/i.test(val)) {
+            rawInstant = val;
+          }
+        }
+
+        if (edCol === -1 && !rawEd) {
+          if (/^(?:ed|ইডি)$/i.test(val)) {
+            rawEd = val;
+          }
+        }
+
+        if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol && cIdx !== genderCol && cIdx !== serialCol && cIdx !== instantCol && cIdx !== edCol) {
           const isNumeric = /^\d+$/.test(val);
           const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
           const isKeywords = /male|female|new patient|followup|robin|alamin|rakibul|completed|pending|cancel/i.test(val);
@@ -1995,7 +2024,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           }
         }
 
-        if (!remark && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol) {
+        if (!remark && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== instantCol && cIdx !== edCol) {
           const isNumeric = /^\d+$/.test(val);
           const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
           if (
@@ -2009,7 +2038,7 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
         }
 
         // Detect Address fallback
-        if (!address && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== remarkCol && cIdx !== serialCol) {
+        if (!address && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== remarkCol && cIdx !== serialCol && cIdx !== instantCol && cIdx !== edCol) {
           const isNumeric = /^\d+$/.test(val);
           const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
           if (
@@ -2058,6 +2087,29 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
         age = ageMatch ? ageMatch[1] : age;
       }
 
+      // Determine Instant status
+      let isInstant = false;
+      let instantFee = 0;
+      if (rawInstant) {
+        if (/2000|2,000|২০০০|yes|true|instant|ইন্সট্যান্ট/i.test(rawInstant) && !/no|free|রেগুলার|regular/i.test(rawInstant)) {
+          isInstant = true;
+          instantFee = 2000;
+        }
+      } else if (/instant|2000\s*(?:tk|bdt|টাকা|fee)?|ইন্সট্যান্ট/i.test(remark)) {
+        isInstant = true;
+        instantFee = 2000;
+      }
+
+      // Determine ED status
+      let isEd = false;
+      if (rawEd) {
+        if (/^ed$|\bed\b|yes|true|erectile|ইরেক্টাইল|ইডি/i.test(rawEd) && !/no|none|regular|false/i.test(rawEd)) {
+          isEd = true;
+        }
+      } else if (/\b(ed|erectile\s*dysfunction|ইডি)\b/i.test(remark)) {
+        isEd = true;
+      }
+
       if (name || phone) {
         const finalName = name || (phone ? `Patient ${phone}` : `Patient #${extractedPatients.length + 1}`);
         const finalPhone = phone || '01700000000';
@@ -2079,6 +2131,9 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           phone: finalPhone,
           address: address || '',
           remark: remark || 'General Assessment',
+          isInstant,
+          instantFee,
+          isEd
         });
       }
     }
@@ -2107,7 +2162,7 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
   const batchSize = 50;
   for (let i = 0; i < patientsList.length; i += batchSize) {
     const chunk = patientsList.slice(i, i + batchSize);
-    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
     const values: any[] = [];
 
     for (const p of chunk) {
@@ -2138,7 +2193,10 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
         p.postConsultationAt || '',
         p.consultationComment || '',
         p.postConsultationConfirmed ? 1 : 0,
-        p.postConfirmedAt || ''
+        p.postConfirmedAt || '',
+        p.isInstant ? 1 : 0,
+        p.instantFee != null ? p.instantFee : (p.isInstant ? 2000 : 0),
+        p.isEd ? 1 : 0
       );
     }
 
@@ -2146,7 +2204,7 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
       INSERT INTO patients (
         id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
         isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
-        consultationComment, postConsultationConfirmed, postConfirmedAt
+        consultationComment, postConsultationConfirmed, postConfirmedAt, isInstant, instantFee, isEd
       )
       VALUES ${placeholders}
       ON DUPLICATE KEY UPDATE
@@ -2174,7 +2232,10 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
         postConsultationAt = VALUES(postConsultationAt),
         consultationComment = VALUES(consultationComment),
         postConsultationConfirmed = VALUES(postConsultationConfirmed),
-        postConfirmedAt = VALUES(postConfirmedAt)
+        postConfirmedAt = VALUES(postConfirmedAt),
+        isInstant = VALUES(isInstant),
+        instantFee = VALUES(instantFee),
+        isEd = VALUES(isEd)
     `;
 
     try {
@@ -2187,9 +2248,9 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
             `INSERT INTO patients (
               id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
               isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
-              consultationComment, postConsultationConfirmed, postConfirmedAt
+              consultationComment, postConsultationConfirmed, postConfirmedAt, isInstant, instantFee, isEd
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
               serialNo = VALUES(serialNo),
               name = VALUES(name),
@@ -2215,11 +2276,15 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
               postConsultationAt = VALUES(postConsultationAt),
               consultationComment = VALUES(consultationComment),
               postConsultationConfirmed = VALUES(postConsultationConfirmed),
-              postConfirmedAt = VALUES(postConfirmedAt)`,
+              postConfirmedAt = VALUES(postConfirmedAt),
+              isInstant = VALUES(isInstant),
+              instantFee = VALUES(instantFee),
+              isEd = VALUES(isEd)`,
             [
               p.id, p.serialNo || '', p.name || '', p.phone || '', p.age || '', p.gender || 'Other', p.address || '', p.doctorName || '', p.appointmentDate || '', p.appointmentTime || '', p.department || '', p.status || '', p.notes || '', p.remark || '', p.createdAt || '',
               p.isConfirmed ? 1 : 0, p.confirmedAt || '', p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null, p.consultationStatus || '', p.profession || '', p.preDoctorName || '', p.postDoctorName || '', p.preConsultationAt || '', p.postConsultationAt || '',
-              p.consultationComment || '', p.postConsultationConfirmed ? 1 : 0, p.postConfirmedAt || ''
+              p.consultationComment || '', p.postConsultationConfirmed ? 1 : 0, p.postConfirmedAt || '',
+              p.isInstant ? 1 : 0, p.instantFee != null ? p.instantFee : (p.isInstant ? 2000 : 0), p.isEd ? 1 : 0
             ]
           );
         } catch (singleErr) {
@@ -2287,6 +2352,9 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       status: p.status || 'Pending Counseling',
       notes: p.notes || p.remark || '',
       remark: p.remark || p.notes || '',
+      isInstant: Boolean(p.isInstant),
+      instantFee: p.isInstant ? (p.instantFee != null ? p.instantFee : 2000) : 0,
+      isEd: Boolean(p.isEd),
       createdAt: p.createdAt || new Date().toISOString()
     };
 

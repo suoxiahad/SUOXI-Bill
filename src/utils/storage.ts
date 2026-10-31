@@ -202,21 +202,47 @@ function getAuthHeader(): Record<string, string> {
   return { 'Content-Type': 'application/json' };
 }
 
+let inMemoryActiveUser: User | null = null;
+
 // Active user authentication session
 export const getActiveUser = (): User | null => {
+  if (inMemoryActiveUser) return inMemoryActiveUser;
   try {
-    const data = localStorage.getItem(AUTH_KEY);
-    return data ? JSON.parse(data) : null;
+    const data = localStorage.getItem(AUTH_KEY) || sessionStorage.getItem(AUTH_KEY);
+    if (data) {
+      inMemoryActiveUser = JSON.parse(data);
+      return inMemoryActiveUser;
+    }
   } catch {
-    return null;
+    // fallback
   }
+  return null;
 };
 
 export const setActiveUser = (user: User | null): void => {
+  inMemoryActiveUser = user;
   if (user) {
-    localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+    const serialized = JSON.stringify(user);
+    try {
+      localStorage.setItem(AUTH_KEY, serialized);
+    } catch (err: any) {
+      console.warn('LocalStorage quota reached when setting auth user. Purging cached patient data and falling back to sessionStorage.', err);
+      try {
+        // Free quota by trimming cached patient list
+        localStorage.removeItem(PATIENTS_KEY);
+        localStorage.setItem(AUTH_KEY, serialized);
+      } catch {
+        // If still failing, store in sessionStorage
+        try {
+          sessionStorage.setItem(AUTH_KEY, serialized);
+        } catch {}
+      }
+    }
   } else {
-    localStorage.removeItem(AUTH_KEY);
+    try {
+      localStorage.removeItem(AUTH_KEY);
+      sessionStorage.removeItem(AUTH_KEY);
+    } catch {}
   }
 };
 

@@ -24,6 +24,8 @@ export const PatientModal: React.FC<PatientModalProps> = ({
   const [doctorName, setDoctorName] = useState('Dr. S.M. Shahidul Islam PhD');
   const [appointmentDate, setAppointmentDate] = useState(todayStr);
   const [notes, setNotes] = useState('');
+  const [isInstant, setIsInstant] = useState(false);
+  const [isEd, setIsEd] = useState(false);
 
   if (!isOpen) return null;
 
@@ -48,7 +50,10 @@ export const PatientModal: React.FC<PatientModalProps> = ({
       status: 'Pending Counseling',
       createdAt: new Date().toISOString(),
       notes: notes.trim(),
-      remark: notes.trim()
+      remark: notes.trim(),
+      isInstant: isInstant,
+      instantFee: isInstant ? 2000 : 0,
+      isEd: isEd || /\bed\b|erectile/i.test(notes)
     };
 
     onSave(newPatient);
@@ -61,6 +66,8 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     setProfession('');
     setAddress('');
     setNotes('');
+    setIsInstant(false);
+    setIsEd(false);
   };
 
   return (
@@ -234,6 +241,39 @@ export const PatientModal: React.FC<PatientModalProps> = ({
               onChange={(e) => setNotes(e.target.value)}
               className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             />
+          </div>
+
+          {/* Instant & ED Categorization */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isInstant}
+                onChange={(e) => setIsInstant(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
+              />
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">Instant Patient</span>
+                <span className="text-[11px] text-emerald-700 font-semibold block">
+                  {isInstant ? 'Visit Fee: ৳2,000' : 'Regular Appointment (Free)'}
+                </span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isEd}
+                onChange={(e) => setIsEd(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-purple-600 rounded border-slate-300 focus:ring-purple-500 accent-purple-600 cursor-pointer"
+              />
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">ED Patient</span>
+                <span className="text-[11px] text-purple-700 font-semibold block">
+                  Erectile Dysfunction case
+                </span>
+              </div>
+            </label>
           </div>
 
           {/* Footer Buttons */}

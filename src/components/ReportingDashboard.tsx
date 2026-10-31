@@ -21,7 +21,8 @@ import {
   CheckCircle2, 
   Search, 
   Activity,
-  Clock
+  Clock,
+  Sparkles
 } from 'lucide-react';
 
 interface ReportingDashboardProps {
@@ -32,7 +33,7 @@ interface ReportingDashboardProps {
 }
 
 type DatePreset = 'today' | 'yesterday' | 'last7' | 'thisMonth' | 'all' | 'custom';
-type DashboardTab = 'all' | 'funnel' | 'doctors' | 'departments' | 'professions' | 'comments';
+type DashboardTab = 'all' | 'funnel' | 'instant_ed' | 'doctors' | 'departments' | 'professions' | 'comments';
 
 export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
   patients,
@@ -133,10 +134,6 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
     const unconfirmedCount = totalAppointments - confirmedCount;
     const confirmRate = totalAppointments > 0 ? ((confirmedCount / totalAppointments) * 100).toFixed(1) : '0';
 
-    // On Hold Patients
-    const onHoldPatients = filteredPatients.filter(p => Boolean(p.isOnHold));
-    const onHoldCount = onHoldPatients.length;
-
     // Pre Consultation Patients
     const preConsultationPatients = filteredPatients.filter(p => 
       p.status === 'Pre Consultation' || 
@@ -163,12 +160,40 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       confirmedCount,
       unconfirmedCount,
       confirmRate,
-      onHoldCount,
       preConsultationCount,
       preRate,
       postConsultationCount,
       postRate,
       postConsultationPatients
+    };
+  }, [filteredPatients]);
+
+  // ==========================================
+  // INSTANT & ED PATIENT METRICS
+  // ==========================================
+  const instantMetrics = useMemo(() => {
+    const instantPatients = filteredPatients.filter(p => Boolean(p.isInstant));
+    const instantCount = instantPatients.length;
+    const instantRevenue = instantPatients.reduce((sum, p) => sum + (p.instantFee != null ? p.instantFee : 2000), 0);
+    const instantRate = filteredPatients.length > 0 ? ((instantCount / filteredPatients.length) * 100).toFixed(1) : '0';
+
+    return {
+      instantCount,
+      instantRevenue,
+      instantRate,
+      instantPatients
+    };
+  }, [filteredPatients]);
+
+  const edMetrics = useMemo(() => {
+    const edPatients = filteredPatients.filter(p => Boolean(p.isEd));
+    const edCount = edPatients.length;
+    const edRate = filteredPatients.length > 0 ? ((edCount / filteredPatients.length) * 100).toFixed(1) : '0';
+
+    return {
+      edCount,
+      edRate,
+      edPatients
     };
   }, [filteredPatients]);
 
@@ -471,6 +496,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       'Gender',
       'Profession',
       'Appointment Date',
+      'Instant (Fee)',
+      'ED Patient',
       'Is Confirmed',
       'Doctor Name',
       'Pre Consultation',
@@ -486,6 +513,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       const isConfirmed = Boolean(p.isConfirmed || p.consultationSerial) ? 'Yes' : 'No';
       const isPre = (p.status === 'Pre Consultation' || p.preConsultationAt) ? 'Yes' : 'No';
       const isPost = (p.status === 'Post Consultation' || p.postConsultationConfirmed) ? 'Yes' : 'No';
+      const instantCol = p.isInstant ? `৳${p.instantFee || 2000}` : '-';
+      const edCol = p.isEd ? 'ED' : '-';
 
       return [
         `"${p.consultationSerial || p.serialNo || ''}"`,
@@ -495,6 +524,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
         `"${p.gender || ''}"`,
         `"${(p.profession || '').replace(/"/g, '""')}"`,
         `"${p.appointmentDate || ''}"`,
+        `"${instantCol}"`,
+        `"${edCol}"`,
         `"${isConfirmed}"`,
         `"${p.postDoctorName || p.doctorName || ''}"`,
         `"${isPre}"`,
@@ -733,6 +764,18 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
           </button>
 
           <button
+            onClick={() => setActiveTab('instant_ed')}
+            className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'instant_ed'
+                ? 'bg-amber-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Instant & ED Reports ({instantMetrics.instantCount + edMetrics.edCount})</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('doctors')}
             className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'doctors'
@@ -887,15 +930,9 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 <span className="text-emerald-700 font-bold">
                   {funnelMetrics.confirmRate}% Confirmed
                 </span>
-                {funnelMetrics.onHoldCount > 0 ? (
-                  <span className="text-amber-700 font-bold bg-amber-100/80 px-2 py-0.5 rounded border border-amber-200">
-                    Hold: {funnelMetrics.onHoldCount}
-                  </span>
-                ) : (
-                  <span className="text-emerald-600 font-semibold text-[10px]">
-                    Assigned Serial
-                  </span>
-                )}
+                <span className="text-emerald-600 font-semibold text-[10px] bg-white px-2 py-0.5 rounded border border-emerald-200">
+                  Assigned Serial
+                </span>
               </div>
             </div>
 
@@ -969,6 +1006,157 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 2. INSTANT PATIENTS & ED PATIENTS REPORT SECTION */}
+      {/* ======================================================== */}
+      {(activeTab === 'all' || activeTab === 'instant_ed') && (
+        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-amber-500" />
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                  Instant Patient & ED Special Reports
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Instant visits with collected fee (৳2,000/patient) & ED (Erectile Dysfunction) clinical patient tracking
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg">
+                Total Fee Collected: <strong>৳{instantMetrics.instantRevenue.toLocaleString()}</strong>
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* 1. Instant Patients Card */}
+            <div className="bg-gradient-to-br from-amber-50/60 via-amber-50/30 to-white rounded-xl p-5 border border-amber-200/90 shadow-2xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                    <Sparkles className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-amber-950">Instant Patients</h3>
+                    <p className="text-xs text-amber-700 font-medium">৳2,000 Visit Fee per patient</p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-amber-200/80 text-amber-950 text-xs font-extrabold rounded-lg">
+                  {instantMetrics.instantRate}% of appointments
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="bg-white p-3.5 rounded-xl border border-amber-100 shadow-2xs">
+                  <div className="text-xs font-semibold text-slate-500">Instant Patient Count</div>
+                  <div className="text-2xl font-black text-amber-950 mt-1">
+                    {instantMetrics.instantCount}
+                  </div>
+                  <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
+                    {filteredPatients.length - instantMetrics.instantCount} Regular (Free)
+                  </div>
+                </div>
+
+                <div className="bg-white p-3.5 rounded-xl border border-amber-100 shadow-2xs">
+                  <div className="text-xs font-semibold text-slate-500">Total Visit Fee Revenue</div>
+                  <div className="text-2xl font-black text-emerald-700 mt-1">
+                    ৳{instantMetrics.instantRevenue.toLocaleString()}
+                  </div>
+                  <div className="text-[11px] text-emerald-800 mt-0.5 font-medium">
+                    {instantMetrics.instantCount} × ৳2,000 Visit Fee
+                  </div>
+                </div>
+              </div>
+
+              {instantMetrics.instantPatients.length > 0 && (
+                <div className="pt-2">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                    Recent Instant Patients
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                    {instantMetrics.instantPatients.slice(0, 10).map(p => (
+                      <span key={p.id} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100/90 text-amber-950 text-xs font-semibold rounded-md border border-amber-200">
+                        <span>{p.name}</span>
+                        <span className="text-[10px] text-amber-700 font-mono font-bold">(৳{p.instantFee || 2000})</span>
+                      </span>
+                    ))}
+                    {instantMetrics.instantPatients.length > 10 && (
+                      <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md">
+                        +{instantMetrics.instantPatients.length - 10} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2. ED Patients Card */}
+            <div className="bg-gradient-to-br from-purple-50/60 via-purple-50/30 to-white rounded-xl p-5 border border-purple-200/90 shadow-2xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center font-bold">
+                    <Activity className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-purple-950">ED Patients (Erectile Dysfunction)</h3>
+                    <p className="text-xs text-purple-700 font-medium">Specialized Clinical Tracking</p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-purple-200/80 text-purple-950 text-xs font-extrabold rounded-lg">
+                  {edMetrics.edRate}% of appointments
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="bg-white p-3.5 rounded-xl border border-purple-100 shadow-2xs">
+                  <div className="text-xs font-semibold text-slate-500">Total ED Patients</div>
+                  <div className="text-2xl font-black text-purple-950 mt-1">
+                    {edMetrics.edCount}
+                  </div>
+                  <div className="text-[11px] text-purple-700 mt-0.5 font-medium">
+                    Clinical ED Category
+                  </div>
+                </div>
+
+                <div className="bg-white p-3.5 rounded-xl border border-purple-100 shadow-2xs">
+                  <div className="text-xs font-semibold text-slate-500">ED Patient Share</div>
+                  <div className="text-2xl font-black text-indigo-700 mt-1">
+                    {edMetrics.edRate}%
+                  </div>
+                  <div className="text-[11px] text-indigo-800 mt-0.5 font-medium">
+                    Out of {filteredPatients.length} Appointments
+                  </div>
+                </div>
+              </div>
+
+              {edMetrics.edPatients.length > 0 && (
+                <div className="pt-2">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                    Recent ED Patients
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                    {edMetrics.edPatients.slice(0, 10).map(p => (
+                      <span key={p.id} className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-100/90 text-purple-950 text-xs font-semibold rounded-md border border-purple-200">
+                        <span>{p.name}</span>
+                        {p.phone && <span className="text-[10px] text-purple-700 font-mono">{p.phone.slice(-4)}</span>}
+                      </span>
+                    ))}
+                    {edMetrics.edPatients.length > 10 && (
+                      <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md">
+                        +{edMetrics.edPatients.length - 10} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1561,6 +1749,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 <th className="py-3 px-3 text-center w-12">Serial</th>
                 <th className="py-3 px-4 min-w-[180px]">Patient Name & Phone</th>
                 <th className="py-3 px-3 min-w-[110px]">Profession</th>
+                <th className="py-3 px-3 text-center min-w-[80px]">Instant</th>
+                <th className="py-3 px-3 text-center min-w-[70px]">ED</th>
                 <th className="py-3 px-3 min-w-[130px]">Doctor</th>
                 <th className="py-3 px-3 text-center min-w-[100px]">Pre Consult</th>
                 <th className="py-3 px-3 text-center min-w-[100px]">Post Consult</th>
@@ -1568,14 +1758,14 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 <th className="py-3 px-3 text-center min-w-[80px]">Organic</th>
                 <th className="py-3 px-3 text-center min-w-[80px]">Nutrition</th>
                 <th className="py-3 px-4 min-w-[160px]">
-                  {patientLogTab === 'confirmed' ? 'Doctor Decision / Comment' : 'Notes / Disease / Hold Reason'}
+                  {patientLogTab === 'confirmed' ? 'Doctor Decision / Comment' : 'Notes / Disease'}
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {displayedPatients.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
+                  <td colSpan={12} className="py-12 text-center text-slate-400">
                     <p className="text-sm font-semibold">
                       {patientLogTab === 'confirmed' 
                         ? 'No confirmed patients found for the selected period.' 
@@ -1614,13 +1804,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                       {/* Name & Phone */}
                       <td className="py-2.5 px-4">
                         <div>
-                          <p className="font-bold text-slate-900 flex items-center gap-1.5">
-                            <span>{p.name}</span>
-                            {p.isOnHold && (
-                              <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded">
-                                Hold
-                              </span>
-                            )}
+                          <p className="font-bold text-slate-900">
+                            {p.name}
                           </p>
                           <p className="font-mono text-emerald-700 text-[11px]">{p.phone}</p>
                         </div>
@@ -1629,6 +1814,28 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                       {/* Profession */}
                       <td className="py-2.5 px-3 text-slate-700">
                         {p.profession || <span className="text-slate-400 italic">None</span>}
+                      </td>
+
+                      {/* Instant */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        {p.isInstant ? (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]">
+                            ৳{p.instantFee || 2000}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px] font-semibold">-</span>
+                        )}
+                      </td>
+
+                      {/* ED */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        {p.isEd ? (
+                          <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 font-bold text-[10px]">
+                            ED
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px] font-semibold">-</span>
+                        )}
                       </td>
 
                       {/* Doctor */}
@@ -1708,10 +1915,6 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                         {p.consultationComment ? (
                           <span className="px-2 py-0.5 bg-blue-50 text-blue-800 border border-blue-200 rounded text-[11px] font-medium">
                             {p.consultationComment}
-                          </span>
-                        ) : p.holdReason ? (
-                          <span className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[11px] font-medium">
-                            Hold: {p.holdReason}
                           </span>
                         ) : p.remark || p.notes ? (
                           <span className="text-slate-600 text-[11px]">

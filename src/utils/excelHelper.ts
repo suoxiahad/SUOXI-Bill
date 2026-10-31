@@ -12,6 +12,9 @@ export interface ParsedExcelPatient {
   notes?: string;
   doctorName?: string;
   appointmentDate?: string;
+  isInstant?: boolean;
+  instantFee?: number;
+  isEd?: boolean;
 }
 
 export interface ParseExcelResult {
@@ -92,7 +95,9 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str)) score += 1;
       if (/(gender|sex|লিঙ্গ|জেন্ডার)/i.test(str)) score += 1;
       if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str)) score += 2;
-      if (/(address|location|thana|district|city|addr|ঠিকানা|বাসা|এলাকা|লোকেশন|জেলা|থানা)/i.test(str)) score += 2;
+      if (/(address|location|thana|district|city|addr|ঠিকানা|বাসা|এলাকা|লোケーション|জেলা|থানা)/i.test(str)) score += 2;
+      if (/(instant|ইন্সট্যান্ট|visit\s*fee|ভিজিট\s*ফি|fee|2000)/i.test(str)) score += 2;
+      if (/(\bed\b|^ed$|ed\s*patient|erectile|ইরেক্টাইল|ইডি)/i.test(str)) score += 2;
     });
 
     if (score > maxScore && score >= 2) {
@@ -108,6 +113,8 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
   let genderCol = -1;
   let addressCol = -1;
   let remarkCol = -1;
+  let instantCol = -1;
+  let edCol = -1;
 
   if (headerRowIdx !== -1) {
     const hRow = matrix[headerRowIdx];
@@ -121,6 +128,10 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
         phoneCol = idx;
       } else if (/(patient\s*name|patient|customer|client|full\s*name|rogir?\s*nam|রোগীর\s*নাম|রোগী|^name$|^নাম$)/i.test(str) && !/doctor|agent|user|disease|remark|problem/i.test(str) && nameCol === -1) {
         nameCol = idx;
+      } else if (/(instant|ইন্সট্যান্ট|instant\s*fee|visit\s*fee|ভিজিট\s*ফি|fee|2000)/i.test(str) && instantCol === -1) {
+        instantCol = idx;
+      } else if (/(\bed\b|^ed$|ed\s*patient|erectile|ইরেক্টাইল|ইডি)/i.test(str) && edCol === -1) {
+        edCol = idx;
       } else if (/(disease|remark|remarks|condition|problem|note|notes|symptom|illness|complain|রোগের\s*নাম|রোগ|সমস্যা|মন্তব্য|অভিযোগ)/i.test(str) && remarkCol === -1) {
         remarkCol = idx;
       } else if (/(age|yrs|years|y\.o|বয়স|বযস)/i.test(str) && ageCol === -1) {
@@ -147,6 +158,8 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
     let gender = genderCol !== -1 ? String(row[genderCol] || '').trim() : '';
     let address = addressCol !== -1 ? String(row[addressCol] || '').trim() : '';
     let remark = remarkCol !== -1 ? String(row[remarkCol] || '').trim() : '';
+    let rawInstant = instantCol !== -1 ? String(row[instantCol] || '').trim() : '';
+    let rawEd = edCol !== -1 ? String(row[edCol] || '').trim() : '';
     let doctorName = '';
     let appointmentDate = '';
 
@@ -173,7 +186,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       }
 
       // Detect Age (1-115)
-      if (!age && cIdx !== phoneCol && cIdx !== nameCol) {
+      if (!age && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== instantCol && cIdx !== edCol) {
         const aMatch = val.match(/\b(\d{1,3})\s*(?:yrs|years|y|y\.o|y\/o|y\.|বছর)?\b/i);
         if (aMatch) {
           const num = parseInt(aMatch[1], 10);
@@ -183,8 +196,22 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
         }
       }
 
+      // Detect Instant cell if column was not explicitly matched in header
+      if (instantCol === -1 && !rawInstant) {
+        if (/^(?:2000|2,000|২০০০|2000\/=)$/i.test(val)) {
+          rawInstant = val;
+        }
+      }
+
+      // Detect ED cell if column was not explicitly matched in header
+      if (edCol === -1 && !rawEd) {
+        if (/^(?:ed|ইডি)$/i.test(val)) {
+          rawEd = val;
+        }
+      }
+
       // Detect Patient Name fallback
-      if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol && cIdx !== genderCol && cIdx !== serialCol) {
+      if (!name && cIdx !== phoneCol && cIdx !== ageCol && cIdx !== remarkCol && cIdx !== genderCol && cIdx !== serialCol && cIdx !== instantCol && cIdx !== edCol) {
         const isNumeric = /^\d+$/.test(val);
         const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
         const isKeywords = /male|female|new patient|followup|robin|alamin|rakibul|completed|pending|cancel/i.test(val);
@@ -194,7 +221,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       }
 
       // Detect Disease / Remark fallback
-      if (!remark && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol) {
+      if (!remark && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== instantCol && cIdx !== edCol) {
         const isNumeric = /^\d+$/.test(val);
         const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
         if (
@@ -208,7 +235,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       }
 
       // Detect Address fallback
-      if (!address && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== remarkCol && cIdx !== serialCol) {
+      if (!address && cIdx !== phoneCol && cIdx !== nameCol && cIdx !== ageCol && cIdx !== genderCol && cIdx !== remarkCol && cIdx !== serialCol && cIdx !== instantCol && cIdx !== edCol) {
         const isNumeric = /^\d+$/.test(val);
         const isPhone = /(?:\+?880|880|0)?1[3-9]\d{8}/.test(cleanedCellStr);
         if (
@@ -261,6 +288,29 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
       age = aMatch ? aMatch[1] : age;
     }
 
+    // Determine Instant status (Instant visit fee 2000, regular appointment free -)
+    let isInstant = false;
+    let instantFee = 0;
+    if (rawInstant) {
+      if (/2000|2,000|২০০০|yes|true|instant|ইন্সট্যান্ট/i.test(rawInstant) && !/no|free|রেগুলার|regular/i.test(rawInstant)) {
+        isInstant = true;
+        instantFee = 2000;
+      }
+    } else if (/instant|2000\s*(?:tk|bdt|টাকা|fee)?|ইন্সট্যান্ট/i.test(remark)) {
+      isInstant = true;
+      instantFee = 2000;
+    }
+
+    // Determine ED status (Erectile Dysfunction patients)
+    let isEd = false;
+    if (rawEd) {
+      if (/^ed$|\bed\b|yes|true|erectile|ইরেক্টাইল|ইডি/i.test(rawEd) && !/no|none|regular|false/i.test(rawEd)) {
+        isEd = true;
+      }
+    } else if (/\b(ed|erectile\s*dysfunction|ইডি)\b/i.test(remark)) {
+      isEd = true;
+    }
+
     if (name || phone) {
       const finalName = name || (phone ? `Patient ${phone}` : `Patient #${extracted.length + 1}`);
       const finalPhone = phone || '01700000000';
@@ -289,6 +339,9 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
         remark: remark || 'General Assessment',
         doctorName: doctorName || 'Senior Counseling Doctor',
         appointmentDate: appointmentDate || new Date().toISOString().split('T')[0],
+        isInstant,
+        instantFee,
+        isEd
       });
     }
   }
@@ -364,6 +417,8 @@ export function downloadSampleExcelTemplate(): void {
       'Contact Number': '01711223344',
       'Address': 'Dhanmondi, Dhaka',
       'Disease Name': 'Severe L4-L5 Back Pain & Sciatica',
+      'Instant': '-',
+      'ED': '-',
     },
     {
       'Serial No.': 2,
@@ -372,6 +427,8 @@ export function downloadSampleExcelTemplate(): void {
       'Contact Number': '01819876543',
       'Address': 'Mirpur-10, Dhaka',
       'Disease Name': 'Stroke Rehab & Facial Palsy',
+      'Instant': '2000',
+      'ED': '-',
     },
     {
       'Serial No.': 3,
@@ -379,7 +436,9 @@ export function downloadSampleExcelTemplate(): void {
       'Age': 60,
       'Contact Number': '01912345678',
       'Address': 'Uttara Sector-4, Dhaka',
-      'Disease Name': 'Cervical Spondylosis & Neck Pain',
+      'Disease Name': 'Erectile Dysfunction & Back Pain',
+      'Instant': '-',
+      'ED': 'ED',
     },
     {
       'Serial No.': 4,
@@ -388,6 +447,8 @@ export function downloadSampleExcelTemplate(): void {
       'Contact Number': '01678901234',
       'Address': 'Agrabad, Chattogram',
       'Disease Name': 'Knee Osteoarthritis & Joint Stiffness',
+      'Instant': '-',
+      'ED': '-',
     },
     {
       'Serial No.': 5,
@@ -395,7 +456,9 @@ export function downloadSampleExcelTemplate(): void {
       'Age': 49,
       'Contact Number': '01555667788',
       'Address': 'Zindabazar, Sylhet',
-      'Disease Name': 'Frozen Shoulder & Paralysis Care',
+      'Disease Name': 'ED Assessment',
+      'Instant': '2000',
+      'ED': 'ED',
     },
   ];
 
@@ -408,7 +471,9 @@ export function downloadSampleExcelTemplate(): void {
     { wch: 8 },  // Age
     { wch: 18 }, // Contact Number
     { wch: 24 }, // Address
-    { wch: 40 }, // Disease Name
+    { wch: 38 }, // Disease Name
+    { wch: 12 }, // Instant
+    { wch: 10 }, // ED
   ];
 
   XLSX.utils.book_append_sheet(wb, ws, 'Daily Appointments');

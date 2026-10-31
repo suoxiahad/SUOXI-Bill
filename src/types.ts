@@ -31,7 +31,10 @@ export interface Patient {
   heldAt?: string;
   holdReason?: string;
 
-  // Cross-Department Tracking (Pathology, Organic, Nutrition)
+  // Instant Patient & ED tracking
+  isInstant?: boolean;
+  instantFee?: number; // 2000 BDT for instant patients, 0 / free (-) for regular
+  isEd?: boolean;      // Erectile Dysfunction specialized patient
   pathologyStatus?: 'Yes' | 'No' | '';
   pathologyUpdatedAt?: string;
   pathologyUpdatedBy?: string;

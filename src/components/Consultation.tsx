@@ -21,8 +21,6 @@ import {
   X,
   Download,
   FileSpreadsheet,
-  PauseCircle,
-  PlayCircle,
   Lock
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -30,8 +28,7 @@ import { Patient, InvoiceQuotation, User as UserModel } from '../types';
 import { 
   addOrUpdatePatientApi, 
   getProfessionsLocal, 
-  getConsultationCommentsLocal,
-  holdPatientApi
+  getConsultationCommentsLocal
 } from '../utils/storage';
 
 interface ConsultationProps {
@@ -125,8 +122,6 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Helper to determine if a patient is confirmed for Consultation
   const isConfirmedForConsultation = (p: Patient): boolean => {
-    // Patients on Hold strictly remain on the All Appointments page and NEVER enter Pre/Post Consultation
-    if (p.isOnHold) return false;
     return p.isConfirmed === true || (p.consultationSerial !== null && p.consultationSerial !== undefined && Number(p.consultationSerial) > 0);
   };
 
@@ -508,35 +503,54 @@ export const Consultation: React.FC<ConsultationProps> = ({
     });
   };
 
-  // Action: Hold / Un-Hold patient in Pre Consultation queue
-  const handleHoldPatient = (patient: Patient, willHold: boolean = true) => {
-    setIsProcessingDone(patient.id);
+  // Action: Toggle Instant status for patient (Instant visit fee: 2000 BDT, regular: free)
+  const handleToggleInstant = (patient: Patient) => {
+    const nextInstant = !patient.isInstant;
     const updated: Patient = {
       ...patient,
-      isOnHold: willHold,
-      heldAt: willHold ? (patient.heldAt || new Date().toISOString()) : undefined,
-      holdReason: willHold ? (patient.holdReason || 'Patient absent when turn called') : undefined
+      isInstant: nextInstant,
+      instantFee: nextInstant ? 2000 : 0
     };
 
     if (onUpdatePatient) {
       onUpdatePatient(updated);
     }
-    setIsProcessingDone(null);
     setActionMessage({
       type: 'success',
-      text: willHold
-        ? `⏸ ${patient.name} (Serial #${patient.consultationSerial || 1}) placed on Hold.`
-        : `▶ ${patient.name} (Serial #${patient.consultationSerial || 1}) resumed from Hold.`
+      text: nextInstant 
+        ? `✓ ${patient.name} marked as Instant Patient (Fee: ৳2,000).`
+        : `✓ ${patient.name} set to Regular Appointment (Free).`
     });
-    setTimeout(() => setActionMessage(null), 3000);
+    setTimeout(() => setActionMessage(null), 2500);
 
-    holdPatientApi(patient.id, willHold).catch((err: any) => {
-      console.error('Failed to update patient hold in background:', err);
+    addOrUpdatePatientApi(updated).catch((err: any) => {
+      console.error('Failed to update instant status:', err);
       if (onUpdatePatient) onUpdatePatient(patient);
-      setActionMessage({
-        type: 'error',
-        text: `Failed to update hold: ${err?.message || 'Error occurred'}`
-      });
+    });
+  };
+
+  // Action: Toggle ED status for patient
+  const handleToggleEd = (patient: Patient) => {
+    const nextEd = !patient.isEd;
+    const updated: Patient = {
+      ...patient,
+      isEd: nextEd
+    };
+
+    if (onUpdatePatient) {
+      onUpdatePatient(updated);
+    }
+    setActionMessage({
+      type: 'success',
+      text: nextEd 
+        ? `✓ ${patient.name} tagged as ED specialized patient.`
+        : `✓ ${patient.name} ED tag removed.`
+    });
+    setTimeout(() => setActionMessage(null), 2500);
+
+    addOrUpdatePatientApi(updated).catch((err: any) => {
+      console.error('Failed to update ED status:', err);
+      if (onUpdatePatient) onUpdatePatient(patient);
     });
   };
 
@@ -566,6 +580,8 @@ export const Consultation: React.FC<ConsultationProps> = ({
         'Address': p.address || '—',
         'Disease / Complaint': p.remark || p.notes || 'General Assessment',
         'Profession': p.profession || '—',
+        'Instant (Fee)': p.isInstant ? '৳2,000' : '—',
+        'ED Patient': p.isEd ? 'ED' : '—',
         'Decision / Comment': p.consultationComment || '—',
         'Attending Doctor': docName,
         'Post Status': p.postConsultationConfirmed ? 'Confirmed' : 'Pending',
@@ -882,6 +898,8 @@ export const Consultation: React.FC<ConsultationProps> = ({
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">ADDRESS</th>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Disease</th>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Profession</th>
+                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap text-center">Instant</th>
+                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap text-center">ED</th>
                     {activeSubTab === 'post' && (
                       <th className="px-3 py-2.5 font-semibold whitespace-nowrap text-blue-950 bg-blue-50/70 border-l border-r border-blue-200">
                         Comment
@@ -902,24 +920,12 @@ export const Consultation: React.FC<ConsultationProps> = ({
                     return (
                       <tr 
                         key={p.id ? `${p.id}-${itemDisplayIndex}` : `pat-row-${itemDisplayIndex}`} 
-                        className={`transition-colors ${
-                          p.isOnHold 
-                            ? 'bg-amber-50/40 hover:bg-amber-50/60' 
-                            : 'hover:bg-emerald-50/30'
-                        }`}
+                        className="transition-colors hover:bg-emerald-50/30"
                       >
                         <td className="px-3 py-2.5 font-mono text-slate-800 whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
-                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-950 border border-emerald-300 rounded text-xs font-semibold inline-flex items-center">
-                              #{p.consultationSerial || itemDisplayIndex}
-                            </span>
-                            {p.isOnHold && (
-                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-950 border border-amber-300 rounded text-[10px] font-bold inline-flex items-center gap-1" title="Patient currently on hold / absent">
-                                <PauseCircle className="w-3 h-3 text-amber-700" />
-                                <span>Hold</span>
-                              </span>
-                            )}
-                          </div>
+                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-950 border border-emerald-300 rounded text-xs font-semibold inline-flex items-center">
+                            #{p.consultationSerial || itemDisplayIndex}
+                          </span>
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap font-normal text-slate-800 text-sm">
                           {p.name}
@@ -1134,6 +1140,52 @@ export const Consultation: React.FC<ConsultationProps> = ({
                           )}
                         </td>
 
+                        {/* Instant Column: ৳2,000 or - */}
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          {p.isInstant ? (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleInstant(p)}
+                              className="px-2.5 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200 transition cursor-pointer shadow-2xs"
+                              title="Instant Patient: ৳2,000 Visit Fee (Click to toggle)"
+                            >
+                              ৳2,000
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleInstant(p)}
+                              className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 px-2.5 py-0.5 rounded text-xs transition cursor-pointer font-bold"
+                              title="Regular appointment (Free) — Click to mark as Instant (৳2,000)"
+                            >
+                              -
+                            </button>
+                          )}
+                        </td>
+
+                        {/* ED Column: ED or - */}
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          {p.isEd ? (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEd(p)}
+                              className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-purple-900 border border-purple-300 hover:bg-purple-200 transition cursor-pointer shadow-2xs"
+                              title="ED Specialized Patient (Click to toggle)"
+                            >
+                              ED
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEd(p)}
+                              className="text-slate-400 hover:text-purple-700 hover:bg-purple-50 px-2.5 py-0.5 rounded text-xs transition cursor-pointer font-bold"
+                              title="Click to tag as ED Patient"
+                            >
+                              -
+                            </button>
+                          )}
+                        </td>
+
                         {/* Comment Column: Only in Post Consultation with Edit Permission */}
                         {activeSubTab === 'post' && (
                           <td className="px-3 py-2.5 whitespace-nowrap bg-blue-50/20 border-l border-r border-blue-100">
@@ -1268,32 +1320,9 @@ export const Consultation: React.FC<ConsultationProps> = ({
                         </td>
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
-                            {/* In Pre Consultation: Display Hold / Un-Hold & Done Button */}
+                            {/* In Pre Consultation: Done Button */}
                             {activeSubTab === 'pre' ? (
                               <div className="flex items-center gap-1.5 ml-auto">
-                                {p.isOnHold ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleHoldPatient(p, false)}
-                                    disabled={isCurrentlyProcessing}
-                                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
-                                    title={`Patient arrived! Resume and un-hold Serial #${p.consultationSerial || 1}.`}
-                                  >
-                                    <PlayCircle className="w-3.5 h-3.5 text-white" />
-                                    <span>Un-Hold #{p.consultationSerial || 1}</span>
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleHoldPatient(p, true)}
-                                    disabled={isCurrentlyProcessing}
-                                    className="p-1.5 bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-950 border border-slate-300 hover:border-amber-300 rounded-xl transition cursor-pointer"
-                                    title="Hold serial if patient is absent when called"
-                                  >
-                                    <PauseCircle className="w-4 h-4 text-amber-700" />
-                                  </button>
-                                )}
-
                                 <button
                                   onClick={() => handleMarkDone(p)}
                                   disabled={isCurrentlyProcessing || !p.profession}
