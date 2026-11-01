@@ -1087,17 +1087,19 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
     </div>
 
     {/* Printable Comparison Document Sheet (Visible ONLY during window.print()) */}
-    <div id="suoxi-comparison-print-sheet" className="hidden print:block font-sans text-slate-900 bg-white p-2 max-w-5xl mx-auto">
+    <div id="suoxi-comparison-print-sheet" className="hidden print:block font-sans text-slate-900 bg-white p-0 m-0 w-full max-w-none">
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
             @page {
               size: A4 portrait;
-              margin: 6mm;
+              margin: 3.5mm 4mm 3.5mm 4mm !important;
             }
             html, body {
               margin: 0 !important;
               padding: 0 !important;
+              width: 100% !important;
+              max-width: 100% !important;
               background: #ffffff !important;
               color: #000000 !important;
               -webkit-print-color-adjust: exact !important;
@@ -1108,8 +1110,10 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               visibility: visible !important;
               width: 100% !important;
               max-width: 100% !important;
-              margin: 0 auto !important;
-              padding: 2mm !important;
+              min-width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              box-sizing: border-box !important;
               background-color: #ffffff !important;
               color: #000000 !important;
               -webkit-font-smoothing: antialiased;
@@ -1154,18 +1158,18 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               font-weight: 600 !important;
             }
 
-            /* Inverted badge: Solid black background with white text */
+            /* INK SAVER: No heavy black background fills */
             #suoxi-comparison-print-sheet .bg-slate-900,
             #suoxi-comparison-print-sheet .bg-black {
-              background-color: #000000 !important;
-              color: #ffffff !important;
-              -webkit-text-fill-color: #ffffff !important;
-              border: 1px solid #000000 !important;
+              background-color: transparent !important;
+              color: #000000 !important;
+              -webkit-text-fill-color: #000000 !important;
+              border: none !important;
             }
             #suoxi-comparison-print-sheet .bg-slate-900 *,
             #suoxi-comparison-print-sheet .bg-black * {
-              color: #ffffff !important;
-              -webkit-text-fill-color: #ffffff !important;
+              color: #000000 !important;
+              -webkit-text-fill-color: #000000 !important;
             }
 
             /* Deep, crisp solid borders for all containers and lines */
@@ -1202,11 +1206,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               border-width: 1.5px !important;
             }
 
-            /* Badges (7 Days, 10 Days, Indoor 15 Days): high contrast outline */
+            /* Badges (7 Days, 10 Days, Indoor 15 Days): ink saver white background with outline */
             #suoxi-comparison-print-sheet .bg-emerald-100,
             #suoxi-comparison-print-sheet .bg-indigo-100 {
-              background-color: #f1f5f9 !important;
-              border: 1.2px solid #000000 !important;
+              background-color: #ffffff !important;
+              border: 1px solid #000000 !important;
               color: #000000 !important;
               font-weight: 800 !important;
             }
@@ -1264,7 +1268,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       }} />
 
       {/* Header */}
-      <div className="border-b-2 border-slate-900 pb-2.5 mb-2.5 flex justify-between items-start">
+      <div className="border-b-2 border-slate-900 pb-2 mb-2 flex justify-between items-start">
         <div className="flex items-center gap-3">
           <SuoxiLogo size="md" />
           <div>
@@ -1277,11 +1281,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           </div>
         </div>
         <div className="text-right">
-          <span className="inline-block bg-slate-900 text-white font-black text-[10px] px-2.5 py-0.5 uppercase tracking-wider rounded shadow-xs">
+          <h2 className="text-[11.5px] font-black text-slate-950 uppercase tracking-wide">
             PACKAGE COST COMPARISON SHEET
-          </span>
-          <p className="text-[10.5px] text-slate-700 font-bold mt-0.5">Date: {new Date().toLocaleDateString('en-GB')}</p>
-          {quotationNo && <p className="text-[9.5px] text-slate-500 font-semibold">Ref No: {quotationNo}</p>}
+          </h2>
+          <p className="text-[10px] text-slate-800 font-bold mt-0.5">Date: {new Date().toLocaleDateString('en-GB')}</p>
+          {quotationNo && <p className="text-[9.5px] text-slate-700 font-semibold">Ref No: {quotationNo}</p>}
         </div>
       </div>
 
