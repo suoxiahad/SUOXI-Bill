@@ -41,6 +41,7 @@ import {
 } from '../types';
 import { DEFAULT_CATALOG } from '../data/defaultCatalog';
 import { searchPatientsLiveApi, fetchPatientsApi, addOrUpdatePatientApi } from '../utils/storage';
+import { idbGet, idbSet, idbDel } from '../utils/indexedDb';
 import { matchPatient, matchSearchQuery, normalizePhoneDigits, normalizeSearchText } from '../utils/searchHelper';
 
 interface TreatmentListItem {
@@ -1937,76 +1938,93 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const DRAFT_STORAGE_KEY = `suo_xi_quotation_builder_draft_${userId}_v3`;
   const isClearingDraftRef = useRef<boolean>(false);
 
-  // Restore draft from localStorage on initial component mount or when user changes
+  // Restore draft from IndexedDB (or fallback to localStorage) on initial component mount or when user changes
   useEffect(() => {
-    try {
-      // Clean up old legacy non-user-specific draft if present
-      localStorage.removeItem('suo_xi_quotation_builder_draft_v2');
+    let isCancelled = false;
 
-      const saved = localStorage.getItem(DRAFT_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.selectedPatient && !initialPatient) {
-          setSelectedPatient(parsed.selectedPatient);
-        }
-        if (parsed.phoneSearch) setPhoneSearch(parsed.phoneSearch);
-        if (parsed.billingDoctor) setBillingDoctor(parsed.billingDoctor);
-        if (parsed.treatmentList && Array.isArray(parsed.treatmentList) && parsed.treatmentList.length > 0) {
-          setTreatmentList(parsed.treatmentList);
-        }
-        if (parsed.additionalTreatmentList && Array.isArray(parsed.additionalTreatmentList) && parsed.additionalTreatmentList.length > 0) {
-          setAdditionalTreatmentList(parsed.additionalTreatmentList);
-        }
-        if (parsed.patientTreatmentMode !== undefined) setPatientTreatmentMode(parsed.patientTreatmentMode);
-        if (parsed.treatmentPackage !== undefined) setTreatmentPackage(parsed.treatmentPackage);
-        if (parsed.treatmentDays !== undefined) setTreatmentDays(parsed.treatmentDays);
-        if (parsed.bulkDiscountPercent !== undefined) setBulkDiscountPercent(parsed.bulkDiscountPercent);
-        if (parsed.showFullTreatmentCalculation !== undefined) setShowFullTreatmentCalculation(parsed.showFullTreatmentCalculation);
-        if (parsed.showFullIndoorCalculation !== undefined) setShowFullIndoorCalculation(parsed.showFullIndoorCalculation);
-        if (parsed.outdoorPackageList && Array.isArray(parsed.outdoorPackageList) && parsed.outdoorPackageList.length > 0) {
-          setOutdoorPackageList(parsed.outdoorPackageList);
-        }
-        if (parsed.indoorServiceList && Array.isArray(parsed.indoorServiceList) && parsed.indoorServiceList.length > 0) {
-          setIndoorServiceList(parsed.indoorServiceList);
-        }
-        if (parsed.foodChargeSelected !== undefined) setFoodChargeSelected(parsed.foodChargeSelected);
-        if (parsed.foodChargePerDay !== undefined) setFoodChargePerDay(parsed.foodChargePerDay);
-        if (parsed.foodChargeDays !== undefined) setFoodChargeDays(parsed.foodChargeDays);
-        if (parsed.includeAdmissionFee !== undefined) setIncludeAdmissionFee(parsed.includeAdmissionFee);
-        if (parsed.admissionFee !== undefined) setAdmissionFee(parsed.admissionFee);
-        if (parsed.overallDiscountPercent !== undefined) setOverallDiscountPercent(parsed.overallDiscountPercent);
-        if (parsed.advancePaid !== undefined) setAdvancePaid(parsed.advancePaid);
-        if (parsed.paymentStatus) setPaymentStatus(parsed.paymentStatus);
-        if (parsed.notes) setNotes(parsed.notes);
-        if (parsed.paymentPlanMode) setPaymentPlanMode(parsed.paymentPlanMode);
-        if (parsed.paymentPhases && Array.isArray(parsed.paymentPhases)) setPaymentPhases(parsed.paymentPhases);
-        if (parsed.savedComparisonSnapshot) setSavedComparisonSnapshot(parsed.savedComparisonSnapshot);
+    const restoreDraft = async () => {
+      try {
+        localStorage.removeItem('suo_xi_quotation_builder_draft_v2');
 
-        setIsDraftRestored(true);
-      } else {
-        // Reset state for new user if no draft exists
-        clearFormAndDraftState();
+        let parsed: any = await idbGet(DRAFT_STORAGE_KEY);
+        if (!parsed) {
+          const savedLocal = localStorage.getItem(DRAFT_STORAGE_KEY);
+          if (savedLocal) {
+            parsed = JSON.parse(savedLocal);
+            // Migrate to IndexedDB and remove from localStorage to free 5MB quota
+            await idbSet(DRAFT_STORAGE_KEY, parsed);
+            localStorage.removeItem(DRAFT_STORAGE_KEY);
+          }
+        }
+
+        if (isCancelled) return;
+
+        if (parsed) {
+          if (parsed.selectedPatient && !initialPatient) {
+            setSelectedPatient(parsed.selectedPatient);
+          }
+          if (parsed.phoneSearch) setPhoneSearch(parsed.phoneSearch);
+          if (parsed.billingDoctor) setBillingDoctor(parsed.billingDoctor);
+          if (parsed.treatmentList && Array.isArray(parsed.treatmentList) && parsed.treatmentList.length > 0) {
+            setTreatmentList(parsed.treatmentList);
+          }
+          if (parsed.additionalTreatmentList && Array.isArray(parsed.additionalTreatmentList) && parsed.additionalTreatmentList.length > 0) {
+            setAdditionalTreatmentList(parsed.additionalTreatmentList);
+          }
+          if (parsed.patientTreatmentMode !== undefined) setPatientTreatmentMode(parsed.patientTreatmentMode);
+          if (parsed.treatmentPackage !== undefined) setTreatmentPackage(parsed.treatmentPackage);
+          if (parsed.treatmentDays !== undefined) setTreatmentDays(parsed.treatmentDays);
+          if (parsed.bulkDiscountPercent !== undefined) setBulkDiscountPercent(parsed.bulkDiscountPercent);
+          if (parsed.showFullTreatmentCalculation !== undefined) setShowFullTreatmentCalculation(parsed.showFullTreatmentCalculation);
+          if (parsed.showFullIndoorCalculation !== undefined) setShowFullIndoorCalculation(parsed.showFullIndoorCalculation);
+          if (parsed.outdoorPackageList && Array.isArray(parsed.outdoorPackageList) && parsed.outdoorPackageList.length > 0) {
+            setOutdoorPackageList(parsed.outdoorPackageList);
+          }
+          if (parsed.indoorServiceList && Array.isArray(parsed.indoorServiceList) && parsed.indoorServiceList.length > 0) {
+            setIndoorServiceList(parsed.indoorServiceList);
+          }
+          if (parsed.foodChargeSelected !== undefined) setFoodChargeSelected(parsed.foodChargeSelected);
+          if (parsed.foodChargePerDay !== undefined) setFoodChargePerDay(parsed.foodChargePerDay);
+          if (parsed.foodChargeDays !== undefined) setFoodChargeDays(parsed.foodChargeDays);
+          if (parsed.includeAdmissionFee !== undefined) setIncludeAdmissionFee(parsed.includeAdmissionFee);
+          if (parsed.admissionFee !== undefined) setAdmissionFee(parsed.admissionFee);
+          if (parsed.overallDiscountPercent !== undefined) setOverallDiscountPercent(parsed.overallDiscountPercent);
+          if (parsed.advancePaid !== undefined) setAdvancePaid(parsed.advancePaid);
+          if (parsed.paymentStatus) setPaymentStatus(parsed.paymentStatus);
+          if (parsed.notes) setNotes(parsed.notes);
+          if (parsed.paymentPlanMode) setPaymentPlanMode(parsed.paymentPlanMode);
+          if (parsed.paymentPhases && Array.isArray(parsed.paymentPhases)) setPaymentPhases(parsed.paymentPhases);
+          if (parsed.savedComparisonSnapshot) setSavedComparisonSnapshot(parsed.savedComparisonSnapshot);
+
+          setIsDraftRestored(true);
+        } else {
+          clearFormAndDraftState();
+        }
+      } catch (e) {
+        console.error('Failed to load quotation draft:', e);
       }
-    } catch (e) {
-      console.error('Failed to load quotation draft:', e);
-    }
+    };
+
+    restoreDraft();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [DRAFT_STORAGE_KEY]);
 
-  // Auto-save draft to localStorage on any state modification
+  // Auto-save draft to IndexedDB asynchronously on any state modification (non-blocking)
   useEffect(() => {
     if (isClearingDraftRef.current) {
-      try {
-        localStorage.removeItem(DRAFT_STORAGE_KEY);
-      } catch (e) {
-        console.error(e);
-      }
+      idbDel(DRAFT_STORAGE_KEY).catch(() => {});
+      try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
       return;
     }
 
     const timer = setTimeout(() => {
       try {
         if (isClearingDraftRef.current) {
-          localStorage.removeItem(DRAFT_STORAGE_KEY);
+          idbDel(DRAFT_STORAGE_KEY).catch(() => {});
+          try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
           return;
         }
 
@@ -2017,7 +2035,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
         // If no patient selected and no items checked and no search query, do not store draft
         if (!selectedPatient && !hasSelectedTreatments && !hasSelectedAdditional && !hasSelectedIndoor && !hasSelectedOutdoor && !phoneSearch.trim()) {
-          localStorage.removeItem(DRAFT_STORAGE_KEY);
+          idbDel(DRAFT_STORAGE_KEY).catch(() => {});
+          try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
           return;
         }
 
@@ -2048,7 +2067,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           paymentPhases,
           savedComparisonSnapshot
         };
-        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftData));
+
+        // Save to IndexedDB non-blocking async
+        idbSet(DRAFT_STORAGE_KEY, draftData).catch(() => {});
+        // Clean localStorage so 0 quota is consumed
+        try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
       } catch (err) {
         console.error('Error saving quotation draft:', err);
       }
@@ -2085,6 +2108,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   const clearFormAndDraftState = () => {
     isClearingDraftRef.current = true;
+    idbDel(DRAFT_STORAGE_KEY).catch(() => {});
     try {
       localStorage.removeItem(DRAFT_STORAGE_KEY);
     } catch (e) {
@@ -3028,12 +3052,16 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       return;
     }
     const quot = generateQuotationData();
-    onSaveQuotation(quot);
+    // 1. Instantly trigger print preview without waiting (0ms latency)
     onPreviewPrint(quot);
-    if (editingQuotation && onCancelEdit) {
-      onCancelEdit();
-    }
-    clearFormAndDraftState();
+    // 2. Asynchronously save quotation and clean up draft in background
+    setTimeout(() => {
+      onSaveQuotation(quot);
+      if (editingQuotation && onCancelEdit) {
+        onCancelEdit();
+      }
+      clearFormAndDraftState();
+    }, 60);
   };
 
   // Called when user clicks "Print Comparison" inside PackageComparisonModal

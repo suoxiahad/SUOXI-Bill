@@ -11,10 +11,14 @@ import * as XLSX from 'xlsx';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { PDFParse } from 'pdf-parse';
+import compression from 'compression';
 
 dotenv.config();
 
 const app = express();
+
+// High-speed HTTP response gzip/brotli compression for fast JSON payloads
+app.use(compression());
 
 // Trust proxy for reverse proxy environments (e.g. Cloud Run, Nginx) so express-rate-limit reads X-Forwarded-For properly
 app.set('trust proxy', 1);

@@ -711,16 +711,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                             2000
                           </button>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setParsedPreview(prev => prev.map((item, i) => i === idx ? { ...item, isInstant: true, instantFee: 2000 } : item));
-                            }}
-                            className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 px-2 py-0.5 rounded text-xs transition cursor-pointer font-bold"
-                            title="Regular appointment (Free) — Click to mark as Instant (2000)"
-                          >
+                          <span className="text-slate-400 font-bold text-xs select-none px-2 py-0.5 inline-block">
                             -
-                          </button>
+                          </span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-center whitespace-nowrap">
@@ -736,16 +729,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                             ED
                           </button>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setParsedPreview(prev => prev.map((item, i) => i === idx ? { ...item, isEd: true } : item));
-                            }}
-                            className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 px-2 py-0.5 rounded text-xs transition cursor-pointer font-bold"
-                            title="Regular patient — Click to tag as ED"
-                          >
+                          <span className="text-slate-400 font-bold text-xs select-none px-2 py-0.5 inline-block">
                             -
-                          </button>
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -1067,14 +1053,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                               <span>৳2,000</span>
                             </button>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleInstant(p)}
-                              className="px-2.5 py-1 text-slate-400 hover:text-amber-800 hover:bg-amber-50 rounded-lg text-xs font-semibold transition cursor-pointer"
-                              title="Regular Appointment (Free) - Click to mark as Instant (৳2,000 Fee)"
-                            >
+                            <span className="text-slate-400 font-semibold text-xs inline-block px-2.5 py-1 select-none">
                               -
-                            </button>
+                            </span>
                           )}
                         </td>
                         <td className="px-3 py-3 text-center whitespace-nowrap">
@@ -1088,14 +1069,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                               <span>ED</span>
                             </button>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleEd(p)}
-                              className="px-2.5 py-1 text-slate-400 hover:text-purple-800 hover:bg-purple-50 rounded-lg text-xs font-semibold transition cursor-pointer"
-                              title="Click to tag as ED Patient"
-                            >
+                            <span className="text-slate-400 font-semibold text-xs inline-block px-2.5 py-1 select-none">
                               -
-                            </button>
+                            </span>
                           )}
                         </td>
                         <td className="px-3.5 py-3 text-right whitespace-nowrap">

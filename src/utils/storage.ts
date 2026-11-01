@@ -1,5 +1,11 @@
 import { Patient, InvoiceQuotation, CatalogItem, User } from '../types';
 import { DEFAULT_CATALOG } from '../data/defaultCatalog';
+import { idbGet, idbSet, idbDel, idbClear, migrateFromLocalStorageToIndexedDb } from './indexedDb';
+
+// Automatically migrate heavy browser data from localStorage to IndexedDB once (0 data loss)
+if (typeof window !== 'undefined') {
+  migrateFromLocalStorageToIndexedDb().catch(console.warn);
+}
 
 const PATIENTS_KEY = 'suoxi_patients_db';
 const QUOTATIONS_KEY = 'suoxi_quotations_db';
@@ -140,9 +146,15 @@ export const setStoredDataVersion = (version: number): void => {
   }
 };
 
+// In-memory runtime cache for high-volume patient support (bypasses 5MB localStorage limit and provides 0ms access)
+let inMemoryPatients: Patient[] = [];
+let inMemoryQuotations: InvoiceQuotation[] = [];
+let inMemoryCatalog: CatalogItem[] = [];
+
 export const invalidateLocalCaches = (): void => {
   inMemoryPatients = [];
   inMemoryQuotations = [];
+  inMemoryCatalog = [];
   try {
     localStorage.removeItem(PATIENTS_KEY);
     localStorage.removeItem(QUOTATIONS_KEY);
@@ -151,6 +163,41 @@ export const invalidateLocalCaches = (): void => {
   } catch (err) {
     console.warn('Failed clearing cached storage items:', err);
   }
+  idbDel(PATIENTS_KEY).catch(() => {});
+  idbDel(QUOTATIONS_KEY).catch(() => {});
+  idbDel(CATALOG_KEY).catch(() => {});
+};
+
+export const hydrateStorageFromIndexedDb = async (): Promise<{
+  patients: Patient[];
+  quotations: InvoiceQuotation[];
+  catalog: CatalogItem[];
+}> => {
+  try {
+    const [idbPatients, idbQuotations, idbCatalog] = await Promise.all([
+      idbGet<Patient[]>(PATIENTS_KEY),
+      idbGet<InvoiceQuotation[]>(QUOTATIONS_KEY),
+      idbGet<CatalogItem[]>(CATALOG_KEY)
+    ]);
+
+    if (Array.isArray(idbPatients) && idbPatients.length > 0) {
+      inMemoryPatients = idbPatients;
+    }
+    if (Array.isArray(idbQuotations) && idbQuotations.length > 0) {
+      inMemoryQuotations = idbQuotations;
+    }
+    if (Array.isArray(idbCatalog) && idbCatalog.length > 0) {
+      inMemoryCatalog = idbCatalog;
+    }
+  } catch (err) {
+    console.warn('Hydrating from IndexedDB encountered an issue:', err);
+  }
+
+  return {
+    patients: inMemoryPatients.length > 0 ? inMemoryPatients : getPatientsLocal(),
+    quotations: inMemoryQuotations.length > 0 ? inMemoryQuotations : getQuotationsLocal(),
+    catalog: inMemoryCatalog.length > 0 ? inMemoryCatalog : getCatalogLocal()
+  };
 };
 
 // Initial sample patient data (development only)
@@ -371,9 +418,6 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
   };
 };
 
-// In-memory runtime cache for high-volume patient support (bypasses 5MB localStorage limit)
-let inMemoryPatients: Patient[] = [];
-let inMemoryQuotations: InvoiceQuotation[] = [];
 
 export interface PatientSummary {
   count: number;
@@ -490,27 +534,26 @@ export const getPatientsLocal = (): Patient[] => {
 
 export const savePatientsLocal = (patients: Patient[]): void => {
   if (!Array.isArray(patients)) return;
-  // Always keep all patients intact in active memory
+  // Always keep all patients intact in active memory (0ms access)
   inMemoryPatients = patients;
+  // Persist full list to IndexedDB asynchronously without blocking the UI
+  idbSet(PATIENTS_KEY, patients).catch(() => {});
 
   try {
-    localStorage.setItem(PATIENTS_KEY, JSON.stringify(patients));
+    // Keep a lightweight top 50 slice in localStorage for instant synchronous bootstrap
+    const lightSlice = patients.slice(0, 50);
+    localStorage.setItem(PATIENTS_KEY, JSON.stringify(lightSlice));
   } catch (err: any) {
-    // If browser localStorage quota (5MB) is exceeded, save the top 300 recent patients as fallback
     try {
-      const sliced = patients.slice(0, 300);
-      localStorage.setItem(PATIENTS_KEY, JSON.stringify(sliced));
-      console.warn('LocalStorage limit reached; saved top 300 recent patients to disk cache while retaining all in memory.');
-    } catch {
-      // Ignore if still failing
-    }
+      localStorage.removeItem(PATIENTS_KEY);
+    } catch {}
   }
 };
 
 export const updatePatientLocal = (patient: Patient): void => {
   if (!patient || !patient.id) return;
 
-  // 1. Update in-memory cache instantly
+  // 1. Update in-memory cache instantly (0ms)
   const mIdx = inMemoryPatients.findIndex(p => p.id === patient.id);
   if (mIdx >= 0) {
     inMemoryPatients[mIdx] = { ...inMemoryPatients[mIdx], ...patient };
@@ -518,21 +561,17 @@ export const updatePatientLocal = (patient: Patient): void => {
     inMemoryPatients.unshift(patient);
   }
 
-  // 2. Update localStorage cache safely
+  // 2. Persist to IndexedDB asynchronously
+  idbSet(PATIENTS_KEY, inMemoryPatients).catch(() => {});
+
+  // 3. Update light localStorage cache safely
   try {
-    const raw = localStorage.getItem(PATIENTS_KEY);
-    if (raw) {
-      const list: Patient[] = JSON.parse(raw);
-      const idx = list.findIndex(p => p.id === patient.id);
-      if (idx >= 0) {
-        list[idx] = { ...list[idx], ...patient };
-      } else {
-        list.unshift(patient);
-      }
-      localStorage.setItem(PATIENTS_KEY, JSON.stringify(list));
-    }
+    const lightSlice = inMemoryPatients.slice(0, 50);
+    localStorage.setItem(PATIENTS_KEY, JSON.stringify(lightSlice));
   } catch {
-    // ignore quota errors
+    try {
+      localStorage.removeItem(PATIENTS_KEY);
+    } catch {}
   }
 };
 
@@ -854,19 +893,36 @@ export const fetchQuotationsApi = async (): Promise<InvoiceQuotation[]> => {
 };
 
 export const getQuotationsLocal = (): InvoiceQuotation[] => {
+  if (inMemoryQuotations.length > 0) {
+    return inMemoryQuotations;
+  }
   try {
     const data = localStorage.getItem(QUOTATIONS_KEY);
-    return data ? JSON.parse(data) : [];
+    if (data) {
+      inMemoryQuotations = JSON.parse(data);
+      return inMemoryQuotations;
+    }
   } catch {
-    return [];
+    // fallback
   }
+  return [];
 };
 
 export const saveQuotationsLocal = (quotations: InvoiceQuotation[]): void => {
+  if (!Array.isArray(quotations)) return;
+  // Instant in-memory update (0ms)
+  inMemoryQuotations = quotations;
+  // Non-blocking async persist to IndexedDB (virtually unlimited quota)
+  idbSet(QUOTATIONS_KEY, quotations).catch(() => {});
+
   try {
-    localStorage.setItem(QUOTATIONS_KEY, JSON.stringify(quotations));
+    // Keep only the latest 10 quotations in localStorage to prevent 5MB overflow
+    const lightSlice = quotations.slice(0, 10);
+    localStorage.setItem(QUOTATIONS_KEY, JSON.stringify(lightSlice));
   } catch (err) {
-    console.error('Error saving quotations local', err);
+    try {
+      localStorage.removeItem(QUOTATIONS_KEY);
+    } catch {}
   }
 };
 
@@ -952,19 +1008,26 @@ export const fetchCatalogApi = async (): Promise<CatalogItem[]> => {
 };
 
 export const getCatalogLocal = (): CatalogItem[] => {
+  if (inMemoryCatalog.length > 0) {
+    return inMemoryCatalog;
+  }
   try {
     const data = localStorage.getItem(CATALOG_KEY);
     if (!data) {
       localStorage.setItem(CATALOG_KEY, JSON.stringify(DEFAULT_CATALOG));
+      inMemoryCatalog = DEFAULT_CATALOG;
       return DEFAULT_CATALOG;
     }
-    return JSON.parse(data);
+    inMemoryCatalog = JSON.parse(data);
+    return inMemoryCatalog;
   } catch {
     return DEFAULT_CATALOG;
   }
 };
 
 export const saveCatalogLocal = (catalog: CatalogItem[]): void => {
+  inMemoryCatalog = catalog;
+  idbSet(CATALOG_KEY, catalog).catch(() => {});
   try {
     localStorage.setItem(CATALOG_KEY, JSON.stringify(catalog));
   } catch (err) {

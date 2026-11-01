@@ -1093,12 +1093,13 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           @media print {
             @page {
               size: A4 portrait;
-              margin: 8mm;
+              margin: 6mm;
             }
             html, body {
               margin: 0 !important;
               padding: 0 !important;
               background: #ffffff !important;
+              color: #000000 !important;
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
@@ -1108,8 +1109,155 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               width: 100% !important;
               max-width: 100% !important;
               margin: 0 auto !important;
-              padding: 4mm !important;
+              padding: 2mm !important;
               background-color: #ffffff !important;
+              color: #000000 !important;
+              -webkit-font-smoothing: antialiased;
+            }
+
+            /* Monochrome & High Contrast Print Optimization */
+            #suoxi-comparison-print-sheet,
+            #suoxi-comparison-print-sheet * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+
+            /* Make all typography deep solid black */
+            #suoxi-comparison-print-sheet h1,
+            #suoxi-comparison-print-sheet h2,
+            #suoxi-comparison-print-sheet h3,
+            #suoxi-comparison-print-sheet h4,
+            #suoxi-comparison-print-sheet p,
+            #suoxi-comparison-print-sheet span,
+            #suoxi-comparison-print-sheet strong,
+            #suoxi-comparison-print-sheet div,
+            #suoxi-comparison-print-sheet td,
+            #suoxi-comparison-print-sheet th {
+              color: #000000 !important;
+            }
+
+            /* Ensure lighter gray helper text renders solid & readable */
+            #suoxi-comparison-print-sheet .text-slate-500,
+            #suoxi-comparison-print-sheet .text-slate-600,
+            #suoxi-comparison-print-sheet .text-slate-700,
+            #suoxi-comparison-print-sheet .text-slate-800,
+            #suoxi-comparison-print-sheet .text-emerald-700,
+            #suoxi-comparison-print-sheet .text-emerald-800,
+            #suoxi-comparison-print-sheet .text-emerald-900,
+            #suoxi-comparison-print-sheet .text-emerald-950,
+            #suoxi-comparison-print-sheet .text-indigo-700,
+            #suoxi-comparison-print-sheet .text-indigo-900,
+            #suoxi-comparison-print-sheet .text-indigo-950,
+            #suoxi-comparison-print-sheet .text-sky-900,
+            #suoxi-comparison-print-sheet .text-sky-950 {
+              color: #000000 !important;
+              font-weight: 600 !important;
+            }
+
+            /* Inverted badge: Solid black background with white text */
+            #suoxi-comparison-print-sheet .bg-slate-900,
+            #suoxi-comparison-print-sheet .bg-black {
+              background-color: #000000 !important;
+              color: #ffffff !important;
+              -webkit-text-fill-color: #ffffff !important;
+              border: 1px solid #000000 !important;
+            }
+            #suoxi-comparison-print-sheet .bg-slate-900 *,
+            #suoxi-comparison-print-sheet .bg-black * {
+              color: #ffffff !important;
+              -webkit-text-fill-color: #ffffff !important;
+            }
+
+            /* Deep, crisp solid borders for all containers and lines */
+            #suoxi-comparison-print-sheet .border,
+            #suoxi-comparison-print-sheet .border-t,
+            #suoxi-comparison-print-sheet .border-b,
+            #suoxi-comparison-print-sheet .border-l,
+            #suoxi-comparison-print-sheet .border-r,
+            #suoxi-comparison-print-sheet [class*="border-slate-"],
+            #suoxi-comparison-print-sheet [class*="border-emerald-"],
+            #suoxi-comparison-print-sheet [class*="border-indigo-"],
+            #suoxi-comparison-print-sheet [class*="border-sky-"] {
+              border-color: #000000 !important;
+            }
+
+            /* Package comparison cards: solid 1.5px black border with crisp separation */
+            #suoxi-comparison-print-sheet .rounded-xl.border,
+            #suoxi-comparison-print-sheet .border-slate-300.rounded-xl {
+              border: 1.5px solid #000000 !important;
+              background-color: #ffffff !important;
+              box-shadow: none !important;
+              break-inside: avoid !important;
+              page-break-inside: avoid !important;
+            }
+
+            /* Patient details & base summary boxes: clean white with 1.5px solid border */
+            #suoxi-comparison-print-sheet .bg-slate-50,
+            #suoxi-comparison-print-sheet .bg-emerald-50,
+            #suoxi-comparison-print-sheet .bg-emerald-50\\/60,
+            #suoxi-comparison-print-sheet .bg-indigo-50,
+            #suoxi-comparison-print-sheet .bg-sky-50 {
+              background-color: #ffffff !important;
+              border-color: #000000 !important;
+              border-width: 1.5px !important;
+            }
+
+            /* Badges (7 Days, 10 Days, Indoor 15 Days): high contrast outline */
+            #suoxi-comparison-print-sheet .bg-emerald-100,
+            #suoxi-comparison-print-sheet .bg-indigo-100 {
+              background-color: #f1f5f9 !important;
+              border: 1.2px solid #000000 !important;
+              color: #000000 !important;
+              font-weight: 800 !important;
+            }
+
+            /* Treatment chips and room chips */
+            #suoxi-comparison-print-sheet .bg-white.text-emerald-900,
+            #suoxi-comparison-print-sheet .bg-indigo-50.text-indigo-900,
+            #suoxi-comparison-print-sheet .bg-sky-50.text-sky-900 {
+              background-color: #ffffff !important;
+              border: 1px solid #000000 !important;
+              color: #000000 !important;
+              font-weight: 700 !important;
+            }
+
+            /* Section headers */
+            #suoxi-comparison-print-sheet .border-b-2.border-slate-900 {
+              border-bottom: 2px solid #000000 !important;
+            }
+            #suoxi-comparison-print-sheet .border-b.border-emerald-200,
+            #suoxi-comparison-print-sheet .border-b.border-indigo-200 {
+              border-bottom: 1.5px solid #000000 !important;
+            }
+            #suoxi-comparison-print-sheet .bg-emerald-600,
+            #suoxi-comparison-print-sheet .bg-indigo-600 {
+              background-color: #000000 !important;
+            }
+
+            /* Emphasize Net Totals */
+            #suoxi-comparison-print-sheet .text-xs.font-black,
+            #suoxi-comparison-print-sheet .text-sm.font-black {
+              font-weight: 900 !important;
+              color: #000000 !important;
+            }
+
+            /* Weekly Therapies Box */
+            #suoxi-comparison-print-sheet .bg-slate-50.p-1 {
+              background-color: #ffffff !important;
+              border: 1px solid #000000 !important;
+            }
+
+            /* Dashed lines inside cards */
+            #suoxi-comparison-print-sheet .border-dashed {
+              border-style: dashed !important;
+              border-color: #000000 !important;
+            }
+
+            /* Signatures */
+            #suoxi-comparison-print-sheet .border-t-2 {
+              border-top: 1.5px solid #000000 !important;
+              color: #000000 !important;
+              font-weight: 800 !important;
             }
           }
         `

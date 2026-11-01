@@ -36,7 +36,8 @@ import {
   saveConsultationCommentsApi,
   getStoredDataVersion,
   setStoredDataVersion,
-  invalidateLocalCaches
+  invalidateLocalCaches,
+  hydrateStorageFromIndexedDb
 } from './utils/storage';
 import { matchPatient, matchSearchQuery } from './utils/searchHelper';
 import { 
@@ -98,14 +99,21 @@ export default function App() {
     const savedUser = getActiveUser();
     if (savedUser && savedUser.token) {
       setCurrentUser(savedUser);
+
+      // 1. Instantly hydrate from IndexedDB if in-memory caches are initializing
+      const hydrated = await hydrateStorageFromIndexedDb();
+      if (hydrated.patients.length > 0) setPatients(hydrated.patients);
+      if (hydrated.quotations.length > 0) setQuotations(hydrated.quotations);
+      if (hydrated.catalog.length > 0) setCatalog(hydrated.catalog);
+
       // Only show full loader if local patients are completely empty
-      const localP = getPatientsLocal();
-      if (!localP || localP.length === 0) {
+      if (hydrated.patients.length === 0) {
         setIsLoading(true);
       } else {
         setIsSyncing(true);
       }
 
+      // 2. Fetch fresh updates from server API
       const initData = await fetchInitApi(forceBypass);
       if (initData) {
         setPatients(initData.patients);
@@ -130,10 +138,10 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !currentUser.token) return;
 
-    let lastSummaryCount = 0;
-    let lastSummaryLatestId = '';
-    let lastQuotationsCount = 0;
-    let lastCatalogLength = 0;
+    let lastSummaryCount = patients.length;
+    let lastSummaryLatestId = patients.length > 0 ? (patients[0].id || '') : '';
+    let lastQuotationsCount = quotations.length;
+    let lastCatalogLength = catalog.length;
     let lastVersion = getStoredDataVersion();
 
     const checkAndSyncData = async () => {
@@ -395,8 +403,22 @@ export default function App() {
   };
 
   const handleSaveQuotation = async (quotation: InvoiceQuotation) => {
+    // 1. Optimistic 0ms local state update
+    setQuotations(prev => {
+      const idx = prev.findIndex(q => q.id === quotation.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = quotation;
+        return copy;
+      }
+      return [quotation, ...prev];
+    });
+
+    // 2. Persist to API and IndexedDB asynchronously
     const updated = await saveQuotationApi(quotation);
-    setQuotations(updated);
+    if (Array.isArray(updated) && updated.length > 0) {
+      setQuotations(updated);
+    }
     // Refresh patient list locally so patient status updates to "Quotation Created" without trigger loops
     const updatedPatients = getPatientsLocal();
     setPatients(updatedPatients);

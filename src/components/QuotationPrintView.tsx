@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Printer, ArrowLeft, Building2, Phone, Mail, Globe, MapPin, Copy, Check } from 'lucide-react';
 import { InvoiceQuotation } from '../types';
 import { SuoxiLogo } from './SuoxiLogo';
@@ -10,6 +10,18 @@ interface QuotationPrintViewProps {
 
 export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotation, onBack }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Automatically open browser print dialog safely once view is rendered
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        window.print();
+      } catch (err) {
+        console.warn('Auto print trigger failed:', err);
+      }
+    }, 280);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleCopyText = (text: string, key: string) => {
     if (navigator?.clipboard?.writeText) {

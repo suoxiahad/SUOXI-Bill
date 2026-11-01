@@ -629,6 +629,25 @@ export const Consultation: React.FC<ConsultationProps> = ({
     setTimeout(() => setActionMessage(null), 3500);
   };
 
+  // Helper to format patient name: if more than 2 words, wrap subsequent words to the 2nd line
+  // This prevents long patient names from stretching the table and hiding action buttons
+  const renderPatientName = (name?: string) => {
+    if (!name) return '—';
+    const trimmed = name.trim();
+    const words = trimmed.split(/\s+/);
+    if (words.length <= 2) {
+      return <span className="font-normal text-slate-800">{trimmed}</span>;
+    }
+    const firstLine = words.slice(0, 2).join(' ');
+    const secondLine = words.slice(2).join(' ');
+    return (
+      <div className="leading-tight max-w-[170px]" title={trimmed}>
+        <span className="block font-normal text-slate-800 whitespace-nowrap">{firstLine}</span>
+        <span className="block font-normal text-slate-600 text-xs whitespace-normal break-words mt-0.5">{secondLine}</span>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       
@@ -892,7 +911,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                 <thead className="bg-slate-100 text-slate-700 uppercase text-xs font-semibold tracking-wider border-b border-slate-200">
                   <tr>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">SL NO.</th>
-                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap">PATIENT NAME</th>
+                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap min-w-[125px] max-w-[170px]">PATIENT NAME</th>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">PHONE NUMBER</th>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">GENDER / AGE</th>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">ADDRESS</th>
@@ -925,8 +944,8 @@ export const Consultation: React.FC<ConsultationProps> = ({
                             #{p.consultationSerial || itemDisplayIndex}
                           </span>
                         </td>
-                        <td className="px-3 py-2.5 whitespace-nowrap font-normal text-slate-800 text-sm">
-                          {p.name}
+                        <td className="px-3 py-2.5 font-normal text-slate-800 text-sm min-w-[125px] max-w-[170px]">
+                          {renderPatientName(p.name)}
                         </td>
                         <td className="px-3 py-2.5 text-slate-800 whitespace-nowrap text-sm font-normal">
                           <div className="flex items-center gap-1.5 flex-wrap">
