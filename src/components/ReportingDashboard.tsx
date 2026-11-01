@@ -569,16 +569,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
                   Hospital Reporting & Analytics
                 </h1>
-                <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 text-xs font-black rounded-full border border-emerald-200">
-                  {filteredPatients.length} Records
-                </span>
-                <span className="px-2.5 py-0.5 bg-slate-100 text-slate-700 text-xs font-semibold rounded-full">
-                  User: {currentUser?.name || currentUser?.role}
-                </span>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Appointments, Doctor Performance, Department Clearance, Demographics & Clinical Insights
-              </p>
             </div>
           </div>
 
@@ -1022,16 +1013,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 <h2 className="text-base sm:text-lg font-bold text-slate-900">
                   Instant Patient & ED Special Reports
                 </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Instant visits with collected fee (৳2,000/patient) & ED (Erectile Dysfunction) clinical patient tracking
-                </p>
               </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg">
-                Total Fee Collected: <strong>৳{instantMetrics.instantRevenue.toLocaleString()}</strong>
-              </span>
             </div>
           </div>
 
@@ -1045,12 +1027,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-amber-950">Instant Patients</h3>
-                    <p className="text-xs text-amber-700 font-medium">৳2,000 Visit Fee per patient</p>
                   </div>
                 </div>
-                <span className="px-2.5 py-1 bg-amber-200/80 text-amber-950 text-xs font-extrabold rounded-lg">
-                  {instantMetrics.instantRate}% of appointments
-                </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 pt-2">
@@ -1075,26 +1053,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 </div>
               </div>
 
-              {instantMetrics.instantPatients.length > 0 && (
-                <div className="pt-2">
-                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                    Recent Instant Patients
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                    {instantMetrics.instantPatients.slice(0, 10).map(p => (
-                      <span key={p.id} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100/90 text-amber-950 text-xs font-semibold rounded-md border border-amber-200">
-                        <span>{p.name}</span>
-                        <span className="text-[10px] text-amber-700 font-mono font-bold">(৳{p.instantFee || 2000})</span>
-                      </span>
-                    ))}
-                    {instantMetrics.instantPatients.length > 10 && (
-                      <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md">
-                        +{instantMetrics.instantPatients.length - 10} more
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
+
             </div>
 
             {/* 2. ED Patients Card */}
@@ -1106,12 +1065,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-purple-950">ED Patients (Erectile Dysfunction)</h3>
-                    <p className="text-xs text-purple-700 font-medium">Specialized Clinical Tracking</p>
                   </div>
                 </div>
-                <span className="px-2.5 py-1 bg-purple-200/80 text-purple-950 text-xs font-extrabold rounded-lg">
-                  {edMetrics.edRate}% of appointments
-                </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 pt-2">
@@ -1136,26 +1091,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 </div>
               </div>
 
-              {edMetrics.edPatients.length > 0 && (
-                <div className="pt-2">
-                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                    Recent ED Patients
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                    {edMetrics.edPatients.slice(0, 10).map(p => (
-                      <span key={p.id} className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-100/90 text-purple-950 text-xs font-semibold rounded-md border border-purple-200">
-                        <span>{p.name}</span>
-                        {p.phone && <span className="text-[10px] text-purple-700 font-mono">{p.phone.slice(-4)}</span>}
-                      </span>
-                    ))}
-                    {edMetrics.edPatients.length > 10 && (
-                      <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs rounded-md">
-                        +{edMetrics.edPatients.length - 10} more
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
+
             </div>
           </div>
         </div>
@@ -1174,9 +1110,6 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   Department Conversions
                 </h2>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Service status of {departmentMetrics.totalPost} Post Consultation Patients in Pathology, Organic & Nutrition
-              </p>
             </div>
 
             <div className="flex items-center gap-2">
@@ -1368,9 +1301,6 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   Doctor Insights
                 </h2>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Comparison of patient volume, pre-consultation and post-consultation counts by doctor
-              </p>
             </div>
 
             {/* Total Doctor count pill */}
@@ -1460,17 +1390,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   <h2 className="text-base sm:text-lg font-bold text-slate-900">
                     Patient Profession
                   </h2>
-                  <span className="text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                    Post Consultation Only
-                  </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Occupational breakdown of {professionMetrics.totalCount} Post Consultation patients
-                </p>
               </div>
-              <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg">
-                {professionMetrics.uniqueCount} Distinct Professions ({professionMetrics.totalCount} Patients)
-              </span>
             </div>
 
             {/* Profession Horizontal Bar Charts */}
@@ -1484,7 +1405,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                     <div key={item.name} className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                          <span className="text-slate-400 font-mono text-[11px] w-4">{idx + 1}.</span>
+                          <span className="text-slate-400 text-[11px] w-4">{idx + 1}.</span>
                           <span>{item.name}</span>
                         </span>
                         <span className="font-extrabold text-slate-700">
@@ -1512,13 +1433,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 <h3 className="text-base font-bold text-slate-900">
                   Patient Gender & Age
                 </h3>
-                <span className="text-[10px] font-extrabold bg-teal-50 text-teal-700 border border-teal-200 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                  Post Consultation Only
-                </span>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Demographic breakdown of {demographicMetrics.total} Post Consultation patients
-              </p>
             </div>
 
             {/* Gender Ratio */}
@@ -1602,9 +1517,6 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   Patient Comments
                 </h2>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Frequency analysis of doctor comments, treatment directives, and therapy advice
-              </p>
             </div>
             <span className="text-xs font-bold text-slate-700 bg-slate-100 px-3 py-1 rounded-lg">
               {commentMetrics.totalCommentedPatients} Patients with Comments
@@ -1688,19 +1600,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
               <h3 className="font-bold text-slate-900 text-sm">
                 Patient Activity Log ({patientLogTab === 'confirmed' ? confirmedPatients.length : pendingPatients.length} Records)
               </h3>
-              <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${
-                patientLogTab === 'confirmed'
-                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                  : 'bg-amber-100 text-amber-800 border border-amber-200'
-              }`}>
-                {patientLogTab === 'confirmed' ? 'Confirmed Patients' : 'Pending Patients'}
-              </span>
             </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              {patientLogTab === 'confirmed' 
-                ? 'Showing confirmed patients with assigned serial numbers and consultation progress'
-                : 'Showing unconfirmed appointments awaiting serial number assignment and patient verification'}
-            </p>
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
@@ -1792,7 +1692,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                     <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
                       {/* Serial */}
                       <td className="py-2.5 px-3 text-center">
-                        <span className={`inline-block px-2 py-0.5 font-mono font-bold text-xs rounded-md ${
+                        <span className={`inline-block px-2 py-0.5 font-bold text-xs rounded-md ${
                           p.consultationSerial 
                             ? 'bg-slate-900 text-emerald-400' 
                             : 'bg-amber-100 text-amber-900 border border-amber-200'
@@ -1807,7 +1707,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                           <p className="font-bold text-slate-900">
                             {p.name}
                           </p>
-                          <p className="font-mono text-emerald-700 text-[11px]">{p.phone}</p>
+                          <p className="text-emerald-700 text-[11px] font-medium">{p.phone}</p>
                         </div>
                       </td>
 

@@ -686,12 +686,12 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                           className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
                         />
                       </td>
-                      <td className="px-3 py-2 font-mono font-bold text-slate-600">{p.serialNo || idx + 1}</td>
+                      <td className="px-3 py-2 font-bold text-slate-600">{p.serialNo || idx + 1}</td>
                       <td className="px-3 py-2 font-semibold text-emerald-800 whitespace-nowrap">
                         {formatDateDisplay(p.appointmentDate || selectedDate)}
                       </td>
                       <td className="px-3 py-2 font-semibold text-slate-900">{p.name}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{p.phone}</td>
+                      <td className="px-3 py-2 text-slate-700">{p.phone}</td>
                       <td className="px-3 py-2">{p.gender}</td>
                       <td className="px-3 py-2">{p.age || '—'}</td>
                       <td className="px-3 py-2 text-slate-700 max-w-xs truncate" title={p.address || ''}>
@@ -1024,7 +1024,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                             className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
                           />
                         </td>
-                        <td className="px-3 py-3 font-mono text-slate-800 font-medium whitespace-nowrap text-sm">
+                        <td className="px-3 py-3 text-slate-800 font-medium whitespace-nowrap text-sm">
                           {p.serialNo || itemDisplayIndex}
                         </td>
                         <td className="px-3 py-3 font-medium text-emerald-900 whitespace-nowrap text-sm">
@@ -1037,16 +1037,9 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                             <span>{p.name}</span>
                           </div>
                         </td>
-                        <td className="px-3.5 py-3 font-mono text-slate-800 font-normal text-sm whitespace-nowrap">
+                        <td className="px-3.5 py-3 text-slate-800 font-normal text-sm whitespace-nowrap">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <a
-                              href={`tel:${p.phone}`}
-                              className="hover:text-emerald-700 hover:underline inline-flex items-center gap-1 font-medium"
-                              title="Click to call patient"
-                            >
-                              <Phone className="w-3 h-3 text-emerald-600 shrink-0" />
-                              <span>{p.phone}</span>
-                            </a>
+                            <span>{p.phone}</span>
                             {phoneDuplicates > 1 && (
                               <span className="px-1.5 py-0.2 bg-purple-100 text-purple-900 text-[11px] font-normal rounded border border-purple-200" title={`${phoneDuplicates} appointments registered under this mobile number`}>
                                 {phoneDuplicates} Appts

@@ -898,8 +898,6 @@ export const Consultation: React.FC<ConsultationProps> = ({
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">ADDRESS</th>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Disease</th>
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Profession</th>
-                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap text-center">Instant</th>
-                    <th className="px-3 py-2.5 font-semibold whitespace-nowrap text-center">ED</th>
                     {activeSubTab === 'post' && (
                       <th className="px-3 py-2.5 font-semibold whitespace-nowrap text-blue-950 bg-blue-50/70 border-l border-r border-blue-200">
                         Comment
@@ -922,7 +920,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                         key={p.id ? `${p.id}-${itemDisplayIndex}` : `pat-row-${itemDisplayIndex}`} 
                         className="transition-colors hover:bg-emerald-50/30"
                       >
-                        <td className="px-3 py-2.5 font-mono text-slate-800 whitespace-nowrap">
+                        <td className="px-3 py-2.5 text-slate-800 whitespace-nowrap">
                           <span className="px-2 py-0.5 bg-emerald-50 text-emerald-950 border border-emerald-300 rounded text-xs font-semibold inline-flex items-center">
                             #{p.consultationSerial || itemDisplayIndex}
                           </span>
@@ -930,7 +928,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                         <td className="px-3 py-2.5 whitespace-nowrap font-normal text-slate-800 text-sm">
                           {p.name}
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-800 whitespace-nowrap text-sm font-normal">
+                        <td className="px-3 py-2.5 text-slate-800 whitespace-nowrap text-sm font-normal">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span>{p.phone}</span>
                             {phoneDuplicates > 1 && (
@@ -1140,51 +1138,6 @@ export const Consultation: React.FC<ConsultationProps> = ({
                           )}
                         </td>
 
-                        {/* Instant Column: ৳2,000 or - */}
-                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                          {p.isInstant ? (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleInstant(p)}
-                              className="px-2.5 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200 transition cursor-pointer shadow-2xs"
-                              title="Instant Patient: ৳2,000 Visit Fee (Click to toggle)"
-                            >
-                              ৳2,000
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleInstant(p)}
-                              className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 px-2.5 py-0.5 rounded text-xs transition cursor-pointer font-bold"
-                              title="Regular appointment (Free) — Click to mark as Instant (৳2,000)"
-                            >
-                              -
-                            </button>
-                          )}
-                        </td>
-
-                        {/* ED Column: ED or - */}
-                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                          {p.isEd ? (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleEd(p)}
-                              className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-purple-900 border border-purple-300 hover:bg-purple-200 transition cursor-pointer shadow-2xs"
-                              title="ED Specialized Patient (Click to toggle)"
-                            >
-                              ED
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleEd(p)}
-                              className="text-slate-400 hover:text-purple-700 hover:bg-purple-50 px-2.5 py-0.5 rounded text-xs transition cursor-pointer font-bold"
-                              title="Click to tag as ED Patient"
-                            >
-                              -
-                            </button>
-                          )}
-                        </td>
 
                         {/* Comment Column: Only in Post Consultation with Edit Permission */}
                         {activeSubTab === 'post' && (
