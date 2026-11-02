@@ -713,9 +713,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                             <span>Package Discount ({sc.discountPercent}%):</span>
                             <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
                           </div>
-                          <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2">
-                            <span>Net Payable Total:</span>
-                            <span className="text-emerald-700">BDT {details.grandTotal.toLocaleString()}</span>
+                          <div className="flex justify-between text-slate-900 font-extrabold text-sm border-t border-slate-200 pt-2">
+                            <span className="font-extrabold text-slate-900">Net Payable Total:</span>
+                            <span className="text-emerald-700 font-black text-base">BDT {details.grandTotal.toLocaleString()}</span>
                           </div>
                           <div className="flex justify-between text-slate-500 text-[11px] pt-1">
                             <span>Effective Rate / Day:</span>
@@ -993,9 +993,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                           </div>
 
                           {/* Total Net Payable */}
-                          <div className="flex justify-between text-slate-900 font-bold text-sm border-t border-slate-200 pt-2 mt-1">
-                            <span>Total Net Estimate:</span>
-                            <span className="text-indigo-700 font-black">BDT {details.grandTotal.toLocaleString()}</span>
+                          <div className="flex justify-between text-slate-900 font-extrabold text-sm border-t border-slate-200 pt-2 mt-1">
+                            <span className="font-extrabold text-slate-900">Total Net Estimate:</span>
+                            <span className="text-indigo-700 font-black text-base">BDT {details.grandTotal.toLocaleString()}</span>
                           </div>
                         </div>
                       </div>
@@ -1093,7 +1093,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
           @media print {
             @page {
               size: A4 portrait;
-              margin: 3.5mm 4mm 3.5mm 4mm !important;
+              margin: 8mm 10mm 8mm 10mm !important;
             }
             html, body {
               margin: 0 !important;
@@ -1146,11 +1146,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             #suoxi-comparison-print-sheet .text-slate-700,
             #suoxi-comparison-print-sheet .text-slate-800,
             #suoxi-comparison-print-sheet .text-emerald-700,
-            #suoxi-comparison-print-sheet .text-emerald-800,
-            #suoxi-comparison-print-sheet .text-emerald-900,
             #suoxi-comparison-print-sheet .text-emerald-950,
             #suoxi-comparison-print-sheet .text-indigo-700,
-            #suoxi-comparison-print-sheet .text-indigo-900,
             #suoxi-comparison-print-sheet .text-indigo-950,
             #suoxi-comparison-print-sheet .text-sky-900,
             #suoxi-comparison-print-sheet .text-sky-950 {
@@ -1242,6 +1239,25 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             #suoxi-comparison-print-sheet .text-xs.font-black,
             #suoxi-comparison-print-sheet .text-sm.font-black {
               font-weight: 900 !important;
+              color: #000000 !important;
+            }
+
+            /* Emphasize Net Payable Amount and Label - Ultra Bold & High Contrast */
+            #suoxi-comparison-print-sheet .net-payable-amount,
+            #suoxi-comparison-print-sheet .net-payable-amount *,
+            #suoxi-comparison-print-sheet [data-net-payable="true"] {
+              font-weight: 900 !important;
+              font-size: 13.5px !important;
+              color: #000000 !important;
+              -webkit-text-stroke: 0.35px #000000 !important;
+              display: inline-block !important;
+              letter-spacing: -0.01em !important;
+            }
+
+            #suoxi-comparison-print-sheet .net-payable-label,
+            #suoxi-comparison-print-sheet .net-payable-label * {
+              font-weight: 900 !important;
+              font-size: 11.5px !important;
               color: #000000 !important;
             }
 
@@ -1370,9 +1386,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                         <span>Discount ({sc.discountPercent}%):</span>
                         <span>- BDT {details.treatmentDiscount.toLocaleString()}</span>
                       </div>
-                      <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-200 pt-1">
-                        <span>Net Payable:</span>
-                        <span className="text-emerald-800">BDT {details.grandTotal.toLocaleString()}</span>
+                      <div className="flex justify-between items-baseline text-slate-900 font-black text-xs border-t-2 border-slate-900 pt-1.5 pb-0.5 mt-0.5">
+                        <span className="net-payable-label font-black text-xs text-slate-900">Net Payable:</span>
+                        <span data-net-payable="true" className="net-payable-amount font-black text-sm text-black tracking-tight">BDT {details.grandTotal.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between text-slate-500 text-[9px] pt-0.5">
                         <span>Rate / Day:</span>
@@ -1518,9 +1534,9 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                         </span>
                       </div>
 
-                      <div className="flex justify-between text-slate-900 font-black text-xs border-t border-slate-200 pt-1">
-                        <span>Total Net Estimate:</span>
-                        <span className="text-indigo-900">BDT {details.grandTotal.toLocaleString()}</span>
+                      <div className="flex justify-between items-baseline text-slate-900 font-black text-xs border-t-2 border-slate-900 pt-1.5 pb-0.5 mt-0.5">
+                        <span className="net-payable-label font-black text-xs text-slate-900">Total Net Estimate:</span>
+                        <span data-net-payable="true" className="net-payable-amount font-black text-sm text-black tracking-tight">BDT {details.grandTotal.toLocaleString()}</span>
                       </div>
                     </div>
                   </div>

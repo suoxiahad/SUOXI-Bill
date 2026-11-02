@@ -362,15 +362,6 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Mark single patient as Done in Pre Consultation -> moves to Post Consultation with Auto-Detected Doctor
   const handleMarkDone = async (patient: Patient) => {
-    if (!patient.profession || !patient.profession.trim()) {
-      setActionMessage({
-        type: 'error',
-        text: `⚠️ Please select a profession for ${patient.name} before marking Done.`
-      });
-      setTimeout(() => setActionMessage(null), 3500);
-      return;
-    }
-
     setIsProcessingDone(patient.id);
     const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
     const updated: Patient = {
@@ -1297,18 +1288,14 @@ export const Consultation: React.FC<ConsultationProps> = ({
                               <div className="flex items-center gap-1.5 ml-auto">
                                 <button
                                   onClick={() => handleMarkDone(p)}
-                                  disabled={isCurrentlyProcessing || !p.profession}
-                                  className={`px-4 py-1.5 font-semibold text-sm rounded-xl shadow-xs transition flex items-center gap-1.5 ${
-                                    !p.profession 
-                                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
-                                      : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white cursor-pointer'
-                                  }`}
-                                  title={!p.profession ? 'Please select patient profession first to mark Done' : 'Click Done to record doctor and move patient to Post Consultation'}
+                                  disabled={isCurrentlyProcessing}
+                                  className="px-4 py-1.5 font-semibold text-sm rounded-xl shadow-xs transition flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white cursor-pointer disabled:opacity-50"
+                                  title="Click Done to record doctor and move patient to Post Consultation"
                                 >
                                   {isCurrentlyProcessing ? (
                                     <Activity className="w-4 h-4 animate-spin text-white" />
                                   ) : (
-                                    <CheckCircle className={`w-4 h-4 ${!p.profession ? 'text-slate-400' : 'text-emerald-200'}`} />
+                                    <CheckCircle className="w-4 h-4 text-emerald-200" />
                                   )}
                                   <span>Done</span>
                                 </button>

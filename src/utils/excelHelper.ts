@@ -337,7 +337,7 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
         phone: finalPhone,
         address: address || '',
         remark: remark || 'General Assessment',
-        doctorName: doctorName || 'Senior Counseling Doctor',
+        doctorName: doctorName || 'Dr. S.M. Shahidul Islam PhD',
         appointmentDate: appointmentDate || new Date().toISOString().split('T')[0],
         isInstant,
         instantFee,

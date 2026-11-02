@@ -338,18 +338,23 @@ function loadLocalDb() {
         }
       }
 
-      // Ensure unconfirmed patients start clean in Appointments Import queue
+      // Ensure unconfirmed patients start clean in Appointments Import queue & migrate doctorName if placeholder
       patients = patients.map((p: any) => {
+        const doctor = (!p.doctorName || p.doctorName === 'Senior Counseling Doctor') ? 'Dr. S.M. Shahidul Islam PhD' : p.doctorName;
         if (!p.isConfirmed) {
           return {
             ...p,
+            doctorName: doctor,
             isConfirmed: false,
             consultationSerial: null,
             consultationStatus: undefined,
             status: p.status === 'Post Consultation' ? 'Pending Counseling' : (p.status || 'Pending Counseling')
           };
         }
-        return p;
+        return {
+          ...p,
+          doctorName: doctor
+        };
       });
 
       localData = {
@@ -625,6 +630,15 @@ async function initDatabase() {
             [u.id, u.username, u.password_hash, u.name, u.role, u.phone || '', u.is_active ?? 1]
           );
         }
+      }
+
+      // Update existing database patient records with placeholder doctorName to Dr. S.M. Shahidul Islam PhD
+      try {
+        await pool.query(
+          "UPDATE patients SET doctorName = 'Dr. S.M. Shahidul Islam PhD' WHERE doctorName = 'Senior Counseling Doctor' OR doctorName IS NULL OR doctorName = ''"
+        );
+      } catch (err) {
+        // ignore if not applicable
       }
     } catch (err: any) {
       console.log(`ℹ️ MySQL connection at ${host}:${dbPort} skipped (${err.code || err.message}).`);
@@ -1243,7 +1257,7 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     age: p.age || '',
     gender: p.gender || 'Other',
     address: p.address || '',
-    doctorName: p.doctorName || 'Senior Counseling Doctor',
+    doctorName: p.doctorName || 'Dr. S.M. Shahidul Islam PhD',
     appointmentDate: p.appointmentDate || new Date().toISOString().split('T')[0],
     appointmentTime: p.appointmentTime || '09:00 AM',
     department: p.department || 'Acupuncture',
@@ -2178,7 +2192,7 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
         p.age || '',
         p.gender || 'Other',
         p.address || '',
-        p.doctorName || 'Senior Counseling Doctor',
+        p.doctorName || 'Dr. S.M. Shahidul Islam PhD',
         p.appointmentDate || new Date().toISOString().split('T')[0],
         p.appointmentTime || '09:00 AM',
         p.department || 'Acupuncture',
@@ -2349,7 +2363,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       age: p.age || '',
       gender: p.gender || 'Other',
       address: p.address || '',
-      doctorName: p.doctorName || 'Senior Counseling Doctor',
+      doctorName: p.doctorName || 'Dr. S.M. Shahidul Islam PhD',
       appointmentDate: p.appointmentDate || todayStr,
       appointmentTime: p.appointmentTime || '09:00 AM',
       department: p.department || 'Acupuncture',
