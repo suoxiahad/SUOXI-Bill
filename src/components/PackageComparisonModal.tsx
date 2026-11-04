@@ -1086,14 +1086,13 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       </div>
     </div>
 
-    {/* Printable Comparison Document Sheet (Visible ONLY during window.print()) */}
-    <div id="suoxi-comparison-print-sheet" className="hidden print:block font-sans text-slate-900 bg-white p-0 m-0 w-full max-w-none">
+    <div id="suoxi-comparison-print-sheet" className={`hidden print:block font-sans text-slate-900 bg-white p-0 m-0 w-full max-w-none ${showOutdoor && showIndoor ? 'both-packages-active' : ''}`}>
       <style dangerouslySetInnerHTML={{
         __html: `
           @media print {
             @page {
               size: A4 portrait;
-              margin: 8mm 10mm 8mm 10mm !important;
+              margin: 6mm 8mm 6mm 8mm !important;
             }
             html, body {
               margin: 0 !important;
@@ -1117,6 +1116,85 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
               background-color: #ffffff !important;
               color: #000000 !important;
               -webkit-font-smoothing: antialiased;
+            }
+
+            /* Prevent Section Header Orphans and Unwanted Page Breaks */
+            #suoxi-comparison-print-sheet .comparison-section {
+              break-inside: avoid !important;
+              page-break-inside: avoid !important;
+            }
+
+            #suoxi-comparison-print-sheet .comparison-section-header {
+              break-after: avoid !important;
+              page-break-after: avoid !important;
+            }
+
+            #suoxi-comparison-print-sheet .signatures-container {
+              break-inside: avoid !important;
+              page-break-inside: avoid !important;
+            }
+
+            /* Compact layout when BOTH Outdoor and Indoor are printed together */
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-section {
+              margin-bottom: 5px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-section-header {
+              margin-bottom: 3px !important;
+              padding-bottom: 1.5px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-section-header h3 {
+              font-size: 10.5px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-card {
+              padding: 6px 8px !important;
+              border-radius: 8px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-card h4 {
+              font-size: 11px !important;
+              line-height: 1.1 !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-card .card-subtext {
+              font-size: 8px !important;
+              margin-bottom: 2px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-card .space-y-1 > :not([hidden]) ~ :not([hidden]) {
+              margin-top: 1px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-card .pt-2,
+            #suoxi-comparison-print-sheet.both-packages-active .comparison-card .pt-1.5 {
+              padding-top: 2px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .weekly-therapies-container {
+              margin-top: 2px !important;
+              padding-top: 2px !important;
+              font-size: 7.5px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .weekly-therapies-box {
+              padding: 1.5px 3px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .signatures-container {
+              padding-top: 3px !important;
+              margin-top: 3px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .disclaimer-text {
+              margin-bottom: 10px !important;
+              font-size: 7.5px !important;
+            }
+
+            #suoxi-comparison-print-sheet.both-packages-active .signatures-row {
+              padding-top: 14px !important;
+              margin-bottom: 4px !important;
             }
 
             /* Monochrome & High Contrast Print Optimization */
@@ -1184,7 +1262,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
             /* Package comparison cards: solid 1.5px black border with crisp separation */
             #suoxi-comparison-print-sheet .rounded-xl.border,
-            #suoxi-comparison-print-sheet .border-slate-300.rounded-xl {
+            #suoxi-comparison-print-sheet .border-slate-300.rounded-xl,
+            #suoxi-comparison-print-sheet .comparison-card {
               border: 1.5px solid #000000 !important;
               background-color: #ffffff !important;
               box-shadow: none !important;
@@ -1262,7 +1341,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             }
 
             /* Weekly Therapies Box */
-            #suoxi-comparison-print-sheet .bg-slate-50.p-1 {
+            #suoxi-comparison-print-sheet .bg-slate-50.p-1,
+            #suoxi-comparison-print-sheet .weekly-therapies-box {
               background-color: #ffffff !important;
               border: 1px solid #000000 !important;
             }
@@ -1352,8 +1432,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
       {/* SECTION 1: OUTDOOR PATIENT PACKAGES (3 COMPARISON CARDS) */}
       {showOutdoor && (
-        <div className="mb-4">
-          <div className="flex items-center gap-2 mb-2 pb-1 border-b border-emerald-200">
+        <div className="mb-4 comparison-section outdoor-section">
+          <div className="comparison-section-header flex items-center gap-2 mb-2 pb-1 border-b border-emerald-200">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block"></span>
             <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider">
               OUTDOOR PATIENT PACKAGES (TREATMENT COST ONLY)
@@ -1363,7 +1443,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             {scenarios.filter(s => s.patientType === 'outdoor').map(sc => {
               const details = calculateDetails(sc);
               return (
-                <div key={sc.id} className="border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
+                <div key={sc.id} className="comparison-card border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
                   <div>
                     <div className="mb-1">
                       <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-200">
@@ -1373,7 +1453,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                     <h4 className="text-sm font-black text-slate-900">
                       {sc.days} Days
                     </h4>
-                    <p className="text-[10px] text-slate-500 font-semibold mb-2">
+                    <p className="card-subtext text-[10px] text-slate-500 font-semibold mb-2">
                       Outdoor • {sc.discountPercent}% Discount
                     </p>
 
@@ -1397,11 +1477,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
                       {/* Weekly Therapies Breakdown (Pay Per Session) */}
                       {selectedAdditionalTreatments.length > 0 && (
-                        <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200 text-[8.5px]">
+                        <div className="weekly-therapies-container mt-1.5 pt-1.5 border-t border-dashed border-slate-200 text-[8.5px]">
                           <div className="flex justify-between font-bold text-sky-950 mb-0.5">
                             <span>Weekly Therapies (Pay Per Session):</span>
                           </div>
-                          <div className="space-y-1 bg-slate-50 p-1 rounded border border-slate-200">
+                          <div className="weekly-therapies-box space-y-1 bg-slate-50 p-1 rounded border border-slate-200">
                             {selectedAdditionalTreatments.map(item => {
                               const wtRate = calculateWeeklyTreatmentPerSession(item, sc.patientType);
                               return (
@@ -1437,8 +1517,8 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
       {/* SECTION 2: INDOOR PATIENT PACKAGES (3 COMPARISON CARDS) */}
       {showIndoor && (
-        <div className="mb-4">
-          <div className="flex items-center gap-2 mb-2 pb-1 border-b border-indigo-200">
+        <div className="mb-4 comparison-section indoor-section">
+          <div className="comparison-section-header flex items-center gap-2 mb-2 pb-1 border-b border-indigo-200">
             <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block"></span>
             <h3 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
               INDOOR PATIENT PACKAGES (WITH ROOM, FOOD & ADMISSION)
@@ -1448,7 +1528,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
             {scenarios.filter(s => s.patientType === 'indoor').map(sc => {
               const details = calculateDetails(sc);
               return (
-                <div key={sc.id} className="border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
+                <div key={sc.id} className="comparison-card border border-slate-300 rounded-xl p-3 bg-white flex flex-col justify-between">
                   <div>
                     <div className="mb-1">
                       <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-200">
@@ -1458,7 +1538,7 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
                     <h4 className="text-sm font-black text-slate-900">
                       {sc.days} Days
                     </h4>
-                    <p className="text-[10px] text-slate-500 font-semibold mb-2">
+                    <p className="card-subtext text-[10px] text-slate-500 font-semibold mb-2">
                       Indoor • {sc.discountPercent}% Treatment Disc
                     </p>
 
@@ -1497,11 +1577,11 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
 
                       {/* Weekly Therapies Breakdown (Pay Per Session) */}
                       {selectedAdditionalTreatments.length > 0 && (
-                        <div className="mt-1 pt-1 border-t border-dashed border-slate-200 text-[8.5px]">
+                        <div className="weekly-therapies-container mt-1 pt-1 border-t border-dashed border-slate-200 text-[8.5px]">
                           <div className="flex justify-between font-bold text-sky-950 mb-0.5">
                             <span>Weekly Therapies (Pay Per Session):</span>
                           </div>
-                          <div className="space-y-1 bg-slate-50 p-1 rounded border border-slate-200">
+                          <div className="weekly-therapies-box space-y-1 bg-slate-50 p-1 rounded border border-slate-200">
                             {selectedAdditionalTreatments.map(item => {
                               const wtRate = calculateWeeklyTreatmentPerSession(item, sc.patientType);
                               return (
@@ -1548,12 +1628,12 @@ export const PackageComparisonModal: React.FC<PackageComparisonModalProps> = ({
       )}
 
       {/* Footer Notes & Signatures */}
-      <div className="pt-3 mt-3 border-t border-slate-300">
-        <p className="text-[9px] text-slate-500 mb-8 italic text-center">
+      <div className="signatures-container pt-3 mt-3 border-t border-slate-300">
+        <p className="disclaimer-text text-[9px] text-slate-500 mb-8 italic text-center">
           * This comparison sheet is generated for counseling and financial planning purposes only. Final charges depend on actual stay and prescribed therapies.
         </p>
 
-        <div className="flex justify-between text-[11px] text-slate-800 font-bold pt-10 mb-5">
+        <div className="signatures-row flex justify-between text-[11px] text-slate-800 font-bold pt-10 mb-5">
           <div className="text-center w-44 border-t-2 border-slate-700 pt-1.5">
             Prepared By
           </div>
