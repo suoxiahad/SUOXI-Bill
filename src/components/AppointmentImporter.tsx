@@ -132,6 +132,8 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   };
 
   const handleConfirmPatient = (p: Patient) => {
+    setIsConfirmingId(p.id);
+
     // 1. Instant optimistic update in 1ms
     const targetDate = p.appointmentDate || selectedDate || new Date().toISOString().split('T')[0];
     const sameDateSerials = patients
@@ -177,10 +179,14 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         type: 'error',
         text: `Failed to confirm patient: ${err?.message || 'Error occurred'}`
       });
+    }).finally(() => {
+      setIsConfirmingId(null);
     });
   };
 
   const handleUnconfirmPatient = (p: Patient) => {
+    setIsConfirmingId(p.id);
+
     // 1. Instant optimistic update in 1ms
     const revertedPatient: Patient = {
       ...p,
@@ -215,6 +221,8 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         type: 'error',
         text: `Failed to revert: ${err?.message || 'Error occurred'}`
       });
+    }).finally(() => {
+      setIsConfirmingId(null);
     });
   };
 

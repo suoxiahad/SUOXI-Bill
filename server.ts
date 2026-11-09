@@ -640,6 +640,23 @@ async function initDatabase() {
       } catch (err) {
         // ignore if not applicable
       }
+
+      // Synchronize in-memory cache with central MySQL records so localData is never empty or desynced
+      try {
+        const [pRows]: any = await pool.query('SELECT * FROM patients ORDER BY createdAt DESC, id DESC LIMIT 5000');
+        if (Array.isArray(pRows) && pRows.length > 0) {
+          const dbPatients = pRows.map(formatPatientRow);
+          const dbIdSet = new Set(dbPatients.map((p: any) => String(p.id)));
+          localData.patients = [
+            ...dbPatients,
+            ...localData.patients.filter((p: any) => p && p.id && !dbIdSet.has(String(p.id)))
+          ];
+          saveLocalDb();
+          console.log(`✅ Loaded and synchronized ${dbPatients.length} patient records from MySQL database.`);
+        }
+      } catch (pErr) {
+        console.warn('Initial MySQL patients cache sync warning:', pErr);
+      }
     } catch (err: any) {
       console.log(`ℹ️ MySQL connection at ${host}:${dbPort} skipped (${err.code || err.message}).`);
       console.log('⚡ Operating in Central Local File Persistence Mode. Data persists across restarts!');
@@ -1403,9 +1420,28 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
 // Single patient confirm / un-confirm endpoint with sequential consultation serial per appointment date
 app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
   const { id, isConfirmed = true } = req.body;
-  if (!id) return res.status(400).json({ error: 'Patient ID is required' });
+  if (!id && id !== 0) return res.status(400).json({ error: 'Patient ID is required' });
 
-  const idx = localData.patients.findIndex(p => p.id === id);
+  const idStr = String(id).trim();
+  let idx = localData.patients.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
+
+  // If patient not found in localData memory cache, search MySQL database directly
+  if (idx === -1 && isMySqlActive && mysqlPool) {
+    try {
+      const [dbRows]: any = await mysqlPool.execute(
+        'SELECT * FROM patients WHERE id = ? OR serialNo = ? LIMIT 1',
+        [idStr, idStr]
+      );
+      if (Array.isArray(dbRows) && dbRows.length > 0) {
+        const loadedPatient = formatPatientRow(dbRows[0]);
+        localData.patients.unshift(loadedPatient);
+        idx = 0;
+      }
+    } catch (dbErr) {
+      console.warn('MySQL lookup in confirm endpoint warning:', dbErr);
+    }
+  }
+
   if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
 
   const patient = localData.patients[idx];
@@ -1416,9 +1452,9 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
     localData.patients[idx] = {
       ...patient,
       isConfirmed: false,
-      confirmedAt: undefined,
+      confirmedAt: '',
       consultationSerial: null,
-      consultationStatus: undefined,
+      consultationStatus: '',
       status: 'Pending Counseling'
     };
   } else {
@@ -1465,7 +1501,7 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
   if (isMySqlActive && mysqlPool) {
     try {
       const updatedP = localData.patients[idx];
-      await mysqlPool.execute(
+      const [upRes]: any = await mysqlPool.execute(
         `UPDATE patients 
          SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?, isOnHold = ?, heldAt = ?, holdReason = ?
          WHERE id = ?`,
@@ -1478,9 +1514,27 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
           updatedP.isOnHold ? 1 : 0,
           updatedP.heldAt || '',
           updatedP.holdReason || '',
-          updatedP.id
+          String(updatedP.id)
         ]
       );
+      if (upRes && upRes.affectedRows === 0 && updatedP.serialNo) {
+        await mysqlPool.execute(
+          `UPDATE patients 
+           SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?, isOnHold = ?, heldAt = ?, holdReason = ?
+           WHERE serialNo = ?`,
+          [
+            updatedP.isConfirmed ? 1 : 0,
+            updatedP.confirmedAt || '',
+            updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
+            updatedP.consultationStatus || '',
+            updatedP.status || 'Pending Counseling',
+            updatedP.isOnHold ? 1 : 0,
+            updatedP.heldAt || '',
+            updatedP.holdReason || '',
+            String(updatedP.serialNo)
+          ]
+        );
+      }
     } catch (err) {
       console.error('MySQL patient confirm update error:', err);
     }
@@ -1492,9 +1546,28 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
 // Single patient Hold / Un-Hold endpoint with sequential serial reservation
 app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
   const { id, isOnHold = true, holdReason = '' } = req.body;
-  if (!id) return res.status(400).json({ error: 'Patient ID is required' });
+  if (!id && id !== 0) return res.status(400).json({ error: 'Patient ID is required' });
 
-  const idx = localData.patients.findIndex(p => p.id === id);
+  const idStr = String(id).trim();
+  let idx = localData.patients.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
+
+  // If patient not in local memory, search MySQL database directly
+  if (idx === -1 && isMySqlActive && mysqlPool) {
+    try {
+      const [dbRows]: any = await mysqlPool.execute(
+        'SELECT * FROM patients WHERE id = ? OR serialNo = ? LIMIT 1',
+        [idStr, idStr]
+      );
+      if (Array.isArray(dbRows) && dbRows.length > 0) {
+        const loadedPatient = formatPatientRow(dbRows[0]);
+        localData.patients.unshift(loadedPatient);
+        idx = 0;
+      }
+    } catch (dbErr) {
+      console.warn('MySQL lookup in hold endpoint warning:', dbErr);
+    }
+  }
+
   if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
 
   const patient = localData.patients[idx];
@@ -1547,7 +1620,7 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
   if (isMySqlActive && mysqlPool) {
     try {
       const updatedP = localData.patients[idx];
-      await mysqlPool.execute(
+      const [upRes]: any = await mysqlPool.execute(
         `UPDATE patients 
          SET isOnHold = ?, heldAt = ?, holdReason = ?, isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
          WHERE id = ?`,
@@ -1560,9 +1633,27 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
           updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
           updatedP.consultationStatus || '',
           updatedP.status || 'Pre Consultation',
-          patient.id
+          String(updatedP.id)
         ]
       );
+      if (upRes && upRes.affectedRows === 0 && updatedP.serialNo) {
+        await mysqlPool.execute(
+          `UPDATE patients 
+           SET isOnHold = ?, heldAt = ?, holdReason = ?, isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+           WHERE serialNo = ?`,
+          [
+            willHold ? 1 : 0,
+            updatedP.heldAt || '',
+            updatedP.holdReason || '',
+            updatedP.isConfirmed ? 1 : 0,
+            updatedP.confirmedAt || '',
+            updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
+            updatedP.consultationStatus || '',
+            updatedP.status || 'Pre Consultation',
+            String(updatedP.serialNo)
+          ]
+        );
+      }
     } catch (err) {
       console.warn('MySQL patient hold update error:', err);
     }
@@ -1644,7 +1735,26 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
 
   const updated: any[] = [];
   for (const id of ids) {
-    const idx = localData.patients.findIndex(p => p.id === id);
+    const idStr = String(id).trim();
+    let idx = localData.patients.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
+
+    // If patient not in local memory, load from MySQL database directly
+    if (idx === -1 && isMySqlActive && mysqlPool) {
+      try {
+        const [dbRows]: any = await mysqlPool.execute(
+          'SELECT * FROM patients WHERE id = ? OR serialNo = ? LIMIT 1',
+          [idStr, idStr]
+        );
+        if (Array.isArray(dbRows) && dbRows.length > 0) {
+          const loadedPatient = formatPatientRow(dbRows[0]);
+          localData.patients.unshift(loadedPatient);
+          idx = 0;
+        }
+      } catch (dbErr) {
+        console.warn('MySQL batch confirm lookup warning:', dbErr);
+      }
+    }
+
     if (idx !== -1) {
       const patient = localData.patients[idx];
       if (!patient.isConfirmed) {
@@ -1675,7 +1785,7 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
   if (isMySqlActive && mysqlPool && updated.length > 0) {
     try {
       for (const p of updated) {
-        await mysqlPool.execute(
+        const [upRes]: any = await mysqlPool.execute(
           `UPDATE patients 
            SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
            WHERE id = ?`,
@@ -1685,9 +1795,24 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
             p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null,
             p.consultationStatus || '',
             p.status || 'Pending Counseling',
-            p.id
+            String(p.id)
           ]
         );
+        if (upRes && upRes.affectedRows === 0 && p.serialNo) {
+          await mysqlPool.execute(
+            `UPDATE patients 
+             SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+             WHERE serialNo = ?`,
+            [
+              p.isConfirmed ? 1 : 0,
+              p.confirmedAt || '',
+              p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null,
+              p.consultationStatus || '',
+              p.status || 'Pending Counseling',
+              String(p.serialNo)
+            ]
+          );
+        }
       }
     } catch (err) {
       console.error('MySQL batch confirm error:', err);
@@ -2236,21 +2361,21 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
         appointmentDate = VALUES(appointmentDate),
         appointmentTime = VALUES(appointmentTime),
         department = VALUES(department),
-        status = VALUES(status),
+        status = IF(patients.isConfirmed = 1 OR patients.status = 'Pre Consultation' OR patients.status = 'Post Consultation', patients.status, VALUES(status)),
         notes = VALUES(notes),
         remark = VALUES(remark),
-        isConfirmed = VALUES(isConfirmed),
-        confirmedAt = VALUES(confirmedAt),
-        consultationSerial = VALUES(consultationSerial),
-        consultationStatus = VALUES(consultationStatus),
-        profession = VALUES(profession),
-        preDoctorName = VALUES(preDoctorName),
-        postDoctorName = VALUES(postDoctorName),
-        preConsultationAt = VALUES(preConsultationAt),
-        postConsultationAt = VALUES(postConsultationAt),
-        consultationComment = VALUES(consultationComment),
-        postConsultationConfirmed = VALUES(postConsultationConfirmed),
-        postConfirmedAt = VALUES(postConfirmedAt),
+        isConfirmed = IF(patients.isConfirmed = 1, 1, VALUES(isConfirmed)),
+        confirmedAt = IF(patients.isConfirmed = 1 AND patients.confirmedAt IS NOT NULL AND patients.confirmedAt != '', patients.confirmedAt, VALUES(confirmedAt)),
+        consultationSerial = IF(patients.consultationSerial IS NOT NULL AND patients.consultationSerial > 0, patients.consultationSerial, VALUES(consultationSerial)),
+        consultationStatus = IF(patients.consultationStatus IS NOT NULL AND patients.consultationStatus != '', patients.consultationStatus, VALUES(consultationStatus)),
+        profession = IF(patients.profession IS NOT NULL AND patients.profession != '', patients.profession, VALUES(profession)),
+        preDoctorName = IF(patients.preDoctorName IS NOT NULL AND patients.preDoctorName != '', patients.preDoctorName, VALUES(preDoctorName)),
+        postDoctorName = IF(patients.postDoctorName IS NOT NULL AND patients.postDoctorName != '', patients.postDoctorName, VALUES(postDoctorName)),
+        preConsultationAt = IF(patients.preConsultationAt IS NOT NULL AND patients.preConsultationAt != '', patients.preConsultationAt, VALUES(preConsultationAt)),
+        postConsultationAt = IF(patients.postConsultationAt IS NOT NULL AND patients.postConsultationAt != '', patients.postConsultationAt, VALUES(postConsultationAt)),
+        consultationComment = IF(patients.consultationComment IS NOT NULL AND patients.consultationComment != '', patients.consultationComment, VALUES(consultationComment)),
+        postConsultationConfirmed = IF(patients.postConsultationConfirmed = 1, 1, VALUES(postConsultationConfirmed)),
+        postConfirmedAt = IF(patients.postConfirmedAt IS NOT NULL AND patients.postConfirmedAt != '', patients.postConfirmedAt, VALUES(postConfirmedAt)),
         isInstant = VALUES(isInstant),
         instantFee = VALUES(instantFee),
         isEd = VALUES(isEd)

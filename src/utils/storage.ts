@@ -552,9 +552,14 @@ export const savePatientsLocal = (patients: Patient[]): void => {
 
 export const updatePatientLocal = (patient: Patient): void => {
   if (!patient || !patient.id) return;
+  const pIdStr = String(patient.id).trim();
+  const pSerialStr = patient.serialNo ? String(patient.serialNo).trim() : '';
 
   // 1. Update in-memory cache instantly (0ms)
-  const mIdx = inMemoryPatients.findIndex(p => p.id === patient.id);
+  const mIdx = inMemoryPatients.findIndex(p => 
+    String(p.id).trim() === pIdStr || 
+    (pSerialStr && p.serialNo && String(p.serialNo).trim() === pSerialStr)
+  );
   if (mIdx >= 0) {
     inMemoryPatients[mIdx] = { ...inMemoryPatients[mIdx], ...patient };
   } else {
@@ -600,7 +605,8 @@ export const addOrUpdatePatientApi = async (patient: Patient): Promise<{ success
 
 export const confirmPatientApi = async (id: string, isConfirmed: boolean = true): Promise<{ patient?: Patient; patients: Patient[] }> => {
   const current = getPatientsLocal();
-  const idx = current.findIndex(p => p.id === id);
+  const idStr = String(id).trim();
+  const idx = current.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
   if (idx !== -1) {
     const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
     if (isConfirmed) {
@@ -646,17 +652,20 @@ export const confirmPatientApi = async (id: string, isConfirmed: boolean = true)
         updatePatientLocal(data.patient);
       }
       return { patient: data.patient, patients: data.patients || inMemoryPatients };
+    } else {
+      const errData = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(errData.error || errData.message || `Server returned error (${res.status}) while confirming appointment`);
     }
   } catch (err) {
     console.warn('Backend confirm error:', err);
+    throw err;
   }
-
-  return { patient: current[idx], patients: current };
 };
 
 export const holdPatientApi = async (id: string, isOnHold: boolean = true, holdReason?: string): Promise<{ patient?: Patient; patients: Patient[] }> => {
   const current = getPatientsLocal();
-  const idx = current.findIndex(p => p.id === id);
+  const idStr = String(id).trim();
+  const idx = current.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
   if (idx !== -1) {
     const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
     let assignedSerial = current[idx].consultationSerial;
@@ -697,12 +706,14 @@ export const holdPatientApi = async (id: string, isOnHold: boolean = true, holdR
         updatePatientLocal(data.patient);
       }
       return { patient: data.patient, patients: data.patients || inMemoryPatients };
+    } else {
+      const errData = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(errData.error || errData.message || `Server returned error (${res.status}) while updating hold status`);
     }
   } catch (err) {
     console.warn('Backend hold error:', err);
+    throw err;
   }
-
-  return { patient: current[idx], patients: current };
 };
 
 export const updateDepartmentStatusApi = async (
@@ -757,8 +768,10 @@ export const updateDepartmentStatusApi = async (
 
 export const confirmBatchPatientsApi = async (ids: string[]): Promise<Patient[]> => {
   const current = getPatientsLocal();
-  for (const id of ids) {
-    const idx = current.findIndex(p => p.id === id);
+  const idStrs = ids.map(id => String(id).trim());
+
+  for (const idStr of idStrs) {
+    const idx = current.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
     if (idx !== -1 && !current[idx].isConfirmed) {
       const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
       let maxSerial = 0;
@@ -791,9 +804,13 @@ export const confirmBatchPatientsApi = async (ids: string[]): Promise<Patient[]>
         savePatientsLocal(data.patients);
         return data.patients;
       }
+    } else {
+      const errData = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(errData.error || errData.message || `Server returned error (${res.status}) while confirming batch`);
     }
   } catch (err) {
     console.warn('Backend confirm batch error:', err);
+    throw err;
   }
 
   return current;
