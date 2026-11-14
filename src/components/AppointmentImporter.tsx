@@ -37,8 +37,14 @@ import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
 interface AppointmentImporterProps {
   patients: Patient[];
   quotations?: InvoiceQuotation[];
+  selectedDateFilter?: string;
+  onDateFilterChange?: (date: string) => void;
+  isPatientsTruncated?: boolean;
   onRefreshPatients: () => void;
   onUpdatePatient?: (patient: Patient) => void;
+  onUpdatePatients?: (patients: Patient[]) => void;
+  onRemovePatients?: (ids: string[]) => void;
+  onSyncPatientsList?: (patients: Patient[]) => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
   onOpenAddPatient?: () => void;
   currentUser?: UserModel | null;
@@ -47,15 +53,27 @@ interface AppointmentImporterProps {
 export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   patients,
   quotations = [],
+  selectedDateFilter: controlledDateFilter,
+  onDateFilterChange,
+  isPatientsTruncated = false,
   onRefreshPatients,
   onUpdatePatient,
+  onUpdatePatients,
+  onRemovePatients,
+  onSyncPatientsList,
   onSelectPatientForQuotation,
   onOpenAddPatient,
   currentUser
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
+  const [internalDateFilter, setInternalDateFilter] = useState<string>(todayStr);
+  const selectedDateFilter = controlledDateFilter ?? internalDateFilter;
+  const setSelectedDateFilter = (nextDate: string) => {
+    const normalized = nextDate || 'all';
+    setInternalDateFilter(normalized);
+    onDateFilterChange?.(normalized);
+  };
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'confirmed' | 'pending'>('all');
   const [isConfirmingId, setIsConfirmingId] = useState<string | null>(null);
   const [patientToUndo, setPatientToUndo] = useState<Patient | null>(null);
@@ -134,18 +152,12 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   const handleConfirmPatient = (p: Patient) => {
     setIsConfirmingId(p.id);
 
-    // 1. Instant optimistic update in 1ms
-    const targetDate = p.appointmentDate || selectedDate || new Date().toISOString().split('T')[0];
-    const sameDateSerials = patients
-      .filter(x => x.appointmentDate === targetDate && typeof x.consultationSerial === 'number')
-      .map(x => x.consultationSerial!);
-    const optimisticSerial = sameDateSerials.length > 0 ? Math.max(...sameDateSerials) + 1 : 1;
-
+    // 1. Instant optimistic update in 1ms for status fields (serial is strictly server-assigned)
     const optimisticPatient: Patient = {
       ...p,
       isConfirmed: true,
       confirmedAt: new Date().toISOString(),
-      consultationSerial: optimisticSerial,
+      consultationSerial: p.consultationSerial ?? null,
       consultationStatus: 'Pre Consultation',
       status: 'Pre Consultation',
       isOnHold: false,
@@ -160,15 +172,23 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     setUploadMessage({
       type: 'success',
       text: p.isOnHold
-        ? `✓ ${p.name} un-held and confirmed for Pre Consultation (Serial #${optimisticSerial}).`
-        : `✓ ${p.name} confirmed for Pre Consultation (Serial #${optimisticSerial}).`
+        ? `✓ ${p.name} un-held and confirmed for Pre Consultation.`
+        : `✓ ${p.name} confirmed for Pre Consultation.`
     });
     setTimeout(() => setUploadMessage(null), 3500);
 
-    // 2. Silent background update
-    confirmPatientApi(p.id, true).then(res => {
+    // 2. Sync with backend and apply server-assigned consultationSerial
+    confirmPatientApi(p, true).then(res => {
       if (res.patient && onUpdatePatient) {
         onUpdatePatient(res.patient);
+        if (res.patient.consultationSerial != null) {
+          setUploadMessage({
+            type: 'success',
+            text: p.isOnHold
+              ? `✓ ${p.name} un-held and confirmed for Pre Consultation (Serial #${res.patient.consultationSerial}).`
+              : `✓ ${p.name} confirmed for Pre Consultation (Serial #${res.patient.consultationSerial}).`
+          });
+        }
       }
     }).catch(err => {
       console.error('Failed to confirm patient in background:', err);
@@ -208,7 +228,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     setTimeout(() => setUploadMessage(null), 3000);
 
     // 2. Silent background update
-    confirmPatientApi(p.id, false).then(res => {
+    confirmPatientApi(p, false).then(res => {
       if (res.patient && onUpdatePatient) {
         onUpdatePatient(res.patient);
       }
@@ -230,13 +250,20 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     if (selectedPatientIds.length === 0) return;
     setIsDeleting(true);
     try {
-      await confirmBatchPatientsApi(selectedPatientIds);
+      const selectedPatientsOrIds = selectedPatientIds.map(id => patients.find(p => p.id === id) || id);
+      const updatedRows = await confirmBatchPatientsApi(selectedPatientsOrIds);
+      if (onUpdatePatients) {
+        onUpdatePatients(updatedRows);
+      } else if (onUpdatePatient) {
+        updatedRows.forEach(p => onUpdatePatient(p));
+      } else {
+        onRefreshPatients();
+      }
       setUploadMessage({
         type: 'success',
         text: `✓ Successfully confirmed ${selectedPatientIds.length} patient(s) in sequential order for Pre Consultation.`
       });
       setSelectedPatientIds([]);
-      onRefreshPatients();
       setTimeout(() => setUploadMessage(null), 4000);
     } catch (err: any) {
       setUploadMessage({
@@ -253,13 +280,17 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     setIsDeleting(true);
     try {
       await deletePatientsApi(selectedPatientIds);
+      if (onRemovePatients) {
+        onRemovePatients(selectedPatientIds);
+      } else {
+        onRefreshPatients();
+      }
       setUploadMessage({
         type: 'success',
         text: `Successfully deleted ${selectedPatientIds.length} patient(s).`
       });
       setSelectedPatientIds([]);
       setIsDeleteModalOpen(false);
-      onRefreshPatients();
     } catch (err: any) {
       setUploadMessage({
         type: 'error',
@@ -384,7 +415,13 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
           text: `Writing to database: ${processed} of ${total} records confirmed...`
         });
       });
-      onRefreshPatients();
+      if (onDateFilterChange) {
+        onRefreshPatients();
+      } else if (onSyncPatientsList && Array.isArray(summary.list)) {
+        onSyncPatientsList(summary.list);
+      } else {
+        onRefreshPatients();
+      }
 
       setUploadMessage({
         type: 'success',
@@ -940,6 +977,13 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
             </div>
           </div>
         </div>
+
+        {isPatientsTruncated && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 text-xs text-amber-800 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>Showing the most recent 2,000 records — filter by date to see older entries.</span>
+          </div>
+        )}
 
         {filteredPatients.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs space-y-2">

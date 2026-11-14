@@ -43,6 +43,7 @@ import { DEFAULT_CATALOG } from '../data/defaultCatalog';
 import { searchPatientsLiveApi, fetchPatientsApi, addOrUpdatePatientApi } from '../utils/storage';
 import { idbGet, idbSet, idbDel } from '../utils/indexedDb';
 import { matchPatient, matchSearchQuery, normalizePhoneDigits, normalizeSearchText } from '../utils/searchHelper';
+import { makeUniqueId } from '../utils/id';
 
 interface TreatmentListItem {
   id: string;
@@ -126,7 +127,7 @@ interface QuotationBuilderProps {
   currentUser?: User | null;
   editingQuotation?: InvoiceQuotation | null;
   onCancelEdit?: () => void;
-  onSaveQuotation: (quotation: InvoiceQuotation) => void;
+  onSaveQuotation: (quotation: InvoiceQuotation) => Promise<InvoiceQuotation | void> | InvoiceQuotation | void;
   onPreviewPrint: (quotation: InvoiceQuotation) => void;
   showFullTreatmentCalculation?: boolean;
   setShowFullTreatmentCalculation?: React.Dispatch<React.SetStateAction<boolean>>;
@@ -157,6 +158,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [phoneSearch, setPhoneSearch] = useState('');
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(initialPatient || null);
   const [activeComparisonQuotationId, setActiveComparisonQuotationId] = useState<string | null>(null);
+  const draftInvoiceIdRef = useRef<string>(makeUniqueId());
 
   // Consulting / Billing Doctor Name
   const [billingDoctor, setBillingDoctor] = useState(
@@ -188,7 +190,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       p => (editingQuotation.patientPhone && p.phone === editingQuotation.patientPhone) ||
            (editingQuotation.patientId && p.id === editingQuotation.patientId)
     ) || {
-      id: editingQuotation.patientId || `patient-${Date.now()}`,
+      id: editingQuotation.patientId || makeUniqueId(),
       name: editingQuotation.patientName || 'Walk-in Patient',
       phone: editingQuotation.patientPhone || '01700000000',
       age: editingQuotation.patientAge || 0,
@@ -363,7 +365,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
         const key = `${nameNorm}__${phoneNorm}`;
         if (!map.has(key)) {
           map.set(key, {
-            id: q.patientId || `pat-history-${q.id}`,
+            id: q.patientId || makeUniqueId(),
             name: q.patientName,
             phone: q.patientPhone || '',
             age: q.patientAge,
@@ -394,6 +396,18 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [isSearchingLive, setIsSearchingLive] = useState<boolean>(false);
   const [searchDateScope, setSearchDateScope] = useState<'today' | 'all'>('today');
   const searchDebounceTimer = useRef<any>(null);
+  const searchAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (searchDebounceTimer.current) {
+        clearTimeout(searchDebounceTimer.current);
+      }
+      if (searchAbortControllerRef.current) {
+        searchAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   const getTodayDateStr = () => {
     const d = new Date();
@@ -406,7 +420,15 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const handlePatientSearchChange = (val: string, scopeOverride?: 'today' | 'all') => {
     const currentScope = scopeOverride || searchDateScope;
     setPhoneSearch(val);
-    if (!val || !val.trim()) {
+    const trimmedVal = val ? val.trim() : '';
+    if (!trimmedVal) {
+      if (searchDebounceTimer.current) {
+        clearTimeout(searchDebounceTimer.current);
+      }
+      if (searchAbortControllerRef.current) {
+        searchAbortControllerRef.current.abort();
+        searchAbortControllerRef.current = null;
+      }
       setMatchingPatients([]);
       setIsPatientDropdownOpen(false);
       return;
@@ -426,18 +448,29 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     });
 
     setMatchingPatients(localMatches);
-    setIsPatientDropdownOpen(localMatches.length > 0 || val.trim().length >= 1);
+    setIsPatientDropdownOpen(localMatches.length > 0 || trimmedVal.length >= 1);
 
-    // 2. Debounced background live server search for database entries (>= 1 char)
+    // 2. Debounced background live server search (>= 3 chars, or 1-2 digit serial numbers)
     if (searchDebounceTimer.current) {
       clearTimeout(searchDebounceTimer.current);
     }
+    if (searchAbortControllerRef.current) {
+      searchAbortControllerRef.current.abort();
+      searchAbortControllerRef.current = null;
+    }
 
-    if (val.trim().length >= 1) {
+    const isShortDigitSerial = /^[0-9০-৯]{1,2}$/.test(trimmedVal);
+    if (trimmedVal.length >= 3 || isShortDigitSerial) {
       searchDebounceTimer.current = setTimeout(async () => {
+        if (searchAbortControllerRef.current) {
+          searchAbortControllerRef.current.abort();
+        }
+        const controller = new AbortController();
+        searchAbortControllerRef.current = controller;
         try {
           const dateParam = currentScope === 'today' ? todayStr : undefined;
-          const liveResults = await searchPatientsLiveApi(val, 50, dateParam);
+          const liveResults = await searchPatientsLiveApi(val, 50, dateParam, controller.signal);
+          if (controller.signal.aborted) return;
           if (Array.isArray(liveResults)) {
             setMatchingPatients(prev => {
               const map = new Map<string, Patient>();
@@ -452,14 +485,18 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 }
                 return true;
               });
-              setIsPatientDropdownOpen(combined.length > 0 || (currentScope === 'today' && val.trim().length >= 1));
+              setIsPatientDropdownOpen(combined.length > 0 || (currentScope === 'today' && trimmedVal.length >= 1));
               return combined;
             });
           }
-        } catch {
-          // ignore
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
+        } finally {
+          if (searchAbortControllerRef.current === controller) {
+            searchAbortControllerRef.current = null;
+          }
         }
-      }, 120);
+      }, 300);
     }
   };
 
@@ -1928,6 +1965,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [paymentStatus, setPaymentStatus] = useState<'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid'>('Quotation');
   const [notes, setNotes] = useState<string>('Quotation validity is 7 days from the date of issue.');
   const [isSaved, setIsSaved] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Payment Cycle / Installment Schedule State
   const [paymentPlanMode, setPaymentPlanMode] = useState<'full' | '4_cycles' | '10_day_cycles' | '15_day_cycles' | 'custom_phases'>('4_cycles');
@@ -2140,7 +2179,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setPaymentPhases([]);
     setSavedComparisonSnapshot(null);
     setActiveComparisonQuotationId(null);
+    draftInvoiceIdRef.current = makeUniqueId();
     setIsSaved(false);
+    setSaveError(null);
     setIsDraftRestored(false);
 
     setTreatmentList(prev => prev.filter(item => !item.isCustom).map(item => ({
@@ -2976,8 +3017,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     const visitLabel = editingQuotation ? (editingQuotation.visitLabel || `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`) : `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`;
 
     return {
-      id: editingQuotation ? editingQuotation.id : `quot-${Date.now()}`,
-      quotationNumber: editingQuotation ? editingQuotation.quotationNumber : `SXH-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      id: editingQuotation ? editingQuotation.id : draftInvoiceIdRef.current,
+      quotationNumber: editingQuotation ? editingQuotation.quotationNumber : '',
       patientId: selectedPatient?.id || 'walkin',
       patientName: selectedPatient?.name || 'Walk-in Patient',
       patientPhone: pPhone,
@@ -3031,48 +3072,63 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     };
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (isSaving) return;
     if (!selectedPatient) {
       alert('Please select or search a patient first!');
       return;
     }
-    const quot = generateQuotationData();
-    onSaveQuotation(quot);
-    if (editingQuotation && onCancelEdit) {
-      onCancelEdit();
-    }
-    clearFormAndDraftState();
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
-  };
-
-  const handlePrint = () => {
-    if (!selectedPatient) {
-      alert('Please select a patient first!');
-      return;
-    }
-    const quot = generateQuotationData();
-    // 1. Instantly trigger print preview without waiting (0ms latency)
-    onPreviewPrint(quot);
-    // 2. Asynchronously save quotation and clean up draft in background
-    setTimeout(() => {
-      onSaveQuotation(quot);
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      const quot = generateQuotationData();
+      await onSaveQuotation(quot);
       if (editingQuotation && onCancelEdit) {
         onCancelEdit();
       }
       clearFormAndDraftState();
-    }, 60);
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 3000);
+    } catch (err: any) {
+      setSaveError(err?.message || 'Failed to save quotation to server.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePrint = async () => {
+    if (isSaving) return;
+    if (!selectedPatient) {
+      alert('Please select a patient first!');
+      return;
+    }
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      const quot = generateQuotationData();
+      const savedQuotation = (await onSaveQuotation(quot)) || quot;
+      if (editingQuotation && onCancelEdit) {
+        onCancelEdit();
+      }
+      clearFormAndDraftState();
+      onPreviewPrint(savedQuotation);
+    } catch (err: any) {
+      setSaveError(err?.message || 'Failed to save quotation before printing.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Called when user clicks "Print Comparison" inside PackageComparisonModal
   // Automatically saves 1st/current quotation before triggering print
   const handleSaveBeforeComparisonPrint = async () => {
+    if (isSaving) return false;
     let targetPatient = selectedPatient;
     if (!targetPatient) {
       const fallbackName = phoneSearch ? `Patient (${phoneSearch})` : 'Walk-in Patient';
       const fallbackPhone = phoneSearch || '01700000000';
       targetPatient = {
-        id: `patient-${Date.now()}`,
+        id: makeUniqueId(),
         name: fallbackName,
         phone: fallbackPhone,
         status: 'Quotation Created',
@@ -3096,10 +3152,19 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       setActiveComparisonQuotationId(quot.id);
     }
 
-    await onSaveQuotation(quot);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
-    return true;
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      await onSaveQuotation(quot);
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 3000);
+      return true;
+    } catch (err: any) {
+      setSaveError(err?.message || 'Failed to save quotation before printing.');
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Action: Return back to Post Consultation tab
@@ -5365,20 +5430,27 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
           {/* Bottom Actions */}
           <div className="space-y-2.5 pt-4">
+            {saveError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold px-3 py-2 rounded-xl">
+                {saveError}
+              </div>
+            )}
             <button
               onClick={handlePrint}
-              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer"
+              disabled={isSaving}
+              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs py-3 px-4 rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>Print A4 Invoice Quotation</span>
+              <span>{isSaving ? 'Saving...' : 'Print A4 Invoice Quotation'}</span>
             </button>
 
             <button
               onClick={handleSave}
-              className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-emerald-300 font-bold text-xs py-2.5 px-4 rounded-xl border border-slate-700 transition-colors cursor-pointer"
+              disabled={isSaving}
+              className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-emerald-300 font-bold text-xs py-2.5 px-4 rounded-xl border border-slate-700 transition-colors cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>{isSaved ? 'Quotation Saved!' : 'Save Quotation Record'}</span>
+              <span>{isSaving ? 'Saving...' : (isSaved ? 'Quotation Saved!' : 'Save Quotation Record')}</span>
             </button>
 
             {onBackToPostConsultation && (

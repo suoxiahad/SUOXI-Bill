@@ -36,6 +36,9 @@ interface ConsultationProps {
   quotations: InvoiceQuotation[];
   professions?: string[];
   comments?: string[];
+  selectedDateFilter?: string;
+  onDateFilterChange?: (date: string) => void;
+  isPatientsTruncated?: boolean;
   onRefreshPatients: () => void;
   onUpdatePatient?: (patient: Patient) => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
@@ -50,6 +53,9 @@ export const Consultation: React.FC<ConsultationProps> = ({
   quotations = [],
   professions = [],
   comments = [],
+  selectedDateFilter: controlledDateFilter,
+  onDateFilterChange,
+  isPatientsTruncated = false,
   onRefreshPatients,
   onUpdatePatient,
   onSelectPatientForQuotation,
@@ -78,7 +84,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
   }, [activeComments]);
   
   const todayStr = new Date().toISOString().split('T')[0];
-  const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
+  const [internalDateFilter, setInternalDateFilter] = useState<string>(todayStr);
+  const selectedDateFilter = controlledDateFilter ?? internalDateFilter;
+  const setSelectedDateFilter = (nextDate: string) => {
+    const normalized = nextDate || 'all';
+    setInternalDateFilter(normalized);
+    onDateFilterChange?.(normalized);
+  };
   const [activeSubTab, setActiveSubTab] = useState<'pre' | 'post'>(initialSubTab || 'pre');
 
   useEffect(() => {
@@ -851,6 +863,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
             </div>
           </div>
         </div>
+
+        {isPatientsTruncated && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 text-xs text-amber-800 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>Showing the most recent 2,000 records — filter by date to see older entries.</span>
+          </div>
+        )}
 
         {/* Patient Table Content */}
         {filteredPatients.length === 0 ? (

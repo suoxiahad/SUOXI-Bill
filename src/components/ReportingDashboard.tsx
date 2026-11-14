@@ -1,9 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Patient, 
   InvoiceQuotation, 
   User as UserModel 
 } from '../types';
+import {
+  fetchReportsSummaryApi,
+  fetchPatientsWithMetaApi,
+  ReportsSummaryResponse
+} from '../utils/storage';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -22,13 +27,17 @@ import {
   Search, 
   Activity,
   Clock,
-  Sparkles
+  Sparkles,
+  Receipt,
+  AlertTriangle
 } from 'lucide-react';
 
 interface ReportingDashboardProps {
   patients: Patient[];
   quotations: InvoiceQuotation[];
   currentUser: UserModel | null;
+  isActive?: boolean;
+  dataVersion?: number;
   onSelectPatient?: (patient: Patient) => void;
 }
 
@@ -37,7 +46,9 @@ type DashboardTab = 'all' | 'funnel' | 'instant_ed' | 'doctors' | 'departments' 
 
 export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
   patients,
-  currentUser
+  currentUser,
+  isActive = true,
+  dataVersion
 }) => {
   // Current date helpers
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -58,22 +69,124 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
   // Detailed Activity Log sub-tabs: exactly 2 tabs: 'confirmed' & 'pending'
   const [patientLogTab, setPatientLogTab] = useState<'confirmed' | 'pending'>('confirmed');
 
-  // Extract all distinct doctors from patient records
-  const allDoctors = useMemo(() => {
+  // Server aggregate summary & range patient records (capped at 2000 for activity table / CSV)
+  const [serverSummary, setServerSummary] = useState<ReportsSummaryResponse | null>(null);
+  const [rangePatients, setRangePatients] = useState<Patient[]>(patients);
+  const [reportPatientsTruncated, setReportPatientsTruncated] = useState<boolean>(false);
+  const [isLoadingSummary, setIsLoadingSummary] = useState<boolean>(false);
+  const summaryReqIdRef = useRef<number>(0);
+  const rangePatientsReqIdRef = useRef<number>(0);
+  const lastFetchedRangeKeyRef = useRef<string>('');
+  const lastFiltersKeyRef = useRef<string>('');
+  const lastFetchedDataVersionRef = useRef<number | undefined>(undefined);
+  const lastSummaryCompletedAtRef = useRef<number>(0);
+
+  const dateRange = useMemo<{ dateFrom?: string; dateTo?: string }>(() => {
+    if (datePreset === 'today') {
+      return { dateFrom: todayStr, dateTo: todayStr };
+    }
+    if (datePreset === 'yesterday') {
+      return { dateFrom: yesterdayStr, dateTo: yesterdayStr };
+    }
+    if (datePreset === 'last7') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      return { dateFrom: sevenDaysAgo.toISOString().split('T')[0], dateTo: todayStr };
+    }
+    if (datePreset === 'thisMonth') {
+      const ym = todayStr.substring(0, 7);
+      return { dateFrom: `${ym}-01`, dateTo: `${ym}-31` };
+    }
+    if (datePreset === 'custom') {
+      return { dateFrom: customStartDate, dateTo: customEndDate };
+    }
+    return {};
+  }, [datePreset, todayStr, yesterdayStr, customStartDate, customEndDate]);
+
+  useEffect(() => {
+    if (!isActive || !currentUser?.token) return;
+
+    const rangeKey = `${dateRange.dateFrom || ''}__${dateRange.dateTo || ''}`;
+    const filtersKey = `${rangeKey}::${selectedDoctorFilter}::${searchTerm}`;
+    const filtersChanged = filtersKey !== lastFiltersKeyRef.current;
+    const rangeChanged = rangeKey !== lastFetchedRangeKeyRef.current;
+    const dataVersionChanged = dataVersion !== lastFetchedDataVersionRef.current;
+
+    if (
+      !filtersChanged &&
+      dataVersionChanged &&
+      lastSummaryCompletedAtRef.current > 0 &&
+      Date.now() - lastSummaryCompletedAtRef.current < 10000
+    ) {
+      return;
+    }
+
+    const reqId = ++summaryReqIdRef.current;
+    const shouldFetchRangePatients = rangeChanged || dataVersionChanged;
+
+    setIsLoadingSummary(true);
+    const timer = setTimeout(async () => {
+      try {
+        const summaryPromise = fetchReportsSummaryApi({
+          dateFrom: dateRange.dateFrom,
+          dateTo: dateRange.dateTo,
+          doctor: selectedDoctorFilter,
+          q: searchTerm
+        });
+
+        let patientsPromise: Promise<unknown> | null = null;
+        if (shouldFetchRangePatients) {
+          const pReqId = ++rangePatientsReqIdRef.current;
+          patientsPromise = fetchPatientsWithMetaApi({
+            dateFrom: dateRange.dateFrom,
+            dateTo: dateRange.dateTo,
+            limit: 2000,
+            saveLocal: false
+          }).then(res => {
+            if (pReqId === rangePatientsReqIdRef.current && res.fromServer) {
+              lastFetchedRangeKeyRef.current = rangeKey;
+              setRangePatients(res.patients);
+              setReportPatientsTruncated(res.truncated);
+            }
+            return res;
+          });
+        }
+
+        const [summaryRes] = await Promise.all([summaryPromise, patientsPromise]);
+        if (reqId === summaryReqIdRef.current && summaryRes) {
+          setServerSummary(summaryRes);
+          lastFiltersKeyRef.current = filtersKey;
+          lastFetchedDataVersionRef.current = dataVersion;
+          lastSummaryCompletedAtRef.current = Date.now();
+        }
+      } finally {
+        if (reqId === summaryReqIdRef.current) {
+          setIsLoadingSummary(false);
+        }
+      }
+    }, searchTerm ? 200 : 0);
+
+    return () => clearTimeout(timer);
+  }, [isActive, currentUser?.token, dateRange.dateFrom, dateRange.dateTo, selectedDoctorFilter, searchTerm, dataVersion]);
+
+  // Extract distinct doctors (prefer full server list, fallback to local rows)
+  const localAllDoctors = useMemo(() => {
     const docs = new Set<string>();
-    patients.forEach(p => {
+    rangePatients.forEach(p => {
       if (p.doctorName && p.doctorName.trim()) docs.add(p.doctorName.trim());
       if (p.preDoctorName && p.preDoctorName.trim()) docs.add(p.preDoctorName.trim());
       if (p.postDoctorName && p.postDoctorName.trim()) docs.add(p.postDoctorName.trim());
     });
     return Array.from(docs).sort();
-  }, [patients]);
+  }, [rangePatients]);
 
-  // Filter patients based on Date range and Doctor
+  const allDoctors = serverSummary?.allDoctors ?? localAllDoctors;
+  const allTimeTotalPatients = serverSummary?.allTimeTotalPatients ?? rangePatients.length;
+
+  // Filter fetched range patients locally for Activity Log table, Recent Comments log, and CSV export
   const filteredPatients = useMemo(() => {
-    let result = [...patients];
+    let result = [...rangePatients];
 
-    // 1. Date Range Filtering
     if (datePreset === 'today') {
       result = result.filter(p => p.appointmentDate === todayStr);
     } else if (datePreset === 'yesterday') {
@@ -84,7 +197,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       const minDate = sevenDaysAgo.toISOString().split('T')[0];
       result = result.filter(p => p.appointmentDate && p.appointmentDate >= minDate && p.appointmentDate <= todayStr);
     } else if (datePreset === 'thisMonth') {
-      const currentYearMonth = todayStr.substring(0, 7); // YYYY-MM
+      const currentYearMonth = todayStr.substring(0, 7);
       result = result.filter(p => p.appointmentDate && p.appointmentDate.startsWith(currentYearMonth));
     } else if (datePreset === 'custom') {
       result = result.filter(p => {
@@ -93,7 +206,6 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       });
     }
 
-    // 2. Doctor Filter
     if (selectedDoctorFilter !== 'all') {
       result = result.filter(p => 
         p.doctorName === selectedDoctorFilter ||
@@ -102,7 +214,6 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       );
     }
 
-    // 3. Search query filter
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase().trim();
       result = result.filter(p => 
@@ -116,43 +227,50 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
     }
 
     return result;
-  }, [patients, datePreset, todayStr, yesterdayStr, customStartDate, customEndDate, selectedDoctorFilter, searchTerm]);
+  }, [rangePatients, datePreset, todayStr, yesterdayStr, customStartDate, customEndDate, selectedDoctorFilter, searchTerm]);
 
   // ==========================================
-  // 1. APPOINTMENT & FUNNEL METRICS
+  // 1. APPOINTMENT & FUNNEL METRICS (Server SQL aggregates)
   // ==========================================
   const funnelMetrics = useMemo(() => {
-    const totalAppointments = filteredPatients.length;
+    if (serverSummary) {
+      const {
+        totalAppointments,
+        confirmedCount,
+        unconfirmedCount,
+        preConsultationCount,
+        postConsultationCount
+      } = serverSummary.funnel;
+      const confirmRate = totalAppointments > 0 ? ((confirmedCount / totalAppointments) * 100).toFixed(1) : '0';
+      const preRate = confirmedCount > 0 ? ((preConsultationCount / confirmedCount) * 100).toFixed(1) : '0';
+      const postRate = preConsultationCount > 0 ? ((postConsultationCount / preConsultationCount) * 100).toFixed(1) : '0';
+      return {
+        totalAppointments,
+        confirmedCount,
+        unconfirmedCount,
+        confirmRate,
+        preConsultationCount,
+        preRate,
+        postConsultationCount,
+        postRate
+      };
+    }
 
-    // Confirmed Patients
-    const confirmedPatients = filteredPatients.filter(p => 
-      Boolean(p.isConfirmed) || 
-      typeof p.consultationSerial === 'number' || 
-      Boolean(p.confirmedAt)
-    );
-    const confirmedCount = confirmedPatients.length;
+    const totalAppointments = filteredPatients.length;
+    const confirmedCount = filteredPatients.filter(p => 
+      Boolean(p.isConfirmed) || typeof p.consultationSerial === 'number' || Boolean(p.confirmedAt)
+    ).length;
     const unconfirmedCount = totalAppointments - confirmedCount;
     const confirmRate = totalAppointments > 0 ? ((confirmedCount / totalAppointments) * 100).toFixed(1) : '0';
-
-    // Pre Consultation Patients
-    const preConsultationPatients = filteredPatients.filter(p => 
-      p.status === 'Pre Consultation' || 
-      p.consultationStatus === 'Pre Consultation' || 
-      p.status === 'Post Consultation' ||
-      Boolean(p.preDoctorName) ||
-      Boolean(p.preConsultationAt)
-    );
-    const preConsultationCount = preConsultationPatients.length;
+    const preConsultationCount = filteredPatients.filter(p => 
+      p.status === 'Pre Consultation' || p.consultationStatus === 'Pre Consultation' ||
+      p.status === 'Post Consultation' || Boolean(p.preDoctorName) || Boolean(p.preConsultationAt)
+    ).length;
     const preRate = confirmedCount > 0 ? ((preConsultationCount / confirmedCount) * 100).toFixed(1) : '0';
-
-    // Post Consultation Patients
-    const postConsultationPatients = filteredPatients.filter(p => 
-      p.status === 'Post Consultation' || 
-      p.consultationStatus === 'Post Consultation' || 
-      Boolean(p.postConsultationConfirmed) ||
-      Boolean(p.postDoctorName)
-    );
-    const postConsultationCount = postConsultationPatients.length;
+    const postConsultationCount = filteredPatients.filter(p => 
+      p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+      Boolean(p.postConsultationConfirmed) || Boolean(p.postDoctorName)
+    ).length;
     const postRate = preConsultationCount > 0 ? ((postConsultationCount / preConsultationCount) * 100).toFixed(1) : '0';
 
     return {
@@ -163,178 +281,120 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       preConsultationCount,
       preRate,
       postConsultationCount,
-      postRate,
-      postConsultationPatients
+      postRate
     };
-  }, [filteredPatients]);
+  }, [serverSummary, filteredPatients]);
 
   // ==========================================
-  // INSTANT & ED PATIENT METRICS
+  // INSTANT & ED PATIENT METRICS (Server SQL aggregates)
   // ==========================================
   const instantMetrics = useMemo(() => {
+    const total = funnelMetrics.totalAppointments;
+    if (serverSummary) {
+      const { instantCount, instantRevenue } = serverSummary.instant;
+      const instantRate = total > 0 ? ((instantCount / total) * 100).toFixed(1) : '0';
+      return { instantCount, instantRevenue, instantRate };
+    }
     const instantPatients = filteredPatients.filter(p => Boolean(p.isInstant));
     const instantCount = instantPatients.length;
     const instantRevenue = instantPatients.reduce((sum, p) => sum + (p.instantFee != null ? p.instantFee : 2000), 0);
-    const instantRate = filteredPatients.length > 0 ? ((instantCount / filteredPatients.length) * 100).toFixed(1) : '0';
-
-    return {
-      instantCount,
-      instantRevenue,
-      instantRate,
-      instantPatients
-    };
-  }, [filteredPatients]);
+    const instantRate = total > 0 ? ((instantCount / total) * 100).toFixed(1) : '0';
+    return { instantCount, instantRevenue, instantRate };
+  }, [serverSummary, funnelMetrics.totalAppointments, filteredPatients]);
 
   const edMetrics = useMemo(() => {
-    const edPatients = filteredPatients.filter(p => Boolean(p.isEd));
-    const edCount = edPatients.length;
-    const edRate = filteredPatients.length > 0 ? ((edCount / filteredPatients.length) * 100).toFixed(1) : '0';
-
-    return {
-      edCount,
-      edRate,
-      edPatients
-    };
-  }, [filteredPatients]);
+    const total = funnelMetrics.totalAppointments;
+    if (serverSummary) {
+      const { edCount } = serverSummary.ed;
+      const edRate = total > 0 ? ((edCount / total) * 100).toFixed(1) : '0';
+      return { edCount, edRate };
+    }
+    const edCount = filteredPatients.filter(p => Boolean(p.isEd)).length;
+    const edRate = total > 0 ? ((edCount / total) * 100).toFixed(1) : '0';
+    return { edCount, edRate };
+  }, [serverSummary, funnelMetrics.totalAppointments, filteredPatients]);
 
   // ==========================================
-  // 2. DEPARTMENT CLEARANCE METRICS (Pathology, Organic, Nutrition)
+  // 2. DEPARTMENT CLEARANCE METRICS (Server SQL aggregates)
   // ==========================================
   const departmentMetrics = useMemo(() => {
-    const postPatients = funnelMetrics.postConsultationPatients;
-    const totalPost = postPatients.length;
+    if (serverSummary) {
+      const d = serverSummary.departments;
+      const totalPost = d.totalPost;
+      return {
+        ...d,
+        pathRate: totalPost > 0 ? ((d.pathYes / totalPost) * 100).toFixed(1) : '0',
+        orgRate: totalPost > 0 ? ((d.orgYes / totalPost) * 100).toFixed(1) : '0',
+        nutRate: totalPost > 0 ? ((d.nutYes / totalPost) * 100).toFixed(1) : '0'
+      };
+    }
 
-    // Pathology
+    const postPatients = filteredPatients.filter(p =>
+      p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+      Boolean(p.postConsultationConfirmed) || Boolean(p.postDoctorName)
+    );
+    const totalPost = postPatients.length;
     const pathYes = postPatients.filter(p => p.pathologyStatus === 'Yes').length;
     const pathNo = postPatients.filter(p => p.pathologyStatus === 'No').length;
-    const pathPending = totalPost - pathYes - pathNo;
-    const pathRate = totalPost > 0 ? ((pathYes / totalPost) * 100).toFixed(1) : '0';
-
-    // Organic
     const orgYes = postPatients.filter(p => p.organicStatus === 'Yes').length;
     const orgNo = postPatients.filter(p => p.organicStatus === 'No').length;
-    const orgPending = totalPost - orgYes - orgNo;
-    const orgRate = totalPost > 0 ? ((orgYes / totalPost) * 100).toFixed(1) : '0';
-
-    // Nutrition
     const nutYes = postPatients.filter(p => p.nutritionStatus === 'Yes').length;
     const nutNo = postPatients.filter(p => p.nutritionStatus === 'No').length;
-    const nutPending = totalPost - nutYes - nutNo;
-    const nutRate = totalPost > 0 ? ((nutYes / totalPost) * 100).toFixed(1) : '0';
 
     return {
       totalPost,
       pathYes,
       pathNo,
-      pathPending,
-      pathRate,
+      pathPending: totalPost - pathYes - pathNo,
+      pathRate: totalPost > 0 ? ((pathYes / totalPost) * 100).toFixed(1) : '0',
       orgYes,
       orgNo,
-      orgPending,
-      orgRate,
+      orgPending: totalPost - orgYes - orgNo,
+      orgRate: totalPost > 0 ? ((orgYes / totalPost) * 100).toFixed(1) : '0',
       nutYes,
       nutNo,
-      nutPending,
-      nutRate
+      nutPending: totalPost - nutYes - nutNo,
+      nutRate: totalPost > 0 ? ((nutYes / totalPost) * 100).toFixed(1) : '0'
     };
-  }, [funnelMetrics.postConsultationPatients]);
+  }, [serverSummary, filteredPatients]);
 
   // ==========================================
-  // 3. DOCTOR-WISE PERFORMANCE METRICS
+  // 3. DOCTOR-WISE PERFORMANCE METRICS (Server SQL aggregates)
   // ==========================================
   const doctorMetrics = useMemo(() => {
-    const map = new Map<string, {
-      doctorName: string;
-      totalConsulted: number;
-      preCount: number;
-      postCount: number;
-    }>();
+    if (serverSummary) {
+      const allList = serverSummary.doctors;
+      const maxConsulted = allList.length > 0 ? Math.max(...allList.map(d => d.totalConsulted)) : 1;
+      const totalAll = allList.reduce((sum, d) => sum + d.totalConsulted, 0);
+      return { allList, maxConsulted, totalAll };
+    }
 
+    const map = new Map<string, { doctorName: string; totalConsulted: number; preCount: number; postCount: number }>();
     const getDocEntry = (name: string) => {
       const clean = name.trim();
-      if (!map.has(clean)) {
-        map.set(clean, {
-          doctorName: clean,
-          totalConsulted: 0,
-          preCount: 0,
-          postCount: 0
-        });
-      }
+      if (!map.has(clean)) map.set(clean, { doctorName: clean, totalConsulted: 0, preCount: 0, postCount: 0 });
       return map.get(clean)!;
     };
-
     filteredPatients.forEach(p => {
-      const isPre = (
-        p.status === 'Pre Consultation' || 
-        p.consultationStatus === 'Pre Consultation' || 
-        p.status === 'Post Consultation' ||
-        p.consultationStatus === 'Post Consultation' ||
-        Boolean(p.preDoctorName) ||
-        Boolean(p.preConsultationAt)
-      );
-
-      const isPost = (
-        p.status === 'Post Consultation' || 
-        p.consultationStatus === 'Post Consultation' || 
-        Boolean(p.postConsultationConfirmed) ||
-        Boolean(p.postDoctorName) ||
-        Boolean(p.postConsultationAt)
-      );
-
-      if (isPre) {
-        const preDoc = p.preDoctorName || p.doctorName || 'Doctor Not Assigned';
-        getDocEntry(preDoc).preCount += 1;
-      }
-
-      if (isPost) {
-        const postDoc = p.postDoctorName || p.doctorName || 'Doctor Not Assigned';
-        getDocEntry(postDoc).postCount += 1;
-      }
-
-      // If doctor is assigned on appointment
-      if (!isPre && !isPost && p.doctorName) {
-        getDocEntry(p.doctorName);
-      }
+      const isPre = p.status === 'Pre Consultation' || p.consultationStatus === 'Pre Consultation' ||
+        p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+        Boolean(p.preDoctorName) || Boolean(p.preConsultationAt);
+      const isPost = p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+        Boolean(p.postConsultationConfirmed) || Boolean(p.postDoctorName) || Boolean(p.postConsultationAt);
+      if (isPre) getDocEntry(p.preDoctorName || p.doctorName || 'Doctor Not Assigned').preCount += 1;
+      if (isPost) getDocEntry(p.postDoctorName || p.doctorName || 'Doctor Not Assigned').postCount += 1;
+      if (!isPre && !isPost && p.doctorName) getDocEntry(p.doctorName);
     });
-
-    map.forEach(item => {
-      item.totalConsulted = item.preCount + item.postCount;
-    });
-
-    const preList = Array.from(map.values())
-      .filter(d => d.preCount > 0)
-      .sort((a, b) => b.preCount - a.preCount);
-
-    const postList = Array.from(map.values())
-      .filter(d => d.postCount > 0)
-      .sort((a, b) => b.postCount - a.postCount);
-
+    map.forEach(item => { item.totalConsulted = item.preCount + item.postCount; });
     const allList = Array.from(map.values())
       .filter(d => d.totalConsulted > 0 || d.preCount > 0 || d.postCount > 0)
       .sort((a, b) => b.totalConsulted - a.totalConsulted);
-
-    const maxPre = preList.length > 0 ? Math.max(...preList.map(d => d.preCount)) : 1;
-    const maxPost = postList.length > 0 ? Math.max(...postList.map(d => d.postCount)) : 1;
     const maxConsulted = allList.length > 0 ? Math.max(...allList.map(d => d.totalConsulted)) : 1;
-
-    const totalPre = preList.reduce((sum, d) => sum + d.preCount, 0);
-    const totalPost = postList.reduce((sum, d) => sum + d.postCount, 0);
     const totalAll = allList.reduce((sum, d) => sum + d.totalConsulted, 0);
+    return { allList, maxConsulted, totalAll };
+  }, [serverSummary, filteredPatients]);
 
-    return {
-      allList,
-      preList,
-      postList,
-      maxConsulted,
-      maxPre,
-      maxPost,
-      totalPre,
-      totalPost,
-      totalAll
-    };
-  }, [filteredPatients]);
-
-  // Confirmed vs Pending Patient lists for Detailed Activity Log
+  // Confirmed vs Pending Patient lists for Detailed Activity Log table
   const confirmedPatients = useMemo(() => {
     return filteredPatients.filter(p => 
       Boolean(p.isConfirmed) || 
@@ -358,18 +418,30 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
   }, [patientLogTab, confirmedPatients, pendingPatients, filteredPatients]);
 
   // ==========================================
-  // 4. PATIENT PROFESSION DEMOGRAPHICS (Post Consultation Only)
+  // 4. PATIENT PROFESSION DEMOGRAPHICS (Post Consultation Only - Server SQL aggregates)
   // ==========================================
   const professionMetrics = useMemo(() => {
-    const postPatients = funnelMetrics.postConsultationPatients;
-    const map = new Map<string, number>();
+    if (serverSummary) {
+      const totalCount = serverSummary.departments.totalPost;
+      const list = serverSummary.professions.map(item => ({
+        name: item.name,
+        count: item.count,
+        percent: totalCount > 0 ? ((item.count / totalCount) * 100).toFixed(1) : '0'
+      }));
+      const maxCount = list.length > 0 ? Math.max(...list.map(i => i.count)) : 1;
+      return { list, maxCount, uniqueCount: list.length, totalCount };
+    }
 
+    const postPatients = filteredPatients.filter(p =>
+      p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+      Boolean(p.postConsultationConfirmed) || Boolean(p.postDoctorName)
+    );
+    const map = new Map<string, number>();
     postPatients.forEach(p => {
       const raw = p.profession?.trim();
       const prof = raw && raw.length > 0 ? raw : 'Not Specified';
       map.set(prof, (map.get(prof) || 0) + 1);
     });
-
     const list = Array.from(map.entries())
       .map(([name, count]) => ({
         name,
@@ -377,28 +449,21 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
         percent: postPatients.length > 0 ? ((count / postPatients.length) * 100).toFixed(1) : '0'
       }))
       .sort((a, b) => b.count - a.count);
-
     const maxCount = list.length > 0 ? Math.max(...list.map(i => i.count)) : 1;
-
-    return {
-      list,
-      maxCount,
-      uniqueCount: list.length,
-      totalCount: postPatients.length
-    };
-  }, [funnelMetrics.postConsultationPatients]);
+    return { list, maxCount, uniqueCount: list.length, totalCount: postPatients.length };
+  }, [serverSummary, filteredPatients]);
 
   // ==========================================
-  // 5. CONSULTATION COMMENTS / CLINICAL DECISIONS
+  // 5. CONSULTATION COMMENTS / CLINICAL DECISIONS (Server SQL aggregates + recent entries)
   // ==========================================
   const commentMetrics = useMemo(() => {
-    const map = new Map<string, number>();
     const patientComments: { patientName: string; serial: string | number; comment: string; doctor: string; date: string }[] = [];
+    const localMap = new Map<string, number>();
 
     filteredPatients.forEach(p => {
       const c = p.consultationComment?.trim();
       if (c && c.length > 0) {
-        map.set(c, (map.get(c) || 0) + 1);
+        localMap.set(c, (localMap.get(c) || 0) + 1);
         patientComments.push({
           patientName: p.name,
           serial: p.consultationSerial || p.serialNo || '-',
@@ -409,41 +474,55 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       }
     });
 
-    const list = Array.from(map.entries())
+    if (serverSummary) {
+      const totalCommentedPatients = serverSummary.comments.reduce((sum, item) => sum + item.count, 0);
+      const list = serverSummary.comments.map(item => ({
+        comment: item.comment,
+        count: item.count,
+        percent: totalCommentedPatients > 0 ? ((item.count / totalCommentedPatients) * 100).toFixed(1) : '0'
+      }));
+      const maxCount = list.length > 0 ? Math.max(...list.map(i => i.count)) : 1;
+      return { list, maxCount, patientComments, totalCommentedPatients };
+    }
+
+    const list = Array.from(localMap.entries())
       .map(([comment, count]) => ({
         comment,
         count,
         percent: patientComments.length > 0 ? ((count / patientComments.length) * 100).toFixed(1) : '0'
       }))
       .sort((a, b) => b.count - a.count);
-
     const maxCount = list.length > 0 ? Math.max(...list.map(i => i.count)) : 1;
-
-    return {
-      list,
-      maxCount,
-      patientComments,
-      totalCommentedPatients: patientComments.length
-    };
-  }, [filteredPatients, todayStr]);
+    return { list, maxCount, patientComments, totalCommentedPatients: patientComments.length };
+  }, [serverSummary, filteredPatients, todayStr]);
 
   // ==========================================
-  // 6. GENDER & AGE DEMOGRAPHICS (Post Consultation Only)
+  // 6. GENDER & AGE DEMOGRAPHICS (Post Consultation Only - Server SQL aggregates)
   // ==========================================
   const demographicMetrics = useMemo(() => {
-    const postPatients = funnelMetrics.postConsultationPatients;
+    if (serverSummary) {
+      const d = serverSummary.demographics;
+      const total = d.total;
+      return {
+        total,
+        male: d.male,
+        female: d.female,
+        other: d.other,
+        malePercent: total > 0 ? ((d.male / total) * 100).toFixed(1) : '0',
+        femalePercent: total > 0 ? ((d.female / total) * 100).toFixed(1) : '0',
+        otherPercent: total > 0 ? ((d.other / total) * 100).toFixed(1) : '0',
+        ageGroups: d.ageGroups
+      };
+    }
+
+    const postPatients = filteredPatients.filter(p =>
+      p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+      Boolean(p.postConsultationConfirmed) || Boolean(p.postDoctorName)
+    );
     let male = 0;
     let female = 0;
     let other = 0;
-
-    const ageGroups = {
-      under20: 0,
-      age20to35: 0,
-      age36to50: 0,
-      age51to65: 0,
-      above65: 0,
-      unknown: 0
-    };
+    const ageGroups = { under20: 0, age20to35: 0, age36to50: 0, age51to65: 0, above65: 0, unknown: 0 };
 
     postPatients.forEach(p => {
       const g = p.gender?.toLowerCase() || '';
@@ -452,23 +531,15 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       else other++;
 
       const a = typeof p.age === 'number' ? p.age : parseInt(String(p.age || ''), 10);
-      if (isNaN(a)) {
-        ageGroups.unknown++;
-      } else if (a < 20) {
-        ageGroups.under20++;
-      } else if (a <= 35) {
-        ageGroups.age20to35++;
-      } else if (a <= 50) {
-        ageGroups.age36to50++;
-      } else if (a <= 65) {
-        ageGroups.age51to65++;
-      } else {
-        ageGroups.above65++;
-      }
+      if (isNaN(a)) ageGroups.unknown++;
+      else if (a < 20) ageGroups.under20++;
+      else if (a <= 35) ageGroups.age20to35++;
+      else if (a <= 50) ageGroups.age36to50++;
+      else if (a <= 65) ageGroups.age51to65++;
+      else ageGroups.above65++;
     });
 
     const total = postPatients.length;
-
     return {
       total,
       male,
@@ -479,7 +550,17 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       otherPercent: total > 0 ? ((other / total) * 100).toFixed(1) : '0',
       ageGroups
     };
-  }, [funnelMetrics.postConsultationPatients]);
+  }, [serverSummary, filteredPatients]);
+
+  // ==========================================
+  // 7. QUOTATION BILLING TOTALS (Server SQL aggregates)
+  // ==========================================
+  const quotationMetrics = useMemo(() => {
+    if (serverSummary) {
+      return serverSummary.quotations;
+    }
+    return { count: 0, grandTotal: 0, advancePaid: 0, dueAmount: 0 };
+  }, [serverSummary]);
 
   // Export full report summary to CSV
   const handleExportCSV = () => {
@@ -655,7 +736,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              All Time ({patients.length})
+              All Time ({allTimeTotalPatients})
             </button>
 
             <button
@@ -818,7 +899,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       </div>
 
       {/* If Today has 0 records banner */}
-      {filteredPatients.length === 0 && datePreset === 'today' && (
+      {funnelMetrics.totalAppointments === 0 && datePreset === 'today' && !isLoadingSummary && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-amber-200/70 text-amber-800 flex items-center justify-center shrink-0">
@@ -837,7 +918,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
             onClick={() => setDatePreset('all')}
             className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition cursor-pointer text-xs whitespace-nowrap shadow-sm shrink-0"
           >
-            Switch to All Time ({patients.length} Records)
+            Switch to All Time ({allTimeTotalPatients} Records)
           </button>
         </div>
       )}
@@ -1001,6 +1082,38 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
         </div>
       )}
 
+      {/* Quotation Billing Summary (Server SQL Totals) */}
+      {activeTab === 'all' && (
+        <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-emerald-600" />
+              <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                Quotation & Billing Summary
+              </h2>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+              <div className="text-xs font-semibold text-slate-500">Total Quotations</div>
+              <div className="text-2xl font-black text-slate-900 mt-1">{quotationMetrics.count}</div>
+            </div>
+            <div className="bg-emerald-50/60 rounded-xl p-4 border border-emerald-200">
+              <div className="text-xs font-semibold text-emerald-700">Grand Total Billed</div>
+              <div className="text-2xl font-black text-emerald-900 mt-1">৳{quotationMetrics.grandTotal.toLocaleString()}</div>
+            </div>
+            <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-200">
+              <div className="text-xs font-semibold text-blue-700">Total Advance Paid</div>
+              <div className="text-2xl font-black text-blue-900 mt-1">৳{quotationMetrics.advancePaid.toLocaleString()}</div>
+            </div>
+            <div className="bg-rose-50/60 rounded-xl p-4 border border-rose-200">
+              <div className="text-xs font-semibold text-rose-700">Total Due Amount</div>
+              <div className="text-2xl font-black text-rose-800 mt-1">৳{quotationMetrics.dueAmount.toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ======================================================== */}
       {/* 2. INSTANT PATIENTS & ED PATIENTS REPORT SECTION */}
       {/* ======================================================== */}
@@ -1038,7 +1151,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                     {instantMetrics.instantCount}
                   </div>
                   <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
-                    {filteredPatients.length - instantMetrics.instantCount} Regular (Free)
+                    {Math.max(0, funnelMetrics.totalAppointments - instantMetrics.instantCount)} Regular (Free)
                   </div>
                 </div>
 
@@ -1086,7 +1199,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                     {edMetrics.edRate}%
                   </div>
                   <div className="text-[11px] text-indigo-800 mt-0.5 font-medium">
-                    Out of {filteredPatients.length} Appointments
+                    Out of {funnelMetrics.totalAppointments} Appointments
                   </div>
                 </div>
               </div>
@@ -1598,7 +1711,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="font-bold text-slate-900 text-sm">
-                Patient Activity Log ({patientLogTab === 'confirmed' ? confirmedPatients.length : pendingPatients.length} Records)
+                Patient Activity Log ({patientLogTab === 'confirmed' ? funnelMetrics.confirmedCount : funnelMetrics.unconfirmedCount} Records)
               </h3>
             </div>
           </div>
@@ -1615,7 +1728,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 }`}
               >
                 <UserCheck className="w-3.5 h-3.5" />
-                <span>Confirmed ({confirmedPatients.length})</span>
+                <span>Confirmed ({funnelMetrics.confirmedCount})</span>
               </button>
 
               <button
@@ -1627,7 +1740,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 }`}
               >
                 <Clock className="w-3.5 h-3.5" />
-                <span>Pending ({pendingPatients.length})</span>
+                <span>Pending ({funnelMetrics.unconfirmedCount})</span>
               </button>
             </div>
 
@@ -1641,6 +1754,13 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
             </button>
           </div>
         </div>
+
+        {reportPatientsTruncated && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-800 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>Showing the most recent 2,000 records — filter by date to see older entries.</span>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">

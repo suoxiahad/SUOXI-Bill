@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Lock, LogIn } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { AppointmentImporter } from './components/AppointmentImporter';
@@ -19,7 +19,8 @@ import {
   getActiveUser,
   setActiveUser,
   fetchInitApi,
-  fetchPatientsApi,
+  fetchChangesApi,
+  fetchPatientsWithMetaApi,
   fetchPatientsSummaryApi,
   searchPatientsLiveApi,
   getPatientsLocal,
@@ -39,6 +40,7 @@ import {
   invalidateLocalCaches,
   hydrateStorageFromIndexedDb
 } from './utils/storage';
+import { makeUniqueId } from './utils/id';
 import { matchPatient, matchSearchQuery } from './utils/searchHelper';
 import { 
   getSheetsConfig, 
@@ -78,12 +80,59 @@ export default function App() {
     setShowFullIndoorCalculation(nextVal);
   };
 
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [selectedWorkingDate, setSelectedWorkingDate] = useState<string>(todayStr);
+  const selectedWorkingDateRef = useRef<string>(todayStr);
+  const workingDateRequestIdRef = useRef<number>(0);
+  const [patientsTruncated, setPatientsTruncated] = useState<boolean>(false);
+  const [quotationsTruncated, setQuotationsTruncated] = useState<boolean>(false);
+
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [dataVersion, setDataVersion] = useState<number>(() => getStoredDataVersion());
+
+  const loadWorkingDatePatients = useCallback(async (targetDate: string) => {
+    const normalized = targetDate || 'all';
+    const reqId = ++workingDateRequestIdRef.current;
+    const res = await fetchPatientsWithMetaApi({
+      date: normalized,
+      limit: 2000
+    });
+    if (reqId !== workingDateRequestIdRef.current) return null;
+    if (res.fromServer) {
+      setPatients(res.patients);
+      setPatientsTruncated(res.truncated);
+    }
+    return res;
+  }, []);
+
+  const handleWorkingDateChange = useCallback(async (newDate: string) => {
+    const normalized = newDate || 'all';
+    setSelectedWorkingDate(normalized);
+    selectedWorkingDateRef.current = normalized;
+
+    const user = getActiveUser();
+    if (!user || !user.token) return;
+
+    setIsSyncing(true);
+    try {
+      const res = await loadWorkingDatePatients(normalized);
+      if (res && !res.fromServer) {
+        setPatients(res.patients);
+        setPatientsTruncated(false);
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [loadWorkingDatePatients]);
 
   // Instant 1ms optimistic update handler for single patient:
   const handleUpdatePatient = useCallback((updatedPatient: Patient) => {
     setPatients(prev => {
-      const idx = prev.findIndex(p => p.id === updatedPatient.id);
+      const idx = prev.findIndex(p =>
+        (p.id && updatedPatient.id && p.id === updatedPatient.id) ||
+        (p.serialNo && updatedPatient.serialNo && p.serialNo === updatedPatient.serialNo && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate) ||
+        (p.phone && updatedPatient.phone && p.phone !== '01700000000' && p.phone === updatedPatient.phone && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate)
+      );
       if (idx >= 0) {
         const copy = [...prev];
         copy[idx] = updatedPatient;
@@ -93,6 +142,33 @@ export default function App() {
     });
     // Silently sync into local memory & disk cache without freezing UI
     updatePatientLocal(updatedPatient);
+  }, []);
+
+  const handleUpdatePatients = useCallback((updatedRows: Patient[]) => {
+    if (!Array.isArray(updatedRows) || updatedRows.length === 0) return;
+    setPatients(prev => {
+      const copy = [...prev];
+      for (const updatedPatient of updatedRows) {
+        if (!updatedPatient) continue;
+        const idx = copy.findIndex(p =>
+          (p.id && updatedPatient.id && p.id === updatedPatient.id) ||
+          (p.serialNo && updatedPatient.serialNo && p.serialNo === updatedPatient.serialNo && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate) ||
+          (p.phone && updatedPatient.phone && p.phone !== '01700000000' && p.phone === updatedPatient.phone && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate)
+        );
+        if (idx >= 0) {
+          copy[idx] = { ...copy[idx], ...updatedPatient };
+        } else {
+          copy.unshift(updatedPatient);
+        }
+      }
+      return copy;
+    });
+  }, []);
+
+  const handleRemovePatients = useCallback((ids: string[]) => {
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    const idSet = new Set(ids);
+    setPatients(prev => prev.filter(p => !idSet.has(p.id)));
   }, []);
 
   const initializeAppData = useCallback(async (forceBypass = false) => {
@@ -113,14 +189,26 @@ export default function App() {
         setIsSyncing(true);
       }
 
-      // 2. Fetch fresh updates from server API
-      const initData = await fetchInitApi(forceBypass);
+      // 2. Fetch quotations/catalog/settings AND working-date patients from server
+      const [initData, workingDateRes] = await Promise.all([
+        fetchInitApi(forceBypass, { skipSavePatients: true }),
+        loadWorkingDatePatients(selectedWorkingDateRef.current)
+      ]);
       if (initData) {
-        setPatients(initData.patients);
+        setDataVersion(initData.dataVersion !== undefined ? Number(initData.dataVersion) : getStoredDataVersion());
         setQuotations(initData.quotations);
+        setQuotationsTruncated(Boolean(initData.quotationsTruncated));
         setCatalog(initData.catalog);
         if (initData.professions) setProfessions(initData.professions);
         if (initData.comments) setComments(initData.comments);
+        if (!workingDateRes || !workingDateRes.fromServer) {
+          const activeDate = selectedWorkingDateRef.current;
+          const fallbackPatients = activeDate && activeDate !== 'all'
+            ? initData.patients.filter(p => p.appointmentDate === activeDate)
+            : initData.patients;
+          setPatients(fallbackPatients);
+          setPatientsTruncated(Boolean(initData.patientsTruncated));
+        }
       }
     } else {
       setCurrentUser(null);
@@ -128,7 +216,7 @@ export default function App() {
     }
     setIsLoading(false);
     setIsSyncing(false);
-  }, []);
+  }, [loadWorkingDatePatients]);
 
   useEffect(() => {
     initializeAppData();
@@ -138,52 +226,64 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !currentUser.token) return;
 
-    let lastSummaryCount = patients.length;
-    let lastSummaryLatestId = patients.length > 0 ? (patients[0].id || '') : '';
-    let lastQuotationsCount = quotations.length;
-    let lastCatalogLength = catalog.length;
-    let lastVersion = getStoredDataVersion();
-
     const checkAndSyncData = async () => {
       if (document.hidden) return;
       try {
         const summary = await fetchPatientsSummaryApi();
         if (summary) {
-          const currentStoredVersion = getStoredDataVersion();
-          const serverVer = summary.dataVersion || 0;
-
-          // If server dataVersion differs from what this client stored, server had changes (e.g. import, rate update, deletion)
-          const versionChanged = serverVer > 0 && currentStoredVersion > 0 && serverVer !== currentStoredVersion;
-          const patientsChanged = summary.count !== lastSummaryCount || summary.latestId !== lastSummaryLatestId;
-          const quotationsChanged = summary.quotationsCount !== undefined && lastQuotationsCount !== 0 && summary.quotationsCount !== lastQuotationsCount;
-          const catalogChanged = summary.catalogLength !== undefined && lastCatalogLength !== 0 && summary.catalogLength !== lastCatalogLength;
-
-          if (versionChanged || catalogChanged || quotationsChanged) {
-            // Full refresh required: reload fresh init data so treatments, prices and patients all update synchronously
+          const storedDataVersion = getStoredDataVersion();
+          if (summary.dataVersion !== storedDataVersion) {
             setIsSyncing(true);
-            const freshInit = await fetchInitApi(true);
-            if (freshInit) {
-              setPatients(freshInit.patients);
-              setQuotations(freshInit.quotations);
-              setCatalog(freshInit.catalog);
+            try {
+              const changes = await fetchChangesApi(storedDataVersion);
+              if (changes) {
+                if (changes.truncated && changes.fullInit) {
+                  setQuotations(changes.fullInit.quotations);
+                  setQuotationsTruncated(Boolean(changes.fullInit.quotationsTruncated));
+                  setCatalog(changes.fullInit.catalog);
+                  if (changes.fullInit.professions) setProfessions(changes.fullInit.professions);
+                  if (changes.fullInit.comments) setComments(changes.fullInit.comments);
+                  const nextVersion = changes.fullInit.dataVersion ?? summary.dataVersion;
+                  setStoredDataVersion(nextVersion);
+                  setDataVersion(nextVersion);
+                  await loadWorkingDatePatients(selectedWorkingDateRef.current);
+                } else if (!changes.truncated) {
+                  if (changes.patients.length > 0) {
+                    const activeDate = selectedWorkingDateRef.current;
+                    setPatients(prev => {
+                      const patchMap = new Map(changes.patients.filter(p => p && p.id).map(p => [p.id, p]));
+                      const existingIds = new Set(prev.map(p => p.id));
+                      const newItems = changes.patients.filter(p =>
+                        p && p.id && !existingIds.has(p.id) && (activeDate === 'all' || p.appointmentDate === activeDate)
+                      );
+                      const updatedPrev = prev
+                        .map(p => patchMap.get(p.id) ?? p)
+                        .filter(p => activeDate === 'all' || p.appointmentDate === activeDate);
+                      return [...newItems, ...updatedPrev];
+                    });
+                  }
+                  if (changes.quotations.length > 0) {
+                    setQuotations(prev => {
+                      const patchMap = new Map(changes.quotations.filter(q => q && q.id).map(q => [q.id, q]));
+                      const existingIds = new Set(prev.map(q => q.id));
+                      const newItems = changes.quotations.filter(q => q && q.id && !existingIds.has(q.id));
+                      return [
+                        ...newItems,
+                        ...prev.map(q => patchMap.get(q.id) ?? q)
+                      ];
+                    });
+                  }
+                  if (changes.catalog.length > 0) {
+                    setCatalog(changes.catalog);
+                  }
+                  const nextVersion = changes.dataVersion ?? summary.dataVersion;
+                  setStoredDataVersion(nextVersion);
+                  setDataVersion(nextVersion);
+                }
+              }
+            } finally {
+              setIsSyncing(false);
             }
-            setIsSyncing(false);
-          } else if (patientsChanged) {
-            // Patient-only change
-            const fresh = await fetchPatientsApi();
-            if (Array.isArray(fresh)) {
-              setPatients(fresh);
-            }
-          }
-
-          // Update tracked checkpoints
-          lastSummaryCount = summary.count;
-          lastSummaryLatestId = summary.latestId;
-          if (summary.quotationsCount !== undefined) lastQuotationsCount = summary.quotationsCount;
-          if (summary.catalogLength !== undefined) lastCatalogLength = summary.catalogLength;
-          if (serverVer > 0) {
-            lastVersion = serverVer;
-            setStoredDataVersion(serverVer);
           }
         }
       } catch (err) {
@@ -198,7 +298,7 @@ export default function App() {
       clearInterval(interval);
       window.removeEventListener('focus', checkAndSyncData);
     };
-  }, [currentUser]);
+  }, [currentUser, loadWorkingDatePatients]);
 
   // Guard tabs based on role
   useEffect(() => {
@@ -324,19 +424,15 @@ export default function App() {
     if (currentUser?.role === 'Doctor' || currentUser?.role === 'SSD') {
       return;
     }
-    let patientToSave = { ...patient };
-    // If registering from Consultation page or a fresh walk-in, automatically confirm for Pre Consultation
-    if (!patientToSave.isConfirmed && (activeTab === 'consultation' || !patientToSave.id)) {
-      const targetDate = patientToSave.appointmentDate || new Date().toISOString().split('T')[0];
-      let maxSerial = 0;
-      patients.forEach(p => {
-        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
-          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
-        }
-      });
+    const patientToSave = { ...patient };
+    const hadNoId = !patientToSave.id;
+    if (hadNoId) {
+      patientToSave.id = makeUniqueId();
+    }
+    // If registering from Consultation page or a fresh walk-in, automatically confirm for Pre Consultation (serial assigned by server)
+    if (!patientToSave.isConfirmed && (activeTab === 'consultation' || hadNoId)) {
       patientToSave.isConfirmed = true;
       patientToSave.confirmedAt = new Date().toISOString();
-      patientToSave.consultationSerial = maxSerial + 1;
       patientToSave.consultationStatus = 'Pre Consultation';
       patientToSave.status = 'Pre Consultation';
     }
@@ -379,7 +475,7 @@ export default function App() {
 
     if (foundQuotation) {
       const synchedPatient: Patient = {
-        id: `pat-hist-${foundQuotation.id}`,
+        id: foundQuotation.patientId && foundQuotation.patientId !== 'walkin' ? foundQuotation.patientId : makeUniqueId(),
         name: foundQuotation.patientName,
         phone: foundQuotation.patientPhone,
         age: String(foundQuotation.patientAge || ''),
@@ -402,26 +498,25 @@ export default function App() {
     alert(`No patient record found matching "${query}". You can register or import the patient.`);
   };
 
-  const handleSaveQuotation = async (quotation: InvoiceQuotation) => {
-    // 1. Optimistic 0ms local state update
-    setQuotations(prev => {
-      const idx = prev.findIndex(q => q.id === quotation.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = quotation;
-        return copy;
-      }
-      return [quotation, ...prev];
-    });
-
-    // 2. Persist to API and IndexedDB asynchronously
-    const updated = await saveQuotationApi(quotation);
-    if (Array.isArray(updated) && updated.length > 0) {
-      setQuotations(updated);
+  const handleSaveQuotation = async (quotation: InvoiceQuotation): Promise<InvoiceQuotation> => {
+    const result = await saveQuotationApi(quotation);
+    if (Array.isArray(result.quotations) && result.quotations.length > 0) {
+      setQuotations(result.quotations);
+    } else {
+      setQuotations(prev => {
+        const idx = prev.findIndex(q => q.id === result.quotation.id);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = result.quotation;
+          return copy;
+        }
+        return [result.quotation, ...prev];
+      });
     }
-    // Refresh patient list locally so patient status updates to "Quotation Created" without trigger loops
+    // Refresh patient list locally so patient status updates to "Quotation Created"
     const updatedPatients = getPatientsLocal();
     setPatients(updatedPatients);
+    return result.quotation;
   };
 
   const handleDeleteQuotations = async (ids: string[]) => {
@@ -504,8 +599,14 @@ export default function App() {
               <AppointmentImporter
                 patients={patients}
                 quotations={quotations}
-                onRefreshPatients={initializeAppData}
+                selectedDateFilter={selectedWorkingDate}
+                onDateFilterChange={handleWorkingDateChange}
+                isPatientsTruncated={patientsTruncated}
+                onRefreshPatients={() => initializeAppData(true)}
                 onUpdatePatient={handleUpdatePatient}
+                onUpdatePatients={handleUpdatePatients}
+                onRemovePatients={handleRemovePatients}
+                onSyncPatientsList={setPatients}
                 onSelectPatientForQuotation={handleSelectPatientForQuotation}
                 onOpenAddPatient={currentUser?.role !== 'Doctor' ? () => setIsAddPatientOpen(true) : undefined}
                 currentUser={currentUser}
@@ -519,7 +620,10 @@ export default function App() {
                   quotations={quotations}
                   professions={professions}
                   comments={comments}
-                  onRefreshPatients={initializeAppData}
+                  selectedDateFilter={selectedWorkingDate}
+                  onDateFilterChange={handleWorkingDateChange}
+                  isPatientsTruncated={patientsTruncated}
+                  onRefreshPatients={() => initializeAppData(true)}
                   onUpdatePatient={handleUpdatePatient}
                   onSelectPatientForQuotation={handleSelectPatientForQuotation}
                   onViewQuotation={handlePreviewPrint}
@@ -565,6 +669,7 @@ export default function App() {
                 quotations={quotations}
                 patients={patients}
                 currentUser={currentUser}
+                isQuotationsTruncated={quotationsTruncated}
                 onViewPrintQuotation={(q) => setPrintQuotation(q)}
                 onUpdateQuotation={handleSaveQuotation}
                 onEditQuotation={handleEditQuotation}
@@ -591,6 +696,9 @@ export default function App() {
                   patients={patients}
                   quotations={quotations}
                   currentUser={currentUser}
+                  selectedDateFilter={selectedWorkingDate}
+                  onDateFilterChange={handleWorkingDateChange}
+                  isPatientsTruncated={patientsTruncated}
                   onRefreshPatients={() => initializeAppData(true)}
                   onUpdatePatient={handleUpdatePatient}
                 />
@@ -613,6 +721,8 @@ export default function App() {
                   patients={patients}
                   quotations={quotations}
                   currentUser={currentUser}
+                  isActive={activeTab === 'reports'}
+                  dataVersion={dataVersion}
                   onSelectPatient={(p) => {
                     if (currentUser?.role === 'SSD') return;
                     setSelectedPatientForQuotation(p);

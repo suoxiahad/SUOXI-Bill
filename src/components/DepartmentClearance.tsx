@@ -34,6 +34,9 @@ interface DepartmentClearanceProps {
   patients: Patient[];
   quotations: InvoiceQuotation[];
   currentUser: UserModel | null;
+  selectedDateFilter?: string;
+  onDateFilterChange?: (date: string) => void;
+  isPatientsTruncated?: boolean;
   onRefreshPatients?: () => void;
   onUpdatePatient: (patient: Patient) => void;
 }
@@ -42,6 +45,9 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
   patients,
   quotations,
   currentUser,
+  selectedDateFilter: controlledDateFilter,
+  onDateFilterChange,
+  isPatientsTruncated = false,
   onRefreshPatients,
   onUpdatePatient
 }) => {
@@ -53,7 +59,13 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
 
   // Date filter state
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
-  const [selectedDateFilter, setSelectedDateFilter] = useState<string>(todayStr);
+  const [internalDateFilter, setInternalDateFilter] = useState<string>(todayStr);
+  const selectedDateFilter = controlledDateFilter ?? internalDateFilter;
+  const setSelectedDateFilter = (nextDate: string) => {
+    const normalized = nextDate || 'all';
+    setInternalDateFilter(normalized);
+    onDateFilterChange?.(normalized);
+  };
 
   // Search filter state
   const [filterText, setFilterText] = useState('');
@@ -409,26 +421,42 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
           </div>
 
           {/* Date Selector */}
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5 text-slate-400" />
-              <span>Date:</span>
-            </span>
-            <select
-              value={selectedDateFilter}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 px-2.5 py-1.5 rounded-xl text-xs shrink-0">
+            <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+            <span className="text-[11px] font-bold text-slate-600 hidden sm:inline">Date:</span>
+            <input
+              type="date"
+              value={selectedDateFilter === 'all' ? '' : selectedDateFilter}
               onChange={(e) => {
-                setSelectedDateFilter(e.target.value);
+                setSelectedDateFilter(e.target.value || 'all');
                 setCurrentPage(1);
               }}
-              className="bg-slate-50 border border-slate-300 text-slate-800 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
-            >
-              <option value="all">All Dates ({postPatients.length})</option>
-              {availableDates.map(d => (
-                <option key={d} value={d}>
-                  {d === todayStr ? `Today (${d})` : d}
-                </option>
-              ))}
-            </select>
+              className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer"
+            />
+            {selectedDateFilter !== todayStr && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDateFilter(todayStr);
+                  setCurrentPage(1);
+                }}
+                className="text-[10px] font-bold text-indigo-800 bg-indigo-100 hover:bg-indigo-200 px-2 py-0.5 rounded-md ml-1 transition cursor-pointer"
+              >
+                Today
+              </button>
+            )}
+            {selectedDateFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDateFilter('all');
+                  setCurrentPage(1);
+                }}
+                className="text-[10px] font-bold text-slate-700 bg-slate-200 hover:bg-slate-300 px-2 py-0.5 rounded-md ml-1 transition cursor-pointer"
+              >
+                Show All
+              </button>
+            )}
           </div>
 
         </div>
@@ -486,6 +514,13 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
             </span>
           </div>
         </div>
+
+        {isPatientsTruncated && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-800 flex items-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>Showing the most recent 2,000 records — filter by date to see older entries.</span>
+          </div>
+        )}
 
         {/* Scrollable Table */}
         <div className="overflow-x-auto">

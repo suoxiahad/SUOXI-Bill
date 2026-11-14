@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, UserPlus, Phone, User, Stethoscope, FileText, Calendar, MapPin } from 'lucide-react';
 import { Patient } from '../types';
+import { makeUniqueId } from '../utils/id';
 
 interface PatientModalProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     }
 
     const newPatient: Patient = {
-      id: `pat-${Date.now()}`,
+      id: makeUniqueId(),
       name: name.trim(),
       phone: phone.trim().replace(/[^0-9+]/g, ''),
       age: age ? Number(age) : '',

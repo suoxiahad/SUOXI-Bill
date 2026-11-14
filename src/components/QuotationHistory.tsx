@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, 
   Printer, 
@@ -27,11 +27,13 @@ import {
 import { InvoiceQuotation, User, Patient } from '../types';
 import { PackageComparisonModal, TreatmentItemForComparison, IndoorServiceItemForComparison } from './PackageComparisonModal';
 import { matchSearchQuery } from '../utils/searchHelper';
+import { makeUniqueId } from '../utils/id';
 
 interface QuotationHistoryProps {
   quotations: InvoiceQuotation[];
   patients?: Patient[];
   currentUser?: User | null;
+  isQuotationsTruncated?: boolean;
   onViewPrintQuotation: (quotation: InvoiceQuotation) => void;
   onUpdateQuotation?: (quotation: InvoiceQuotation) => void;
   onDeleteQuotations?: (ids: string[]) => void;
@@ -152,10 +154,52 @@ const getTodayLocalYMD = (): string => {
   return `${y}-${m}-${day}`;
 };
 
+// Helper to extract timestamp from quotation for accurate latest-first sorting
+const getQuotationTime = (q?: InvoiceQuotation): number => {
+  if (!q) return 0;
+  if (q.createdAt) {
+    const t = new Date(q.createdAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (q.createdDate) {
+    const t = new Date(q.createdDate).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  const match = q.id.match(/\d{10,}/);
+  if (match) {
+    const num = parseInt(match[0], 10);
+    if (!isNaN(num) && num > 0) return num;
+  }
+  return 0;
+};
+
+const checkQuotationInDateRange = (
+  qDateStr: string | undefined,
+  qCreatedAt: string | undefined,
+  startDate: string,
+  endDate: string
+): boolean => {
+  if (!startDate && !endDate) return true;
+  const qYmd = parseDateToYMD(qDateStr) || parseDateToYMD(qCreatedAt);
+  if (!qYmd) return false;
+
+  if (startDate && endDate) {
+    return qYmd >= startDate && qYmd <= endDate;
+  }
+  if (startDate) {
+    return qYmd >= startDate;
+  }
+  if (endDate) {
+    return qYmd <= endDate;
+  }
+  return true;
+};
+
 export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   quotations,
   patients,
   currentUser,
+  isQuotationsTruncated = false,
   onViewPrintQuotation,
   onUpdateQuotation,
   onDeleteQuotations,
@@ -241,20 +285,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   const isQuotationInDateRange = (qDateStr?: string, qCreatedAt?: string) => {
-    if (!startDate && !endDate) return true;
-    const qYmd = parseDateToYMD(qDateStr) || parseDateToYMD(qCreatedAt);
-    if (!qYmd) return false;
-
-    if (startDate && endDate) {
-      return qYmd >= startDate && qYmd <= endDate;
-    }
-    if (startDate) {
-      return qYmd >= startDate;
-    }
-    if (endDate) {
-      return qYmd <= endDate;
-    }
-    return true;
+    return checkQuotationInDateRange(qDateStr, qCreatedAt, startDate, endDate);
   };
 
   const handleDaysInputChange = (q: InvoiceQuotation, daysVal: number | '') => {
@@ -427,7 +458,7 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
     );
 
     const patientToSelect: Patient = existingPatient || {
-      id: `patient-${Date.now()}`,
+      id: makeUniqueId(),
       name: group.patientName,
       phone: group.patientPhone || '',
       age: group.patientAge,
@@ -591,151 +622,148 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   // Group quotations by distinct Patient (combining patient name + phone number)
-  const patientGroupsMap = new Map<string, InvoiceQuotation[]>();
+  const patientGroups: PatientHistoryGroup[] = useMemo(() => {
+    const patientGroupsMap = new Map<string, InvoiceQuotation[]>();
 
-  // Sort all quotations chronologically first (oldest first to accurately compute 1st, 2nd, 3rd visit order)
-  const sortedQuotations = [...quotations].sort((a, b) => 
-    new Date(a.createdDate).getTime() - new Date(b.createdDate).getTime() || a.id.localeCompare(b.id)
-  );
+    // Sort all quotations chronologically first (oldest first to accurately compute 1st, 2nd, 3rd visit order)
+    const sortedQuotations = [...quotations].sort((a, b) => 
+      new Date(a.createdDate).getTime() - new Date(b.createdDate).getTime() || a.id.localeCompare(b.id)
+    );
 
-  sortedQuotations.forEach((q) => {
-    const cleanName = (q.patientName || 'Walk-in Patient').trim().toLowerCase();
-    const cleanPhone = (q.patientPhone || '').trim();
-    // Unique key per distinct patient entity (differentiated by patient name + phone)
-    // This ensures that different patients who share the same phone number (family members, etc.)
-    // get their own separate patient cards and their visit invoices are not merged or overwritten.
-    const key = `${cleanName}__${cleanPhone || q.patientId || 'unknown'}`;
+    sortedQuotations.forEach((q) => {
+      const cleanName = (q.patientName || 'Walk-in Patient').trim().toLowerCase();
+      const cleanPhone = (q.patientPhone || '').trim();
+      // Unique key per distinct patient entity (differentiated by patient name + phone)
+      // This ensures that different patients who share the same phone number (family members, etc.)
+      // get their own separate patient cards and their visit invoices are not merged or overwritten.
+      const key = `${cleanName}__${cleanPhone || q.patientId || 'unknown'}`;
 
-    if (!patientGroupsMap.has(key)) {
-      patientGroupsMap.set(key, []);
-    }
-    patientGroupsMap.get(key)!.push(q);
-  });
+      if (!patientGroupsMap.has(key)) {
+        patientGroupsMap.set(key, []);
+      }
+      patientGroupsMap.get(key)!.push(q);
+    });
 
-  // Construct PatientHistoryGroup objects
-  const patientGroups: PatientHistoryGroup[] = Array.from(patientGroupsMap.entries()).map(([key, groupQuotations]) => {
-    // Add visit ordinal index
-    const enrichedQuotations = groupQuotations.map((q, idx) => {
-      const rawLabel = q.visitLabel || getVisitOrdinal(idx);
-      const visitLabel = rawLabel.replace(/visit invoice/i, 'INVOICE').replace(/visit/i, '').trim();
+    // Construct PatientHistoryGroup objects
+    const groups: PatientHistoryGroup[] = Array.from(patientGroupsMap.entries()).map(([key, groupQuotations]) => {
+      // Add visit ordinal index
+      const enrichedQuotations = groupQuotations.map((q, idx) => {
+        const rawLabel = q.visitLabel || getVisitOrdinal(idx);
+        const visitLabel = rawLabel.replace(/visit invoice/i, 'INVOICE').replace(/visit/i, '').trim();
+        return {
+          ...q,
+          visitNumber: q.visitNumber || (idx + 1),
+          visitLabel
+        };
+      });
+
+      // Newest first inside patient record list display
+      const newestFirst = [...enrichedQuotations].reverse();
+
+      const totalBilled = groupQuotations.reduce((sum, item) => sum + (item.grandTotal || 0), 0);
+      const totalPaid = groupQuotations.reduce((sum, item) => sum + (item.advancePaid || 0), 0);
+      const totalDue = groupQuotations.reduce((sum, item) => sum + (item.dueAmount || 0), 0);
+      
+      const latestQuot = newestFirst[0] || groupQuotations[0];
+
       return {
-        ...q,
-        visitNumber: q.visitNumber || (idx + 1),
-        visitLabel
+        patientKey: key,
+        patientName: latestQuot.patientName || 'Walk-in Patient',
+        patientPhone: latestQuot.patientPhone || '',
+        doctorName: latestQuot.doctorName || 'Senior Consultant',
+        patientAge: latestQuot.patientAge,
+        patientGender: latestQuot.patientGender,
+        quotations: newestFirst,
+        totalInvoices: groupQuotations.length,
+        totalBilled,
+        totalPaid,
+        totalDue,
+        lastVisitDate: newestFirst[0]?.createdDate || latestQuot.createdDate
       };
     });
 
-    // Newest first inside patient record list display
-    const newestFirst = [...enrichedQuotations].reverse();
-
-    const totalBilled = groupQuotations.reduce((sum, item) => sum + (item.grandTotal || 0), 0);
-    const totalPaid = groupQuotations.reduce((sum, item) => sum + (item.advancePaid || 0), 0);
-    const totalDue = groupQuotations.reduce((sum, item) => sum + (item.dueAmount || 0), 0);
-    
-    const latestQuot = newestFirst[0] || groupQuotations[0];
-
-    return {
-      patientKey: key,
-      patientName: latestQuot.patientName || 'Walk-in Patient',
-      patientPhone: latestQuot.patientPhone || '',
-      doctorName: latestQuot.doctorName || 'Senior Consultant',
-      patientAge: latestQuot.patientAge,
-      patientGender: latestQuot.patientGender,
-      quotations: newestFirst,
-      totalInvoices: groupQuotations.length,
-      totalBilled,
-      totalPaid,
-      totalDue,
-      lastVisitDate: newestFirst[0]?.createdDate || latestQuot.createdDate
-    };
-  });
-
-  // Helper to extract timestamp from quotation for accurate latest-first sorting
-  const getQuotationTime = (q?: InvoiceQuotation): number => {
-    if (!q) return 0;
-    if (q.createdAt) {
-      const t = new Date(q.createdAt).getTime();
-      if (!isNaN(t) && t > 0) return t;
-    }
-    if (q.createdDate) {
-      const t = new Date(q.createdDate).getTime();
-      if (!isNaN(t) && t > 0) return t;
-    }
-    const match = q.id.match(/\d{10,}/);
-    if (match) {
-      const num = parseInt(match[0], 10);
-      if (!isNaN(num) && num > 0) return num;
-    }
-    return 0;
-  };
-
-  // Sort patient groups so that newest / latest entries appear first at the beginning
-  patientGroups.sort((a, b) => {
-    const timeA = getQuotationTime(a.quotations[0]);
-    const timeB = getQuotationTime(b.quotations[0]);
-    if (timeB !== timeA) {
-      return timeB - timeA;
-    }
-    return (b.quotations[0]?.id || '').localeCompare(a.quotations[0]?.id || '');
-  });
-
-  // Filter groups according to search term and date range
-  const filteredGroups = patientGroups.filter(g => {
-    const quotationNumbers = g.quotations.map(q => q.quotationNumber);
-    const matchesSearch = matchSearchQuery(searchTerm, [
-      g.patientName,
-      g.patientPhone,
-      g.doctorName,
-      ...quotationNumbers
-    ]);
-
-    if (!matchesSearch) return false;
-
-    if (startDate || endDate) {
-      return g.quotations.some(q => isQuotationInDateRange(q.createdDate, q.createdAt));
-    }
-
-    return true;
-  });
-
-  // Flat list enriched with visit ordinal labels (sorted latest first)
-  const flatEnrichedQuotations = patientGroups
-    .flatMap(g => g.quotations)
-    .sort((a, b) => {
-      const timeA = getQuotationTime(a);
-      const timeB = getQuotationTime(b);
+    // Sort patient groups so that newest / latest entries appear first at the beginning
+    groups.sort((a, b) => {
+      const timeA = getQuotationTime(a.quotations[0]);
+      const timeB = getQuotationTime(b.quotations[0]);
       if (timeB !== timeA) {
         return timeB - timeA;
       }
-      return (b.id || '').localeCompare(a.id || '');
+      return (b.quotations[0]?.id || '').localeCompare(a.quotations[0]?.id || '');
     });
 
-  const filteredFlatQuotations = flatEnrichedQuotations.filter(q => {
-    const matchesSearch = matchSearchQuery(searchTerm, [
-      q.patientName,
-      q.patientPhone,
-      q.doctorName,
-      q.quotationNumber
-    ]);
+    return groups;
+  }, [quotations]);
 
-    if (!matchesSearch) return false;
+  // Filter groups according to search term and date range
+  const filteredGroups = useMemo(() => {
+    return patientGroups.filter(g => {
+      const quotationNumbers = g.quotations.map(q => q.quotationNumber);
+      const matchesSearch = matchSearchQuery(searchTerm, [
+        g.patientName,
+        g.patientPhone,
+        g.doctorName,
+        ...quotationNumbers
+      ]);
 
-    if (startDate || endDate) {
-      return isQuotationInDateRange(q.createdDate, q.createdAt);
-    }
+      if (!matchesSearch) return false;
 
-    return true;
-  });
+      if (startDate || endDate) {
+        return g.quotations.some(q => checkQuotationInDateRange(q.createdDate, q.createdAt, startDate, endDate));
+      }
+
+      return true;
+    });
+  }, [patientGroups, searchTerm, startDate, endDate]);
+
+  // Flat list enriched with visit ordinal labels (sorted latest first)
+  const flatEnrichedQuotations = useMemo(() => {
+    return patientGroups
+      .flatMap(g => g.quotations)
+      .sort((a, b) => {
+        const timeA = getQuotationTime(a);
+        const timeB = getQuotationTime(b);
+        if (timeB !== timeA) {
+          return timeB - timeA;
+        }
+        return (b.id || '').localeCompare(a.id || '');
+      });
+  }, [patientGroups]);
+
+  const filteredFlatQuotations = useMemo(() => {
+    return flatEnrichedQuotations.filter(q => {
+      const matchesSearch = matchSearchQuery(searchTerm, [
+        q.patientName,
+        q.patientPhone,
+        q.doctorName,
+        q.quotationNumber
+      ]);
+
+      if (!matchesSearch) return false;
+
+      if (startDate || endDate) {
+        return checkQuotationInDateRange(q.createdDate, q.createdAt, startDate, endDate);
+      }
+
+      return true;
+    });
+  }, [flatEnrichedQuotations, searchTerm, startDate, endDate]);
 
   // Pagination calculation for Patient Groups view
   const totalPatientPages = Math.max(1, Math.ceil(filteredGroups.length / PAGE_SIZE));
   const safePatientPage = Math.min(Math.max(1, currentPage), totalPatientPages);
-  const paginatedGroups = filteredGroups.slice((safePatientPage - 1) * PAGE_SIZE, safePatientPage * PAGE_SIZE);
+  const paginatedGroups = useMemo(
+    () => filteredGroups.slice((safePatientPage - 1) * PAGE_SIZE, safePatientPage * PAGE_SIZE),
+    [filteredGroups, safePatientPage]
+  );
 
   // Pagination calculation for Flat List view
   const totalFlatPages = Math.max(1, Math.ceil(filteredFlatQuotations.length / PAGE_SIZE));
   const safeFlatPage = Math.min(Math.max(1, currentPage), totalFlatPages);
-  const paginatedFlatQuotations = filteredFlatQuotations.slice((safeFlatPage - 1) * PAGE_SIZE, safeFlatPage * PAGE_SIZE);
+  const paginatedFlatQuotations = useMemo(
+    () => filteredFlatQuotations.slice((safeFlatPage - 1) * PAGE_SIZE, safeFlatPage * PAGE_SIZE),
+    [filteredFlatQuotations, safeFlatPage]
+  );
 
   const toggleExpand = (key: string) => {
     setExpandedPatientKey(prev => prev === key ? null : key);
@@ -971,6 +999,13 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
           </div>
         </div>
       </div>
+
+      {isQuotationsTruncated && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800 flex items-center gap-2 shadow-2xs">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>Showing the most recent 1,000 records — filter by date to see older entries.</span>
+        </div>
+      )}
 
       {/* VIEW 1: PATIENT GROUPED HISTORY */}
       {viewMode === 'patient_grouped' && (

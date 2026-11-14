@@ -12,6 +12,8 @@ import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { PDFParse } from 'pdf-parse';
 import compression from 'compression';
+import http from 'http';
+import { makeUniqueId } from './src/utils/id';
 
 dotenv.config();
 
@@ -115,7 +117,26 @@ const upload = multer({
   }
 });
 
-const PORT = Number(process.env.PORT) || 3000;
+function resolveServerPort(): number {
+  const portFlagIdx = process.argv.indexOf('--port');
+  if (portFlagIdx !== -1 && process.argv[portFlagIdx + 1]) {
+    const parsed = Number(process.argv[portFlagIdx + 1]);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const portEqArg = process.argv.find(arg => arg.startsWith('--port='));
+  if (portEqArg) {
+    const parsed = Number(portEqArg.split('=')[1]);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const envPort = Number(process.env.PORT);
+  const nginxPort = Number(process.env.NGINX_PORT);
+  if (process.env.NODE_ENV !== 'production' && nginxPort && envPort === nginxPort) {
+    return Number(process.env.DEFAULT_APP_PORT) || 3000;
+  }
+  return envPort || 3000;
+}
+
+const PORT = resolveServerPort();
 const JWT_SECRET = process.env.JWT_SECRET || 'suoxi_hospital_secure_jwt_secret_key_2026_default_32char_long';
 
 // Interface definitions
@@ -276,10 +297,12 @@ const DEMO_PATIENTS = [
 
 const INITIAL_PATIENTS: any[] = [];
 
-// Local JSON DB Helper
-let serverDataVersion = Date.now();
-function touchServerDataVersion() {
-  serverDataVersion = Date.now();
+// Local JSON DB Helper & Persistent Data Version (in-memory copy synced with app_settings.data_version)
+let serverDataVersion = 1;
+function bumpLocalDataVersion(): number {
+  serverDataVersion = (Number.isFinite(serverDataVersion) ? serverDataVersion : 0) + 1;
+  (localData as any).dataVersion = serverDataVersion;
+  return serverDataVersion;
 }
 
 const DEFAULT_PROFESSIONS = [
@@ -357,14 +380,19 @@ function loadLocalDb() {
         };
       });
 
+      if (typeof parsed.dataVersion === 'number' && parsed.dataVersion > 0) {
+        serverDataVersion = parsed.dataVersion;
+      }
+
       localData = {
         users,
         patients,
         quotations,
         catalog: Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : DEFAULT_CATALOG,
         professions: Array.isArray(parsed.professions) && parsed.professions.length > 0 ? parsed.professions : DEFAULT_PROFESSIONS,
-        comments: Array.isArray(parsed.comments) && parsed.comments.length > 0 ? parsed.comments : DEFAULT_CONSULTATION_COMMENTS
-      };
+        comments: Array.isArray(parsed.comments) && parsed.comments.length > 0 ? parsed.comments : DEFAULT_CONSULTATION_COMMENTS,
+        dataVersion: serverDataVersion
+      } as any;
     } else {
       saveLocalDb();
     }
@@ -373,13 +401,50 @@ function loadLocalDb() {
   }
 }
 
-function saveLocalDb() {
-  touchServerDataVersion();
-  try {
-    fs.writeFileSync(LOCAL_DB_FILE, JSON.stringify(localData, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error saving local DB file:', err);
+let saveLocalDbTimer: NodeJS.Timeout | null = null;
+let saveLocalDbInFlight: Promise<void> | null = null;
+let saveLocalDbDirty = false;
+
+async function flushLocalDb(): Promise<void> {
+  if (saveLocalDbTimer) {
+    clearTimeout(saveLocalDbTimer);
+    saveLocalDbTimer = null;
   }
+  if (saveLocalDbInFlight) {
+    saveLocalDbDirty = true;
+    await saveLocalDbInFlight;
+    if (!saveLocalDbDirty) return;
+  }
+  saveLocalDbDirty = false;
+  const payload = JSON.stringify(localData);
+  const tmpFile = `${LOCAL_DB_FILE}.tmp`;
+  const runWrite = async () => {
+    try {
+      await fs.promises.writeFile(tmpFile, payload, 'utf-8');
+      await fs.promises.rename(tmpFile, LOCAL_DB_FILE);
+    } catch (err) {
+      console.error('Error saving local DB file:', err);
+    }
+  };
+  saveLocalDbInFlight = runWrite().finally(() => {
+    saveLocalDbInFlight = null;
+  });
+  await saveLocalDbInFlight;
+  if (saveLocalDbDirty) {
+    await flushLocalDb();
+  }
+}
+
+function saveLocalDb() {
+  if (saveLocalDbTimer) {
+    clearTimeout(saveLocalDbTimer);
+  }
+  saveLocalDbTimer = setTimeout(() => {
+    saveLocalDbTimer = null;
+    flushLocalDb().catch((err) => {
+      console.error('Debounced local DB flush error:', err);
+    });
+  }, 5000);
 }
 
 // MySQL Pool setup
@@ -499,7 +564,108 @@ async function initDatabase() {
         }
       }
 
-      // Exhaustive safe column migrations for existing MySQL tables
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS quotations (
+          id VARCHAR(64) PRIMARY KEY,
+          patientName VARCHAR(128),
+          patientPhone VARCHAR(32),
+          patientAge VARCHAR(16),
+          patientGender VARCHAR(16),
+          doctorName VARCHAR(128),
+          totalAmount DOUBLE DEFAULT 0,
+          discountAmount DOUBLE DEFAULT 0,
+          netPayable DOUBLE DEFAULT 0,
+          paymentType VARCHAR(64) DEFAULT 'Cash',
+          status VARCHAR(64) DEFAULT 'Saved',
+          items JSON,
+          createdAt VARCHAR(64),
+          INDEX idx_quotations_phone (patientPhone)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS quotations_v2 (
+          id VARCHAR(64) PRIMARY KEY,
+          quotationNumber VARCHAR(64) NOT NULL,
+          patientId VARCHAR(64) DEFAULT '',
+          patientName VARCHAR(128) DEFAULT '',
+          patientPhone VARCHAR(32) DEFAULT '',
+          patientAge VARCHAR(16) DEFAULT '',
+          patientGender VARCHAR(16) DEFAULT '',
+          doctorName VARCHAR(128) DEFAULT '',
+          createdDate VARCHAR(64) DEFAULT '',
+          createdAt VARCHAR(64) DEFAULT '',
+          validUntil VARCHAR(64) DEFAULT '',
+          visitNumber INT DEFAULT 1,
+          visitLabel VARCHAR(64) DEFAULT '',
+          patientTreatmentMode VARCHAR(32) DEFAULT '',
+          treatments LONGTEXT,
+          treatmentsSubtotal DECIMAL(12,2) DEFAULT 0.00,
+          outdoorPackages LONGTEXT,
+          outdoorSubtotal DECIMAL(12,2) DEFAULT 0.00,
+          indoorServices LONGTEXT,
+          indoorSubtotal DECIMAL(12,2) DEFAULT 0.00,
+          additionalTreatments LONGTEXT,
+          additionalTreatmentsSubtotal DECIMAL(12,2) DEFAULT 0.00,
+          admissionFee DECIMAL(12,2) DEFAULT 0.00,
+          consultationFee DECIMAL(12,2) DEFAULT 0.00,
+          investigationFee DECIMAL(12,2) DEFAULT 0.00,
+          overallDiscountPercent DECIMAL(12,2) DEFAULT 0.00,
+          overallDiscountAmount DECIMAL(12,2) DEFAULT 0.00,
+          grossTotal DECIMAL(12,2) DEFAULT 0.00,
+          grandTotal DECIMAL(12,2) DEFAULT 0.00,
+          advancePaid DECIMAL(12,2) DEFAULT 0.00,
+          dueAmount DECIMAL(12,2) DEFAULT 0.00,
+          paymentPlanMode VARCHAR(32) DEFAULT '',
+          paymentPhases LONGTEXT,
+          paymentStatus VARCHAR(32) DEFAULT 'Quotation',
+          notes TEXT,
+          createdBy VARCHAR(128) DEFAULT '',
+          packageComparison LONGTEXT,
+          UNIQUE KEY uniq_quotations_v2_number (quotationNumber),
+          INDEX idx_quotations_v2_patient_id (patientId),
+          INDEX idx_quotations_v2_phone (patientPhone),
+          INDEX idx_quotations_v2_created_at (createdAt)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS invoice_counters (
+          year INT PRIMARY KEY,
+          last_value INT NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS daily_serial_counters (
+          appointmentDate VARCHAR(32) PRIMARY KEY,
+          last_serial INT NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS catalog (
+          id VARCHAR(64) PRIMARY KEY,
+          name VARCHAR(200) NOT NULL,
+          category VARCHAR(64) NOT NULL,
+          defaultPrice DOUBLE DEFAULT 0,
+          defaultDiscountPercent DOUBLE DEFAULT 0,
+          fixedDiscountAmount DOUBLE DEFAULT NULL,
+          outdoorDiscountPercent DOUBLE DEFAULT NULL,
+          outdoorDiscountAmount DOUBLE DEFAULT NULL,
+          description TEXT,
+          rateNote TEXT,
+          outdoorSessions INT DEFAULT NULL,
+          indoorSessions INT DEFAULT NULL,
+          isIndoorFree TINYINT DEFAULT 0,
+          isRatioBased TINYINT DEFAULT 0,
+          sessionsPer10Days INT DEFAULT NULL,
+          orderIndex INT DEFAULT 0,
+          details_json LONGTEXT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      // Exhaustive safe column migrations for existing MySQL tables (run AFTER CREATE TABLE statements)
       const migrations = [
         "ALTER TABLE patients ADD COLUMN serialNo VARCHAR(32) DEFAULT ''",
         "ALTER TABLE patients ADD COLUMN name VARCHAR(128) NOT NULL DEFAULT ''",
@@ -569,7 +735,13 @@ async function initDatabase() {
         "ALTER TABLE catalog ADD COLUMN isRatioBased TINYINT DEFAULT 0",
         "ALTER TABLE catalog ADD COLUMN sessionsPer10Days INT DEFAULT NULL",
         "ALTER TABLE catalog ADD COLUMN orderIndex INT DEFAULT 0",
-        "ALTER TABLE catalog ADD COLUMN details_json LONGTEXT"
+        "ALTER TABLE catalog ADD COLUMN details_json LONGTEXT",
+        "ALTER TABLE patients ADD COLUMN lastModifiedVersion BIGINT DEFAULT 0",
+        "ALTER TABLE patients ADD INDEX idx_patients_lmv (lastModifiedVersion)",
+        "ALTER TABLE quotations_v2 ADD COLUMN lastModifiedVersion BIGINT DEFAULT 0",
+        "ALTER TABLE quotations_v2 ADD INDEX idx_quotations_v2_lmv (lastModifiedVersion)",
+        "ALTER TABLE catalog ADD COLUMN lastModifiedVersion BIGINT DEFAULT 0",
+        "ALTER TABLE catalog ADD INDEX idx_catalog_lmv (lastModifiedVersion)"
       ];
 
       for (const mig of migrations) {
@@ -580,47 +752,6 @@ async function initDatabase() {
         }
       }
 
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS quotations (
-          id VARCHAR(64) PRIMARY KEY,
-          patientName VARCHAR(128),
-          patientPhone VARCHAR(32),
-          patientAge VARCHAR(16),
-          patientGender VARCHAR(16),
-          doctorName VARCHAR(128),
-          totalAmount DOUBLE DEFAULT 0,
-          discountAmount DOUBLE DEFAULT 0,
-          netPayable DOUBLE DEFAULT 0,
-          paymentType VARCHAR(64) DEFAULT 'Cash',
-          status VARCHAR(64) DEFAULT 'Saved',
-          items JSON,
-          createdAt VARCHAR(64),
-          INDEX idx_quotations_phone (patientPhone)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-      `);
-
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS catalog (
-          id VARCHAR(64) PRIMARY KEY,
-          name VARCHAR(200) NOT NULL,
-          category VARCHAR(64) NOT NULL,
-          defaultPrice DOUBLE DEFAULT 0,
-          defaultDiscountPercent DOUBLE DEFAULT 0,
-          fixedDiscountAmount DOUBLE DEFAULT NULL,
-          outdoorDiscountPercent DOUBLE DEFAULT NULL,
-          outdoorDiscountAmount DOUBLE DEFAULT NULL,
-          description TEXT,
-          rateNote TEXT,
-          outdoorSessions INT DEFAULT NULL,
-          indoorSessions INT DEFAULT NULL,
-          isIndoorFree TINYINT DEFAULT 0,
-          isRatioBased TINYINT DEFAULT 0,
-          sessionsPer10Days INT DEFAULT NULL,
-          orderIndex INT DEFAULT 0,
-          details_json LONGTEXT
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-      `);
-
       // Seed initial users if empty
       const [uRows]: any = await pool.query('SELECT COUNT(*) as count FROM users');
       if (uRows[0]?.count === 0) {
@@ -630,6 +761,17 @@ async function initDatabase() {
             [u.id, u.username, u.password_hash, u.name, u.role, u.phone || '', u.is_active ?? 1]
           );
         }
+      }
+
+      // Ensure persistent data_version counter exists in app_settings and hydrate in-memory copy
+      await pool.query(
+        "INSERT IGNORE INTO app_settings (setting_key, setting_value) VALUES ('data_version', '1')"
+      );
+      const [verRows]: any = await pool.query(
+        "SELECT CAST(setting_value AS UNSIGNED) AS ver FROM app_settings WHERE setting_key = 'data_version' LIMIT 1"
+      );
+      if (Array.isArray(verRows) && verRows.length > 0) {
+        serverDataVersion = Math.max(1, Number(verRows[0].ver || 1));
       }
 
       // Update existing database patient records with placeholder doctorName to Dr. S.M. Shahidul Islam PhD
@@ -786,10 +928,224 @@ function formatPatientRow(r: any): any {
   };
 }
 
+function parseJsonColumn<T>(val: any, fallback: T): T {
+  if (val === null || val === undefined || val === '') return fallback;
+  if (typeof val !== 'string') return val as T;
+  try {
+    return JSON.parse(val) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function toFiniteMoney(val: any): number {
+  const n = Number(val ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatQuotationRow(r: any): any {
+  if (!r) return r;
+  const packageComparison = parseJsonColumn(r.packageComparison, undefined);
+  return {
+    id: r.id,
+    quotationNumber: r.quotationNumber || r.id,
+    patientId: r.patientId || '',
+    patientName: r.patientName || '',
+    patientPhone: r.patientPhone || '',
+    patientAge: r.patientAge ?? '',
+    patientGender: r.patientGender ?? '',
+    doctorName: r.doctorName ?? '',
+    createdDate: r.createdDate || '',
+    createdAt: r.createdAt || '',
+    validUntil: r.validUntil || '',
+    visitNumber: r.visitNumber !== null && r.visitNumber !== undefined ? Number(r.visitNumber) : 1,
+    visitLabel: r.visitLabel || '',
+    patientTreatmentMode: r.patientTreatmentMode || undefined,
+    treatments: parseJsonColumn(r.treatments, []),
+    treatmentsSubtotal: toFiniteMoney(r.treatmentsSubtotal),
+    outdoorPackages: parseJsonColumn(r.outdoorPackages, []),
+    outdoorSubtotal: toFiniteMoney(r.outdoorSubtotal),
+    indoorServices: parseJsonColumn(r.indoorServices, []),
+    indoorSubtotal: toFiniteMoney(r.indoorSubtotal),
+    additionalTreatments: parseJsonColumn(r.additionalTreatments, []),
+    additionalTreatmentsSubtotal: toFiniteMoney(r.additionalTreatmentsSubtotal),
+    admissionFee: toFiniteMoney(r.admissionFee),
+    consultationFee: toFiniteMoney(r.consultationFee),
+    investigationFee: toFiniteMoney(r.investigationFee),
+    overallDiscountPercent: toFiniteMoney(r.overallDiscountPercent),
+    overallDiscountAmount: toFiniteMoney(r.overallDiscountAmount),
+    grossTotal: toFiniteMoney(r.grossTotal),
+    grandTotal: toFiniteMoney(r.grandTotal),
+    advancePaid: toFiniteMoney(r.advancePaid),
+    dueAmount: toFiniteMoney(r.dueAmount),
+    paymentPlanMode: r.paymentPlanMode || undefined,
+    paymentPhases: parseJsonColumn(r.paymentPhases, []),
+    paymentStatus: r.paymentStatus || 'Quotation',
+    notes: r.notes ?? '',
+    createdBy: r.createdBy || '',
+    ...(packageComparison !== undefined ? { packageComparison } : {})
+  };
+}
+
+const QUOTATION_UPSERT_SQL = `INSERT INTO quotations_v2 (
+  id, quotationNumber, patientId, patientName, patientPhone, patientAge, patientGender, doctorName,
+  createdDate, createdAt, validUntil, visitNumber, visitLabel, patientTreatmentMode,
+  treatments, treatmentsSubtotal, outdoorPackages, outdoorSubtotal, indoorServices, indoorSubtotal,
+  additionalTreatments, additionalTreatmentsSubtotal, admissionFee, consultationFee, investigationFee,
+  overallDiscountPercent, overallDiscountAmount, grossTotal, grandTotal, advancePaid, dueAmount,
+  paymentPlanMode, paymentPhases, paymentStatus, notes, createdBy, packageComparison
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+  quotationNumber = VALUES(quotationNumber),
+  patientId = VALUES(patientId),
+  patientName = VALUES(patientName),
+  patientPhone = VALUES(patientPhone),
+  patientAge = VALUES(patientAge),
+  patientGender = VALUES(patientGender),
+  doctorName = VALUES(doctorName),
+  createdDate = VALUES(createdDate),
+  createdAt = VALUES(createdAt),
+  validUntil = VALUES(validUntil),
+  visitNumber = VALUES(visitNumber),
+  visitLabel = VALUES(visitLabel),
+  patientTreatmentMode = VALUES(patientTreatmentMode),
+  treatments = VALUES(treatments),
+  treatmentsSubtotal = VALUES(treatmentsSubtotal),
+  outdoorPackages = VALUES(outdoorPackages),
+  outdoorSubtotal = VALUES(outdoorSubtotal),
+  indoorServices = VALUES(indoorServices),
+  indoorSubtotal = VALUES(indoorSubtotal),
+  additionalTreatments = VALUES(additionalTreatments),
+  additionalTreatmentsSubtotal = VALUES(additionalTreatmentsSubtotal),
+  admissionFee = VALUES(admissionFee),
+  consultationFee = VALUES(consultationFee),
+  investigationFee = VALUES(investigationFee),
+  overallDiscountPercent = VALUES(overallDiscountPercent),
+  overallDiscountAmount = VALUES(overallDiscountAmount),
+  grossTotal = VALUES(grossTotal),
+  grandTotal = VALUES(grandTotal),
+  advancePaid = VALUES(advancePaid),
+  dueAmount = VALUES(dueAmount),
+  paymentPlanMode = VALUES(paymentPlanMode),
+  paymentPhases = VALUES(paymentPhases),
+  paymentStatus = VALUES(paymentStatus),
+  notes = VALUES(notes),
+  createdBy = VALUES(createdBy),
+  packageComparison = VALUES(packageComparison)`;
+
+const QUOTATION_INSERT_IGNORE_SQL = `INSERT IGNORE INTO quotations_v2 (
+  id, quotationNumber, patientId, patientName, patientPhone, patientAge, patientGender, doctorName,
+  createdDate, createdAt, validUntil, visitNumber, visitLabel, patientTreatmentMode,
+  treatments, treatmentsSubtotal, outdoorPackages, outdoorSubtotal, indoorServices, indoorSubtotal,
+  additionalTreatments, additionalTreatmentsSubtotal, admissionFee, consultationFee, investigationFee,
+  overallDiscountPercent, overallDiscountAmount, grossTotal, grandTotal, advancePaid, dueAmount,
+  paymentPlanMode, paymentPhases, paymentStatus, notes, createdBy, packageComparison
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+function buildQuotationDbParams(q: any): any[] {
+  const visitNum = q.visitNumber !== null && q.visitNumber !== undefined && q.visitNumber !== '' && Number.isFinite(Number(q.visitNumber))
+    ? Number(q.visitNumber)
+    : 1;
+  return [
+    q.id ?? null,
+    (q.quotationNumber ?? q.id) ?? null,
+    q.patientId ?? null,
+    q.patientName ?? null,
+    q.patientPhone ?? null,
+    q.patientAge !== undefined && q.patientAge !== null ? String(q.patientAge) : null,
+    q.patientGender ?? null,
+    q.doctorName ?? null,
+    q.createdDate ?? null,
+    (q.createdAt ?? q.createdDate ?? new Date().toISOString()) ?? null,
+    q.validUntil ?? null,
+    visitNum ?? null,
+    q.visitLabel ?? null,
+    q.patientTreatmentMode ?? null,
+    JSON.stringify(Array.isArray(q.treatments) ? q.treatments : []) ?? null,
+    toFiniteMoney(q.treatmentsSubtotal) ?? null,
+    JSON.stringify(Array.isArray(q.outdoorPackages) ? q.outdoorPackages : []) ?? null,
+    toFiniteMoney(q.outdoorSubtotal) ?? null,
+    JSON.stringify(Array.isArray(q.indoorServices) ? q.indoorServices : []) ?? null,
+    toFiniteMoney(q.indoorSubtotal) ?? null,
+    JSON.stringify(Array.isArray(q.additionalTreatments) ? q.additionalTreatments : []) ?? null,
+    toFiniteMoney(q.additionalTreatmentsSubtotal) ?? null,
+    toFiniteMoney(q.admissionFee) ?? null,
+    toFiniteMoney(q.consultationFee) ?? null,
+    toFiniteMoney(q.investigationFee) ?? null,
+    toFiniteMoney(q.overallDiscountPercent) ?? null,
+    toFiniteMoney(q.overallDiscountAmount) ?? null,
+    toFiniteMoney(q.grossTotal) ?? null,
+    toFiniteMoney(q.grandTotal) ?? null,
+    toFiniteMoney(q.advancePaid) ?? null,
+    toFiniteMoney(q.dueAmount) ?? null,
+    q.paymentPlanMode ?? null,
+    JSON.stringify(Array.isArray(q.paymentPhases) ? q.paymentPhases : []) ?? null,
+    (q.paymentStatus ?? 'Quotation') ?? null,
+    q.notes ?? null,
+    q.createdBy ?? null,
+    (q.packageComparison ? JSON.stringify(q.packageComparison) : null) ?? null
+  ];
+}
+
+async function allocateNextInvoiceNumber(conn: mysql.PoolConnection, year: number): Promise<string> {
+  while (true) {
+    await conn.execute(
+      `INSERT INTO invoice_counters (year, last_value) VALUES (?, 1)
+       ON DUPLICATE KEY UPDATE last_value = last_value + 1`,
+      [year]
+    );
+    const [counterRows]: any = await conn.execute(
+      'SELECT last_value FROM invoice_counters WHERE year = ? FOR UPDATE',
+      [year]
+    );
+    const value = Number(counterRows?.[0]?.last_value ?? 1);
+    const candidate = `SXH-${year}-${String(value).padStart(5, '0')}`;
+    const [collision]: any = await conn.execute(
+      'SELECT id FROM quotations_v2 WHERE quotationNumber = ? LIMIT 1',
+      [candidate]
+    );
+    if (!Array.isArray(collision) || collision.length === 0) {
+      return candidate;
+    }
+  }
+}
+
+async function allocateDailySerialInTx(conn: mysql.PoolConnection, appointmentDate: string): Promise<number> {
+  const dateKey = (appointmentDate && String(appointmentDate).trim()) || new Date().toISOString().split('T')[0];
+  await conn.execute(
+    `INSERT INTO daily_serial_counters (appointmentDate, last_serial)
+     SELECT ?, COALESCE(MAX(consultationSerial), 0) FROM patients WHERE appointmentDate = ?
+     ON DUPLICATE KEY UPDATE last_serial = last_serial`,
+    [dateKey, dateKey]
+  );
+  await conn.execute(
+    'UPDATE daily_serial_counters SET last_serial = last_serial + 1 WHERE appointmentDate = ?',
+    [dateKey]
+  );
+  const [rows]: any = await conn.execute(
+    'SELECT last_serial FROM daily_serial_counters WHERE appointmentDate = ? FOR UPDATE',
+    [dateKey]
+  );
+  return Number(rows?.[0]?.last_serial ?? 1);
+}
+
+async function bumpDataVersionInTx(conn: mysql.PoolConnection): Promise<number> {
+  await conn.execute(
+    `INSERT INTO app_settings (setting_key, setting_value) VALUES ('data_version', '1')
+     ON DUPLICATE KEY UPDATE setting_value = CAST(CAST(COALESCE(NULLIF(setting_value, ''), '0') AS UNSIGNED) + 1 AS CHAR)`
+  );
+  const [rows]: any = await conn.execute(
+    `SELECT CAST(setting_value AS UNSIGNED) AS ver FROM app_settings WHERE setting_key = 'data_version' FOR UPDATE`
+  );
+  return Math.max(1, Number(rows?.[0]?.ver || 1));
+}
+
 app.get('/api/init', authenticateToken, async (req: any, res) => {
   const user = req.user;
-  let patients: any[] = [...localData.patients];
-  let quotations: any[] = [...localData.quotations];
+  let patientsTruncated = localData.patients.length > 1000;
+  let quotationsTruncated = localData.quotations.length > 1000;
+  let patients: any[] = localData.patients.slice(0, 1000);
+  let quotations: any[] = localData.quotations.slice(0, 1000);
   let catalog: any[] = localData.catalog;
   let users: any[] = localData.users.map(({ password_hash, ...u }) => u);
   let professions: string[] = (localData as any).professions || DEFAULT_PROFESSIONS;
@@ -797,21 +1153,18 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
 
   if (isMySqlActive && mysqlPool) {
     try {
-      const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC');
+      const [pRows]: any = await mysqlPool.execute('SELECT * FROM patients ORDER BY createdAt DESC, id DESC LIMIT 1001');
       if (Array.isArray(pRows) && pRows.length > 0) {
-        const formattedPRows = pRows.map(formatPatientRow);
-        const dbIds = new Set(formattedPRows.map((r: any) => r.id));
-        patients = [...formattedPRows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
+        patientsTruncated = pRows.length > 1000;
+        const cappedPRows = patientsTruncated ? pRows.slice(0, 1000) : pRows;
+        patients = cappedPRows.map(formatPatientRow);
       }
 
-      const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
+      const [qRows]: any = await mysqlPool.execute('SELECT * FROM quotations_v2 ORDER BY createdAt DESC LIMIT 1001');
       if (Array.isArray(qRows) && qRows.length > 0) {
-        const dbQIds = new Set(qRows.map((r: any) => r.id));
-        const parsedQRows = qRows.map((r: any) => ({
-          ...r,
-          items: typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])
-        }));
-        quotations = [...parsedQRows, ...localData.quotations.filter((q: any) => q && q.id && !dbQIds.has(q.id))];
+        quotationsTruncated = qRows.length > 1000;
+        const cappedQRows = quotationsTruncated ? qRows.slice(0, 1000) : qRows;
+        quotations = cappedQRows.map(formatQuotationRow);
       }
 
       const [cRows]: any = await mysqlPool.execute('SELECT * FROM catalog ORDER BY orderIndex ASC, id ASC');
@@ -829,6 +1182,11 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
             try { professions = JSON.parse(row.setting_value); } catch {}
           } else if (row.setting_key === 'comments' && row.setting_value) {
             try { comments = JSON.parse(row.setting_value); } catch {}
+          } else if (row.setting_key === 'data_version' && row.setting_value) {
+            const parsedVer = parseInt(String(row.setting_value), 10);
+            if (Number.isFinite(parsedVer) && parsedVer > 0) {
+              serverDataVersion = parsedVer;
+            }
           }
         }
       }
@@ -846,7 +1204,132 @@ app.get('/api/init', authenticateToken, async (req: any, res) => {
     comments,
     users,
     dbMode: isMySqlActive ? 'MySQL Central Database' : 'Local File Persistence',
-    dataVersion: serverDataVersion
+    dataVersion: serverDataVersion,
+    patientsTruncated,
+    quotationsTruncated
+  });
+});
+
+app.get('/api/changes', authenticateToken, async (req: any, res) => {
+  const sinceRaw = req.query.since;
+  const since = sinceRaw !== undefined && sinceRaw !== '' ? Number(sinceRaw) : 0;
+
+  let currentVersion = serverDataVersion;
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [verRows]: any = await mysqlPool.execute(
+        "SELECT CAST(setting_value AS UNSIGNED) AS ver FROM app_settings WHERE setting_key = 'data_version' LIMIT 1"
+      );
+      if (Array.isArray(verRows) && verRows.length > 0) {
+        const parsedVer = Number(verRows[0].ver);
+        if (Number.isFinite(parsedVer) && parsedVer > 0) {
+          currentVersion = parsedVer;
+          serverDataVersion = parsedVer;
+        }
+      }
+    } catch {}
+  }
+
+  if (sinceRaw === undefined || sinceRaw === '' || !Number.isFinite(since) || since <= 0) {
+    return res.json({
+      dataVersion: currentVersion,
+      patients: [],
+      quotations: [],
+      catalog: [],
+      truncated: true
+    });
+  }
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [pRows]: any = await mysqlPool.execute(
+        'SELECT * FROM patients WHERE lastModifiedVersion > ? ORDER BY createdAt DESC, id DESC LIMIT 501',
+        [since]
+      );
+      if (Array.isArray(pRows) && pRows.length > 500) {
+        return res.json({
+          dataVersion: currentVersion,
+          patients: [],
+          quotations: [],
+          catalog: [],
+          truncated: true
+        });
+      }
+
+      const [qRows]: any = await mysqlPool.execute(
+        'SELECT * FROM quotations_v2 WHERE lastModifiedVersion > ? ORDER BY createdAt DESC LIMIT 501',
+        [since]
+      );
+      if (Array.isArray(qRows) && qRows.length > 500) {
+        return res.json({
+          dataVersion: currentVersion,
+          patients: [],
+          quotations: [],
+          catalog: [],
+          truncated: true
+        });
+      }
+
+      const [cChanged]: any = await mysqlPool.execute(
+        'SELECT id FROM catalog WHERE lastModifiedVersion > ? LIMIT 1',
+        [since]
+      );
+      let catalog: any[] = [];
+      if (Array.isArray(cChanged) && cChanged.length > 0) {
+        const [cRows]: any = await mysqlPool.execute(
+          'SELECT * FROM catalog ORDER BY orderIndex ASC, id ASC LIMIT 501'
+        );
+        if (Array.isArray(cRows) && cRows.length > 500) {
+          return res.json({
+            dataVersion: currentVersion,
+            patients: [],
+            quotations: [],
+            catalog: [],
+            truncated: true
+          });
+        }
+        catalog = Array.isArray(cRows) ? cRows.map(formatCatalogRow) : [];
+      }
+
+      return res.json({
+        dataVersion: currentVersion,
+        patients: Array.isArray(pRows) ? pRows.map(formatPatientRow) : [],
+        quotations: Array.isArray(qRows) ? qRows.map(formatQuotationRow) : [],
+        catalog,
+        truncated: false
+      });
+    } catch (err: any) {
+      console.error('MySQL delta changes fetch error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to fetch incremental changes' });
+    }
+  }
+
+  // Local File Persistence Mode
+  const changedPatients = localData.patients.filter((p: any) => p && Number(p.lastModifiedVersion || 0) > since);
+  if (changedPatients.length > 500) {
+    return res.json({ dataVersion: currentVersion, patients: [], quotations: [], catalog: [], truncated: true });
+  }
+
+  const changedQuotations = localData.quotations.filter((q: any) => q && Number(q.lastModifiedVersion || 0) > since);
+  if (changedQuotations.length > 500) {
+    return res.json({ dataVersion: currentVersion, patients: [], quotations: [], catalog: [], truncated: true });
+  }
+
+  const anyCatalogChanged = localData.catalog.some((c: any) => c && Number(c.lastModifiedVersion || 0) > since);
+  let changedCatalog: any[] = [];
+  if (anyCatalogChanged) {
+    if (localData.catalog.length > 500) {
+      return res.json({ dataVersion: currentVersion, patients: [], quotations: [], catalog: [], truncated: true });
+    }
+    changedCatalog = localData.catalog;
+  }
+
+  res.json({
+    dataVersion: currentVersion,
+    patients: changedPatients,
+    quotations: changedQuotations,
+    catalog: changedCatalog,
+    truncated: false
   });
 });
 
@@ -927,19 +1410,31 @@ app.post('/api/auth/change-password', authenticateToken, async (req: any, res) =
   }
 
   const newHash = bcrypt.hashSync(newPassword, 10);
-  localData.users[existingIdx].password_hash = newHash;
-  saveLocalDb();
 
   if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
     try {
-      await mysqlPool.execute(
+      await conn.beginTransaction();
+      await conn.execute(
         'UPDATE users SET password_hash = ? WHERE id = ? OR username = ?',
         [newHash, userId, username]
       );
-    } catch (err) {
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.commit();
+      serverDataVersion = nextVer;
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
       console.error('MySQL update password error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to update password in database' });
+    } finally {
+      conn.release();
     }
+  } else {
+    bumpLocalDataVersion();
   }
+
+  localData.users[existingIdx].password_hash = newHash;
+  saveLocalDb();
 
   res.json({ message: 'Password updated successfully' });
 });
@@ -976,6 +1471,31 @@ app.post('/api/users', authenticateToken, requireRole('System Admin'), async (re
     is_active: 1
   };
 
+  if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        `INSERT INTO users (id, username, password_hash, name, role, phone, is_active) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE password_hash=?, name=?, role=?, phone=?, is_active=?`,
+        [newUser.id, newUser.username, newUser.password_hash, newUser.name, newUser.role, newUser.phone, newUser.is_active,
+         newUser.password_hash, newUser.name, newUser.role, newUser.phone, newUser.is_active]
+      );
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.commit();
+      serverDataVersion = nextVer;
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
+      console.error('MySQL user save error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to save user in database' });
+    } finally {
+      conn.release();
+    }
+  } else {
+    bumpLocalDataVersion();
+  }
+
   if (existingIdx >= 0) {
     localData.users[existingIdx] = newUser;
   } else {
@@ -983,114 +1503,639 @@ app.post('/api/users', authenticateToken, requireRole('System Admin'), async (re
   }
   saveLocalDb();
 
-  if (isMySqlActive && mysqlPool) {
-    try {
-      await mysqlPool.execute(
-        `INSERT INTO users (id, username, password_hash, name, role, phone, is_active) 
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE password_hash=?, name=?, role=?, phone=?, is_active=?`,
-        [newUser.id, newUser.username, newUser.password_hash, newUser.name, newUser.role, newUser.phone, newUser.is_active,
-         newUser.password_hash, newUser.name, newUser.role, newUser.phone, newUser.is_active]
-      );
-    } catch (err) {
-      console.error('MySQL user save error:', err);
-    }
-  }
-
   res.json({ message: 'User account saved successfully', user: { id: newUser.id, username: newUser.username, name: newUser.name, role: newUser.role, phone: newUser.phone } });
 });
 
 app.delete('/api/users/:id', authenticateToken, requireRole('System Admin'), async (req: any, res) => {
   const { id } = req.params;
-  localData.users = localData.users.filter(u => u.id !== id);
-  saveLocalDb();
 
   if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
     try {
-      await mysqlPool.execute('DELETE FROM users WHERE id = ?', [id]);
-    } catch (err) {
+      await conn.beginTransaction();
+      await conn.execute('DELETE FROM users WHERE id = ?', [id]);
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.commit();
+      serverDataVersion = nextVer;
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
       console.error('MySQL user delete error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to delete user in database' });
+    } finally {
+      conn.release();
     }
+  } else {
+    bumpLocalDataVersion();
   }
+
+  localData.users = localData.users.filter(u => u.id !== id);
+  saveLocalDb();
 
   res.json({ message: 'User account deleted successfully' });
 });
 
 // 4. Patients API & PDF Upload Parser
 app.get('/api/patients/summary', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD'), async (req, res) => {
-  let count = localData.patients.length;
-  let latestCreatedAt = localData.patients[0]?.createdAt || '';
-  let latestId = localData.patients[0]?.id || '';
-
-  if (isMySqlActive && mysqlPool) {
-    try {
-      const [rows]: any = await mysqlPool.execute('SELECT COUNT(*) as total, MAX(createdAt) as latestCreated, MAX(id) as latestId FROM patients');
-      if (rows && rows.length > 0) {
-        count = rows[0].total || 0;
-        latestCreatedAt = rows[0].latestCreated || '';
-        latestId = rows[0].latestId || '';
-      }
-    } catch (err) {
-      console.error('Error fetching patient summary from MySQL:', err);
-    }
-  }
-
   res.json({
-    count,
-    latestCreatedAt,
-    latestId,
-    quotationsCount: localData.quotations.length,
-    catalogLength: localData.catalog.length,
     dataVersion: serverDataVersion,
     timestamp: Date.now()
   });
 });
 
-app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD'), async (req, res) => {
-  const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 0;
-  const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
-  const dateFilter = req.query.date ? String(req.query.date).trim() : '';
+const REPORTS_META_CACHE_TTL_MS = 60_000;
+let reportsMetaCache: {
+  allTimeTotalPatients: number;
+  allDoctors: string[];
+  expiresAt: number;
+  mode: 'mysql' | 'local';
+} | null = null;
 
-  let allPatients: any[] = [...localData.patients];
+app.get('/api/reports/summary', authenticateToken, requireRole('System Admin', 'Admin', 'SSD'), async (req, res) => {
+  const dateFrom = req.query.dateFrom ? String(req.query.dateFrom).trim() : '';
+  const dateTo = req.query.dateTo ? String(req.query.dateTo).trim() : '';
+  const doctorFilter = req.query.doctor ? String(req.query.doctor).trim() : 'all';
+  const searchTerm = req.query.q ? String(req.query.q).trim().toLowerCase() : '';
+
+  const COND_CONFIRMED = `(isConfirmed = 1 OR consultationSerial IS NOT NULL OR (confirmedAt IS NOT NULL AND confirmedAt != ''))`;
+  const COND_PRE = `(status = 'Pre Consultation' OR consultationStatus = 'Pre Consultation' OR status = 'Post Consultation' OR (preDoctorName IS NOT NULL AND preDoctorName != '') OR (preConsultationAt IS NOT NULL AND preConsultationAt != ''))`;
+  const COND_POST = `(status = 'Post Consultation' OR consultationStatus = 'Post Consultation' OR postConsultationConfirmed = 1 OR (postDoctorName IS NOT NULL AND postDoctorName != ''))`;
+  const COND_DOCTOR_PRE = `(status = 'Pre Consultation' OR consultationStatus = 'Pre Consultation' OR status = 'Post Consultation' OR consultationStatus = 'Post Consultation' OR (preDoctorName IS NOT NULL AND preDoctorName != '') OR (preConsultationAt IS NOT NULL AND preConsultationAt != ''))`;
+  const COND_DOCTOR_POST = `(status = 'Post Consultation' OR consultationStatus = 'Post Consultation' OR postConsultationConfirmed = 1 OR (postDoctorName IS NOT NULL AND postDoctorName != '') OR (postConsultationAt IS NOT NULL AND postConsultationAt != ''))`;
+
   if (isMySqlActive && mysqlPool) {
     try {
-      let queryStr = 'SELECT * FROM patients';
+      const conditions: string[] = [];
+      const params: any[] = [];
+
+      if (dateFrom || dateTo) {
+        conditions.push(`(appointmentDate IS NOT NULL AND appointmentDate != '')`);
+        if (dateFrom) {
+          conditions.push(`appointmentDate >= ?`);
+          params.push(dateFrom);
+        }
+        if (dateTo) {
+          conditions.push(`appointmentDate <= ?`);
+          params.push(dateTo);
+        }
+      }
+
+      if (doctorFilter && doctorFilter !== 'all') {
+        conditions.push(`(doctorName = ? OR preDoctorName = ? OR postDoctorName = ?)`);
+        params.push(doctorFilter, doctorFilter, doctorFilter);
+      }
+
+      if (searchTerm) {
+        const likeParam = `%${searchTerm}%`;
+        conditions.push(`(
+          LOWER(COALESCE(name, '')) LIKE ? OR
+          LOWER(COALESCE(phone, '')) LIKE ? OR
+          LOWER(COALESCE(profession, '')) LIKE ? OR
+          LOWER(COALESCE(consultationComment, '')) LIKE ? OR
+          LOWER(COALESCE(remark, '')) LIKE ? OR
+          CAST(COALESCE(consultationSerial, '') AS CHAR) LIKE ?
+        )`);
+        params.push(likeParam, likeParam, likeParam, likeParam, likeParam, likeParam);
+      }
+
+      const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const ageExpr = `CASE WHEN TRIM(COALESCE(age, '')) REGEXP '^-?[0-9]+' THEN CAST(TRIM(age) AS SIGNED) ELSE NULL END`;
+      const isFemaleExpr = `(LOWER(COALESCE(gender, '')) LIKE '%female%' OR LOWER(COALESCE(gender, '')) = 'f')`;
+      const isMaleExpr = `(NOT ${isFemaleExpr} AND (LOWER(COALESCE(gender, '')) LIKE '%male%' OR LOWER(COALESCE(gender, '')) = 'm'))`;
+
+      const [summaryRows]: any = await mysqlPool.execute(
+        `SELECT
+          COUNT(*) AS totalAppointments,
+          COALESCE(SUM(CASE WHEN ${COND_CONFIRMED} THEN 1 ELSE 0 END), 0) AS confirmedCount,
+          COALESCE(SUM(CASE WHEN ${COND_PRE} THEN 1 ELSE 0 END), 0) AS preConsultationCount,
+          COALESCE(SUM(CASE WHEN ${COND_POST} THEN 1 ELSE 0 END), 0) AS postConsultationCount,
+          COALESCE(SUM(CASE WHEN isInstant = 1 THEN 1 ELSE 0 END), 0) AS instantCount,
+          COALESCE(SUM(CASE WHEN isInstant = 1 THEN COALESCE(instantFee, 2000) ELSE 0 END), 0) AS instantRevenue,
+          COALESCE(SUM(CASE WHEN isEd = 1 THEN 1 ELSE 0 END), 0) AS edCount,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND pathologyStatus = 'Yes' THEN 1 ELSE 0 END), 0) AS pathYes,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND pathologyStatus = 'No' THEN 1 ELSE 0 END), 0) AS pathNo,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND organicStatus = 'Yes' THEN 1 ELSE 0 END), 0) AS orgYes,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND organicStatus = 'No' THEN 1 ELSE 0 END), 0) AS orgNo,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND nutritionStatus = 'Yes' THEN 1 ELSE 0 END), 0) AS nutYes,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND nutritionStatus = 'No' THEN 1 ELSE 0 END), 0) AS nutNo,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND ${isFemaleExpr} THEN 1 ELSE 0 END), 0) AS femaleCount,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND ${isMaleExpr} THEN 1 ELSE 0 END), 0) AS maleCount,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND (${ageExpr}) IS NOT NULL AND (${ageExpr}) < 20 THEN 1 ELSE 0 END), 0) AS under20,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND (${ageExpr}) >= 20 AND (${ageExpr}) <= 35 THEN 1 ELSE 0 END), 0) AS age20to35,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND (${ageExpr}) >= 36 AND (${ageExpr}) <= 50 THEN 1 ELSE 0 END), 0) AS age36to50,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND (${ageExpr}) >= 51 AND (${ageExpr}) <= 65 THEN 1 ELSE 0 END), 0) AS age51to65,
+          COALESCE(SUM(CASE WHEN (${COND_POST}) AND (${ageExpr}) > 65 THEN 1 ELSE 0 END), 0) AS above65
+        FROM patients ${whereSql}`,
+        params
+      );
+
+      const s = summaryRows?.[0] || {};
+      const totalAppointments = Number(s.totalAppointments || 0);
+      const confirmedCount = Number(s.confirmedCount || 0);
+      const unconfirmedCount = Math.max(0, totalAppointments - confirmedCount);
+      const preConsultationCount = Number(s.preConsultationCount || 0);
+      const postConsultationCount = Number(s.postConsultationCount || 0);
+      const instantCount = Number(s.instantCount || 0);
+      const instantRevenue = Number(s.instantRevenue || 0);
+      const edCount = Number(s.edCount || 0);
+
+      const pathYes = Number(s.pathYes || 0);
+      const pathNo = Number(s.pathNo || 0);
+      const pathPending = Math.max(0, postConsultationCount - pathYes - pathNo);
+      const orgYes = Number(s.orgYes || 0);
+      const orgNo = Number(s.orgNo || 0);
+      const orgPending = Math.max(0, postConsultationCount - orgYes - orgNo);
+      const nutYes = Number(s.nutYes || 0);
+      const nutNo = Number(s.nutNo || 0);
+      const nutPending = Math.max(0, postConsultationCount - nutYes - nutNo);
+
+      const male = Number(s.maleCount || 0);
+      const female = Number(s.femaleCount || 0);
+      const other = Math.max(0, postConsultationCount - male - female);
+      const under20 = Number(s.under20 || 0);
+      const age20to35 = Number(s.age20to35 || 0);
+      const age36to50 = Number(s.age36to50 || 0);
+      const age51to65 = Number(s.age51to65 || 0);
+      const above65 = Number(s.above65 || 0);
+      const unknownAge = Math.max(0, postConsultationCount - under20 - age20to35 - age36to50 - age51to65 - above65);
+
+      const andJoin = whereSql ? `${whereSql} AND` : 'WHERE';
+
+      const [preDocRows]: any = await mysqlPool.execute(
+        `SELECT TRIM(COALESCE(NULLIF(TRIM(preDoctorName), ''), NULLIF(TRIM(doctorName), ''), 'Doctor Not Assigned')) AS doctorName,
+                COUNT(*) AS cnt
+         FROM patients ${andJoin} ${COND_DOCTOR_PRE}
+         GROUP BY doctorName`,
+        params
+      );
+
+      const [postDocRows]: any = await mysqlPool.execute(
+        `SELECT TRIM(COALESCE(NULLIF(TRIM(postDoctorName), ''), NULLIF(TRIM(doctorName), ''), 'Doctor Not Assigned')) AS doctorName,
+                COUNT(*) AS cnt
+         FROM patients ${andJoin} ${COND_DOCTOR_POST}
+         GROUP BY doctorName`,
+        params
+      );
+
+      const [assignedOnlyDocRows]: any = await mysqlPool.execute(
+        `SELECT DISTINCT TRIM(doctorName) AS doctorName
+         FROM patients ${andJoin} NOT (${COND_DOCTOR_PRE}) AND NOT (${COND_DOCTOR_POST})
+         AND doctorName IS NOT NULL AND TRIM(doctorName) != ''`,
+        params
+      );
+
+      const doctorMap = new Map<string, { doctorName: string; preCount: number; postCount: number; totalConsulted: number }>();
+      const ensureDoc = (docName: string) => {
+        const clean = String(docName || 'Doctor Not Assigned').trim();
+        if (!doctorMap.has(clean)) {
+          doctorMap.set(clean, { doctorName: clean, preCount: 0, postCount: 0, totalConsulted: 0 });
+        }
+        return doctorMap.get(clean)!;
+      };
+      for (const r of preDocRows || []) {
+        ensureDoc(r.doctorName).preCount += Number(r.cnt || 0);
+      }
+      for (const r of postDocRows || []) {
+        ensureDoc(r.doctorName).postCount += Number(r.cnt || 0);
+      }
+      for (const r of assignedOnlyDocRows || []) {
+        ensureDoc(r.doctorName);
+      }
+      const doctors = Array.from(doctorMap.values())
+        .map(d => ({ ...d, totalConsulted: d.preCount + d.postCount }))
+        .filter(d => d.totalConsulted > 0 || d.preCount > 0 || d.postCount > 0)
+        .sort((a, b) => b.totalConsulted - a.totalConsulted);
+
+      const [profRows]: any = await mysqlPool.execute(
+        `SELECT COALESCE(NULLIF(TRIM(profession), ''), 'Not Specified') AS name, COUNT(*) AS count
+         FROM patients ${andJoin} ${COND_POST}
+         GROUP BY name
+         ORDER BY count DESC`,
+        params
+      );
+      const professions = (profRows || []).map((r: any) => ({
+        name: String(r.name || 'Not Specified'),
+        count: Number(r.count || 0)
+      }));
+
+      const [commentRows]: any = await mysqlPool.execute(
+        `SELECT TRIM(consultationComment) AS comment, COUNT(*) AS count
+         FROM patients ${andJoin} (consultationComment IS NOT NULL AND TRIM(consultationComment) != '')
+         GROUP BY comment
+         ORDER BY count DESC`,
+        params
+      );
+      const comments = (commentRows || []).map((r: any) => ({
+        comment: String(r.comment || ''),
+        count: Number(r.count || 0)
+      }));
+
+      const now = Date.now();
+      let allTimeTotalPatients: number;
+      let allDoctors: string[];
+      if (reportsMetaCache && reportsMetaCache.mode === 'mysql' && now < reportsMetaCache.expiresAt) {
+        allTimeTotalPatients = reportsMetaCache.allTimeTotalPatients;
+        allDoctors = reportsMetaCache.allDoctors;
+      } else {
+        const [allTimeRows]: any = await mysqlPool.execute('SELECT COUNT(*) AS cnt FROM patients');
+        allTimeTotalPatients = Number(allTimeRows?.[0]?.cnt || 0);
+
+        const [distinctDocRows]: any = await mysqlPool.execute(
+          `SELECT DISTINCT doc FROM (
+            SELECT TRIM(doctorName) AS doc FROM patients WHERE doctorName IS NOT NULL AND TRIM(doctorName) != ''
+            UNION
+            SELECT TRIM(preDoctorName) AS doc FROM patients WHERE preDoctorName IS NOT NULL AND TRIM(preDoctorName) != ''
+            UNION
+            SELECT TRIM(postDoctorName) AS doc FROM patients WHERE postDoctorName IS NOT NULL AND TRIM(postDoctorName) != ''
+          ) t ORDER BY doc ASC`
+        );
+        allDoctors = (distinctDocRows || []).map((r: any) => String(r.doc)).filter(Boolean);
+        reportsMetaCache = {
+          allTimeTotalPatients,
+          allDoctors,
+          expiresAt: now + REPORTS_META_CACHE_TTL_MS,
+          mode: 'mysql'
+        };
+      }
+
+      const qConditions: string[] = [];
+      const qParams: any[] = [];
+      const qDateExpr = `COALESCE(NULLIF(LEFT(createdDate, 10), ''), LEFT(createdAt, 10))`;
+      if (dateFrom || dateTo) {
+        qConditions.push(`(${qDateExpr} IS NOT NULL AND ${qDateExpr} != '')`);
+        if (dateFrom) {
+          qConditions.push(`${qDateExpr} >= ?`);
+          qParams.push(dateFrom);
+        }
+        if (dateTo) {
+          qConditions.push(`${qDateExpr} <= ?`);
+          qParams.push(dateTo);
+        }
+      }
+      if (doctorFilter && doctorFilter !== 'all') {
+        qConditions.push(`doctorName = ?`);
+        qParams.push(doctorFilter);
+      }
+      if (searchTerm) {
+        const qLike = `%${searchTerm}%`;
+        qConditions.push(`(LOWER(COALESCE(patientName, '')) LIKE ? OR LOWER(COALESCE(patientPhone, '')) LIKE ? OR LOWER(COALESCE(quotationNumber, '')) LIKE ?)`);
+        qParams.push(qLike, qLike, qLike);
+      }
+      const qWhereSql = qConditions.length > 0 ? `WHERE ${qConditions.join(' AND ')}` : '';
+      const [qSumRows]: any = await mysqlPool.execute(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(grandTotal), 0) AS grandTotal,
+                COALESCE(SUM(advancePaid), 0) AS advancePaid,
+                COALESCE(SUM(dueAmount), 0) AS dueAmount
+         FROM quotations_v2 ${qWhereSql}`,
+        qParams
+      );
+      const qRow = qSumRows?.[0] || {};
+
+      return res.json({
+        allTimeTotalPatients,
+        allDoctors,
+        funnel: {
+          totalAppointments,
+          confirmedCount,
+          unconfirmedCount,
+          preConsultationCount,
+          postConsultationCount
+        },
+        instant: {
+          instantCount,
+          instantRevenue
+        },
+        ed: {
+          edCount
+        },
+        departments: {
+          totalPost: postConsultationCount,
+          pathYes,
+          pathNo,
+          pathPending,
+          orgYes,
+          orgNo,
+          orgPending,
+          nutYes,
+          nutNo,
+          nutPending
+        },
+        doctors,
+        professions,
+        comments,
+        demographics: {
+          total: postConsultationCount,
+          male,
+          female,
+          other,
+          ageGroups: {
+            under20,
+            age20to35,
+            age36to50,
+            age51to65,
+            above65,
+            unknown: unknownAge
+          }
+        },
+        quotations: {
+          count: Number(qRow.count || 0),
+          grandTotal: Number(qRow.grandTotal || 0),
+          advancePaid: Number(qRow.advancePaid || 0),
+          dueAmount: Number(qRow.dueAmount || 0)
+        }
+      });
+    } catch (err: any) {
+      console.error('MySQL reports summary error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to compute report summary' });
+    }
+  }
+
+  // Local File Persistence Mode
+  const now = Date.now();
+  let allTimeTotalPatients: number;
+  let allDoctors: string[];
+  if (reportsMetaCache && reportsMetaCache.mode === 'local' && now < reportsMetaCache.expiresAt) {
+    allTimeTotalPatients = reportsMetaCache.allTimeTotalPatients;
+    allDoctors = reportsMetaCache.allDoctors;
+  } else {
+    const allDocsSet = new Set<string>();
+    localData.patients.forEach((p: any) => {
+      if (p?.doctorName && String(p.doctorName).trim()) allDocsSet.add(String(p.doctorName).trim());
+      if (p?.preDoctorName && String(p.preDoctorName).trim()) allDocsSet.add(String(p.preDoctorName).trim());
+      if (p?.postDoctorName && String(p.postDoctorName).trim()) allDocsSet.add(String(p.postDoctorName).trim());
+    });
+    allDoctors = Array.from(allDocsSet).sort();
+    allTimeTotalPatients = localData.patients.length;
+    reportsMetaCache = {
+      allTimeTotalPatients,
+      allDoctors,
+      expiresAt: now + REPORTS_META_CACHE_TTL_MS,
+      mode: 'local'
+    };
+  }
+
+  const filtered = localData.patients.filter((p: any) => {
+    if (!p) return false;
+    if (dateFrom || dateTo) {
+      const d = p.appointmentDate ? String(p.appointmentDate).trim() : '';
+      if (!d) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+    }
+    if (doctorFilter && doctorFilter !== 'all') {
+      if (p.doctorName !== doctorFilter && p.preDoctorName !== doctorFilter && p.postDoctorName !== doctorFilter) {
+        return false;
+      }
+    }
+    if (searchTerm) {
+      const matched =
+        p.name?.toLowerCase().includes(searchTerm) ||
+        p.phone?.toLowerCase().includes(searchTerm) ||
+        p.profession?.toLowerCase().includes(searchTerm) ||
+        p.consultationComment?.toLowerCase().includes(searchTerm) ||
+        p.remark?.toLowerCase().includes(searchTerm) ||
+        String(p.consultationSerial || '').includes(searchTerm);
+      if (!matched) return false;
+    }
+    return true;
+  });
+
+  const totalAppointments = filtered.length;
+  const confirmedCount = filtered.filter((p: any) =>
+    Boolean(p.isConfirmed) || typeof p.consultationSerial === 'number' || Boolean(p.confirmedAt)
+  ).length;
+  const unconfirmedCount = totalAppointments - confirmedCount;
+  const preConsultationCount = filtered.filter((p: any) =>
+    p.status === 'Pre Consultation' ||
+    p.consultationStatus === 'Pre Consultation' ||
+    p.status === 'Post Consultation' ||
+    Boolean(p.preDoctorName) ||
+    Boolean(p.preConsultationAt)
+  ).length;
+  const postPatients = filtered.filter((p: any) =>
+    p.status === 'Post Consultation' ||
+    p.consultationStatus === 'Post Consultation' ||
+    Boolean(p.postConsultationConfirmed) ||
+    Boolean(p.postDoctorName)
+  );
+  const postConsultationCount = postPatients.length;
+
+  const instantPatients = filtered.filter((p: any) => Boolean(p.isInstant));
+  const instantCount = instantPatients.length;
+  const instantRevenue = instantPatients.reduce((sum: number, p: any) => sum + (p.instantFee != null ? Number(p.instantFee) : 2000), 0);
+  const edCount = filtered.filter((p: any) => Boolean(p.isEd)).length;
+
+  const pathYes = postPatients.filter((p: any) => p.pathologyStatus === 'Yes').length;
+  const pathNo = postPatients.filter((p: any) => p.pathologyStatus === 'No').length;
+  const orgYes = postPatients.filter((p: any) => p.organicStatus === 'Yes').length;
+  const orgNo = postPatients.filter((p: any) => p.organicStatus === 'No').length;
+  const nutYes = postPatients.filter((p: any) => p.nutritionStatus === 'Yes').length;
+  const nutNo = postPatients.filter((p: any) => p.nutritionStatus === 'No').length;
+
+  const docMap = new Map<string, { doctorName: string; preCount: number; postCount: number; totalConsulted: number }>();
+  const getDoc = (name: string) => {
+    const clean = name.trim();
+    if (!docMap.has(clean)) docMap.set(clean, { doctorName: clean, preCount: 0, postCount: 0, totalConsulted: 0 });
+    return docMap.get(clean)!;
+  };
+  filtered.forEach((p: any) => {
+    const isPre =
+      p.status === 'Pre Consultation' ||
+      p.consultationStatus === 'Pre Consultation' ||
+      p.status === 'Post Consultation' ||
+      p.consultationStatus === 'Post Consultation' ||
+      Boolean(p.preDoctorName) ||
+      Boolean(p.preConsultationAt);
+    const isPost =
+      p.status === 'Post Consultation' ||
+      p.consultationStatus === 'Post Consultation' ||
+      Boolean(p.postConsultationConfirmed) ||
+      Boolean(p.postDoctorName) ||
+      Boolean(p.postConsultationAt);
+    if (isPre) getDoc(p.preDoctorName || p.doctorName || 'Doctor Not Assigned').preCount += 1;
+    if (isPost) getDoc(p.postDoctorName || p.doctorName || 'Doctor Not Assigned').postCount += 1;
+    if (!isPre && !isPost && p.doctorName) getDoc(p.doctorName);
+  });
+  const doctors = Array.from(docMap.values())
+    .map(d => ({ ...d, totalConsulted: d.preCount + d.postCount }))
+    .filter(d => d.totalConsulted > 0 || d.preCount > 0 || d.postCount > 0)
+    .sort((a, b) => b.totalConsulted - a.totalConsulted);
+
+  const profMap = new Map<string, number>();
+  postPatients.forEach((p: any) => {
+    const raw = p.profession?.trim();
+    const prof = raw && raw.length > 0 ? raw : 'Not Specified';
+    profMap.set(prof, (profMap.get(prof) || 0) + 1);
+  });
+  const professions = Array.from(profMap.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const commentMap = new Map<string, number>();
+  filtered.forEach((p: any) => {
+    const c = p.consultationComment?.trim();
+    if (c && c.length > 0) {
+      commentMap.set(c, (commentMap.get(c) || 0) + 1);
+    }
+  });
+  const comments = Array.from(commentMap.entries())
+    .map(([comment, count]) => ({ comment, count }))
+    .sort((a, b) => b.count - a.count);
+
+  let male = 0;
+  let female = 0;
+  let other = 0;
+  const ageGroups = { under20: 0, age20to35: 0, age36to50: 0, age51to65: 0, above65: 0, unknown: 0 };
+  postPatients.forEach((p: any) => {
+    const g = p.gender?.toLowerCase() || '';
+    if (g.includes('female') || g === 'f') female++;
+    else if (g.includes('male') || g === 'm') male++;
+    else other++;
+
+    const a = typeof p.age === 'number' ? p.age : parseInt(String(p.age || ''), 10);
+    if (isNaN(a)) ageGroups.unknown++;
+    else if (a < 20) ageGroups.under20++;
+    else if (a <= 35) ageGroups.age20to35++;
+    else if (a <= 50) ageGroups.age36to50++;
+    else if (a <= 65) ageGroups.age51to65++;
+    else ageGroups.above65++;
+  });
+
+  const filteredQuotations = localData.quotations.filter((q: any) => {
+    if (!q) return false;
+    if (dateFrom || dateTo) {
+      const qDate = (q.createdDate ? String(q.createdDate).slice(0, 10) : '') || (q.createdAt ? String(q.createdAt).slice(0, 10) : '');
+      if (!qDate) return false;
+      if (dateFrom && qDate < dateFrom) return false;
+      if (dateTo && qDate > dateTo) return false;
+    }
+    if (doctorFilter && doctorFilter !== 'all' && q.doctorName !== doctorFilter) {
+      return false;
+    }
+    if (searchTerm) {
+      const matched =
+        q.patientName?.toLowerCase().includes(searchTerm) ||
+        q.patientPhone?.toLowerCase().includes(searchTerm) ||
+        q.quotationNumber?.toLowerCase().includes(searchTerm);
+      if (!matched) return false;
+    }
+    return true;
+  });
+
+  res.json({
+    allTimeTotalPatients,
+    allDoctors,
+    funnel: {
+      totalAppointments,
+      confirmedCount,
+      unconfirmedCount,
+      preConsultationCount,
+      postConsultationCount
+    },
+    instant: {
+      instantCount,
+      instantRevenue
+    },
+    ed: {
+      edCount
+    },
+    departments: {
+      totalPost: postConsultationCount,
+      pathYes,
+      pathNo,
+      pathPending: Math.max(0, postConsultationCount - pathYes - pathNo),
+      orgYes,
+      orgNo,
+      orgPending: Math.max(0, postConsultationCount - orgYes - orgNo),
+      nutYes,
+      nutNo,
+      nutPending: Math.max(0, postConsultationCount - nutYes - nutNo)
+    },
+    doctors,
+    professions,
+    comments,
+    demographics: {
+      total: postConsultationCount,
+      male,
+      female,
+      other,
+      ageGroups
+    },
+    quotations: {
+      count: filteredQuotations.length,
+      grandTotal: filteredQuotations.reduce((sum: number, q: any) => sum + Number(q.grandTotal || 0), 0),
+      advancePaid: filteredQuotations.reduce((sum: number, q: any) => sum + Number(q.advancePaid || 0), 0),
+      dueAmount: filteredQuotations.reduce((sum: number, q: any) => sum + Number(q.dueAmount || 0), 0)
+    }
+  });
+});
+
+app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD', 'Pathology', 'Organic', 'Nutrition'), async (req, res) => {
+  const parsedLimit = req.query.limit ? parseInt(String(req.query.limit), 10) : 2000;
+  const effectiveLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 2000) : 2000;
+  const parsedOffset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
+  const offset = Number.isFinite(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
+  const dateFilter = req.query.date ? String(req.query.date).trim() : '';
+  const dateFrom = req.query.dateFrom ? String(req.query.dateFrom).trim() : '';
+  const dateTo = req.query.dateTo ? String(req.query.dateTo).trim() : '';
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const conditions: string[] = [];
       const queryParams: any[] = [];
 
       if (dateFilter && dateFilter !== 'all') {
-        queryStr += ' WHERE appointmentDate = ?';
+        conditions.push('appointmentDate = ?');
         queryParams.push(dateFilter);
+      } else if (dateFrom || dateTo) {
+        conditions.push("(appointmentDate IS NOT NULL AND appointmentDate != '')");
+        if (dateFrom) {
+          conditions.push('appointmentDate >= ?');
+          queryParams.push(dateFrom);
+        }
+        if (dateTo) {
+          conditions.push('appointmentDate <= ?');
+          queryParams.push(dateTo);
+        }
       }
 
-      queryStr += ' ORDER BY createdAt DESC, id DESC';
-
-      if (limit > 0) {
-        queryStr += ` LIMIT ${limit} OFFSET ${offset || 0}`;
-      }
+      const whereSql = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+      const queryStr = `SELECT * FROM patients${whereSql} ORDER BY createdAt DESC, id DESC LIMIT ${effectiveLimit + 1} OFFSET ${offset}`;
 
       const [rows]: any = await mysqlPool.execute(queryStr, queryParams);
       if (Array.isArray(rows)) {
-        const formattedRows = rows.map(formatPatientRow);
-        if (limit > 0 || dateFilter) {
-          return res.json(formattedRows);
-        }
-        const dbIds = new Set(formattedRows.map((r: any) => r.id));
-        allPatients = [...formattedRows, ...localData.patients.filter((p: any) => p && p.id && !dbIds.has(p.id))];
+        const truncated = rows.length > effectiveLimit;
+        const capped = truncated ? rows.slice(0, effectiveLimit) : rows;
+        return res.json({
+          patients: capped.map(formatPatientRow),
+          truncated
+        });
       }
     } catch (err) {
       console.error('Error fetching patients from MySQL:', err);
     }
   }
 
+  let filteredPatients: any[] = [...localData.patients];
   if (dateFilter && dateFilter !== 'all') {
-    allPatients = allPatients.filter(p => p.appointmentDate === dateFilter);
+    filteredPatients = filteredPatients.filter(p => p && p.appointmentDate === dateFilter);
+  } else if (dateFrom || dateTo) {
+    filteredPatients = filteredPatients.filter(p => {
+      const d = p?.appointmentDate ? String(p.appointmentDate).trim() : '';
+      if (!d) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    });
   }
 
-  if (limit > 0) {
-    allPatients = allPatients.slice(offset, offset + limit);
-  }
+  const sliced = filteredPatients.slice(offset, offset + effectiveLimit);
+  const truncated = filteredPatients.length > offset + effectiveLimit;
 
-  res.json(allPatients);
+  res.json({
+    patients: sliced,
+    truncated
+  });
 });
 
 app.get('/api/patients/search', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD'), async (req, res) => {
@@ -1267,7 +2312,7 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
   }
 
   const formattedPatient = {
-    id: existingIdx >= 0 ? localData.patients[existingIdx].id : (p.id || `pat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`),
+    id: existingIdx >= 0 ? localData.patients[existingIdx].id : (p.id || makeUniqueId()),
     serialNo: cleanSerial,
     name: String(p.name).trim(),
     phone: cleanPhone,
@@ -1311,24 +2356,33 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
     createdAt: p.createdAt || (existingIdx >= 0 ? localData.patients[existingIdx].createdAt : new Date().toISOString())
   };
 
-  if (existingIdx >= 0) {
-    localData.patients[existingIdx] = { ...localData.patients[existingIdx], ...formattedPatient, ...p };
-  } else {
-    localData.patients.unshift({ ...formattedPatient, ...p });
-  }
-  saveLocalDb();
-  touchServerDataVersion();
-
   if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
     try {
-      await mysqlPool.execute(
+      await conn.beginTransaction();
+
+      if ((formattedPatient.isConfirmed || formattedPatient.isOnHold) && (formattedPatient.consultationSerial === null || formattedPatient.consultationSerial === undefined)) {
+        const [existingDbRows]: any = await conn.execute(
+          'SELECT isConfirmed, isOnHold, consultationSerial FROM patients WHERE id = ? LIMIT 1 FOR UPDATE',
+          [formattedPatient.id]
+        );
+        const existingDb = Array.isArray(existingDbRows) && existingDbRows.length > 0 ? existingDbRows[0] : null;
+        if (existingDb && (existingDb.isConfirmed || existingDb.isOnHold) && existingDb.consultationSerial !== null && existingDb.consultationSerial !== undefined && Number(existingDb.consultationSerial) > 0) {
+          formattedPatient.consultationSerial = Number(existingDb.consultationSerial);
+        } else {
+          formattedPatient.consultationSerial = await allocateDailySerialInTx(conn, formattedPatient.appointmentDate);
+        }
+      }
+
+      await conn.execute(
         `INSERT INTO patients (
           id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
           isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
           consultationComment, postConsultationConfirmed, postConfirmedAt, isOnHold, heldAt, holdReason,
-          pathologyStatus, pathologyUpdatedAt, pathologyUpdatedBy, organicStatus, organicUpdatedAt, organicUpdatedBy, nutritionStatus, nutritionUpdatedAt, nutritionUpdatedBy
+          pathologyStatus, pathologyUpdatedAt, pathologyUpdatedBy, organicStatus, organicUpdatedAt, organicUpdatedBy, nutritionStatus, nutritionUpdatedAt, nutritionUpdatedBy,
+          isInstant, instantFee, isEd
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE 
           serialNo = VALUES(serialNo),
           name = VALUES(name),
@@ -1366,23 +2420,26 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
           organicUpdatedBy = VALUES(organicUpdatedBy),
           nutritionStatus = VALUES(nutritionStatus),
           nutritionUpdatedAt = VALUES(nutritionUpdatedAt),
-          nutritionUpdatedBy = VALUES(nutritionUpdatedBy)`,
+          nutritionUpdatedBy = VALUES(nutritionUpdatedBy),
+          isInstant = VALUES(isInstant),
+          instantFee = VALUES(instantFee),
+          isEd = VALUES(isEd)`,
         [
-          formattedPatient.id,
-          formattedPatient.serialNo,
-          formattedPatient.name,
-          formattedPatient.phone,
-          formattedPatient.age,
-          formattedPatient.gender,
-          formattedPatient.address,
-          formattedPatient.doctorName,
-          formattedPatient.appointmentDate,
-          formattedPatient.appointmentTime,
-          formattedPatient.department,
-          formattedPatient.status,
-          formattedPatient.notes,
-          formattedPatient.remark,
-          formattedPatient.createdAt,
+          formattedPatient.id ?? null,
+          formattedPatient.serialNo ?? null,
+          formattedPatient.name ?? null,
+          formattedPatient.phone ?? null,
+          formattedPatient.age ?? null,
+          formattedPatient.gender ?? null,
+          formattedPatient.address ?? null,
+          formattedPatient.doctorName ?? null,
+          formattedPatient.appointmentDate ?? null,
+          formattedPatient.appointmentTime ?? null,
+          formattedPatient.department ?? null,
+          formattedPatient.status ?? null,
+          formattedPatient.notes ?? null,
+          formattedPatient.remark ?? null,
+          formattedPatient.createdAt ?? null,
           formattedPatient.isConfirmed ? 1 : 0,
           formattedPatient.confirmedAt || '',
           formattedPatient.consultationSerial !== null && formattedPatient.consultationSerial !== undefined ? formattedPatient.consultationSerial : null,
@@ -1406,103 +2463,124 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
           formattedPatient.organicUpdatedBy || '',
           formattedPatient.nutritionStatus || '',
           formattedPatient.nutritionUpdatedAt || '',
-          formattedPatient.nutritionUpdatedBy || ''
+          formattedPatient.nutritionUpdatedBy || '',
+          formattedPatient.isInstant ? 1 : 0,
+          formattedPatient.instantFee ?? (formattedPatient.isInstant ? 2000 : 0),
+          formattedPatient.isEd ? 1 : 0
         ]
       );
-    } catch (err) {
+
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.execute('UPDATE patients SET lastModifiedVersion = ? WHERE id = ?', [nextVer, formattedPatient.id]);
+      await conn.commit();
+      serverDataVersion = nextVer;
+      (formattedPatient as any).lastModifiedVersion = nextVer;
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
       console.error('MySQL patient save error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to save patient to database' });
+    } finally {
+      conn.release();
     }
+  } else {
+    if ((formattedPatient.isConfirmed || formattedPatient.isOnHold) && (formattedPatient.consultationSerial === null || formattedPatient.consultationSerial === undefined)) {
+      let maxSerial = 0;
+      localData.patients.forEach(item => {
+        if (item.appointmentDate === formattedPatient.appointmentDate && item.consultationSerial && typeof item.consultationSerial === 'number') {
+          if (item.consultationSerial > maxSerial) maxSerial = item.consultationSerial;
+        }
+      });
+      formattedPatient.consultationSerial = maxSerial + 1;
+    }
+    const nextLocalVer = bumpLocalDataVersion();
+    (formattedPatient as any).lastModifiedVersion = nextLocalVer;
   }
 
-  res.json({ message: 'Patient saved successfully', patient: localData.patients[existingIdx >= 0 ? existingIdx : 0], patients: localData.patients });
+  const savedObj = { ...(existingIdx >= 0 ? localData.patients[existingIdx] : {}), ...p, ...formattedPatient };
+  if (existingIdx >= 0) {
+    localData.patients[existingIdx] = savedObj;
+  } else {
+    localData.patients.unshift(savedObj);
+  }
+  saveLocalDb();
+
+  res.json({ success: true, message: 'Patient saved successfully', patient: localData.patients[existingIdx >= 0 ? existingIdx : 0] });
 });
 
-// Single patient confirm / un-confirm endpoint with sequential consultation serial per appointment date
+// Single patient confirm / un-confirm endpoint with atomic daily consultation serial allocation
 app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
-  const { id, isConfirmed = true } = req.body;
-  if (!id && id !== 0) return res.status(400).json({ error: 'Patient ID is required' });
-
-  const idStr = String(id).trim();
-  let idx = localData.patients.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
-
-  // If patient not found in localData memory cache, search MySQL database directly
-  if (idx === -1 && isMySqlActive && mysqlPool) {
-    try {
-      const [dbRows]: any = await mysqlPool.execute(
-        'SELECT * FROM patients WHERE id = ? OR serialNo = ? LIMIT 1',
-        [idStr, idStr]
-      );
-      if (Array.isArray(dbRows) && dbRows.length > 0) {
-        const loadedPatient = formatPatientRow(dbRows[0]);
-        localData.patients.unshift(loadedPatient);
-        idx = 0;
-      }
-    } catch (dbErr) {
-      console.warn('MySQL lookup in confirm endpoint warning:', dbErr);
-    }
+  const { id, isConfirmed = true, serialNo, appointmentDate, phone } = req.body;
+  if (!id && id !== 0 && !serialNo && !phone) {
+    return res.status(400).json({ error: 'Patient ID or identification is required' });
   }
 
-  if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
-
-  const patient = localData.patients[idx];
-  const targetDate = patient.appointmentDate || new Date().toISOString().split('T')[0];
-
-  if (isConfirmed === false) {
-    // Un-confirm: revert back to waiting in Appointments Import
-    localData.patients[idx] = {
-      ...patient,
-      isConfirmed: false,
-      confirmedAt: '',
-      consultationSerial: null,
-      consultationStatus: '',
-      status: 'Pending Counseling'
-    };
-  } else {
-    // Confirm patient: calculate next sequential consultation serial for that specific appointment date
-    let maxSerial = 0;
-    localData.patients.forEach(p => {
-      if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
-        if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
-      }
-    });
-
-    if (isMySqlActive && mysqlPool) {
-      try {
-        const [mRows]: any = await mysqlPool.execute(
-          'SELECT MAX(consultationSerial) AS maxDbSerial FROM patients WHERE appointmentDate = ?',
-          [targetDate]
-        );
-        if (mRows && mRows[0] && mRows[0].maxDbSerial !== null && mRows[0].maxDbSerial !== undefined) {
-          const dbMax = Number(mRows[0].maxDbSerial);
-          if (dbMax > maxSerial) maxSerial = dbMax;
-        }
-      } catch (err) {
-        console.warn('MySQL maxSerial query error:', err);
-      }
-    }
-
-    const nextSerial = maxSerial + 1;
-    localData.patients[idx] = {
-      ...patient,
-      isConfirmed: true,
-      confirmedAt: new Date().toISOString(),
-      consultationSerial: nextSerial,
-      consultationStatus: 'Pre Consultation',
-      status: 'Pre Consultation',
-      isOnHold: false,
-      heldAt: '',
-      holdReason: ''
-    };
-  }
-
-  saveLocalDb();
-  touchServerDataVersion();
+  const idStr = id != null ? String(id).trim() : '';
+  const serialStr = serialNo != null ? String(serialNo).trim() : '';
+  const dateStr = appointmentDate != null ? String(appointmentDate).trim() : '';
+  const phoneStr = phone != null ? String(phone).trim() : '';
 
   if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
     try {
-      const updatedP = localData.patients[idx];
-      const [upRes]: any = await mysqlPool.execute(
-        `UPDATE patients 
+      await conn.beginTransaction();
+
+      const [dbRows]: any = await conn.execute(
+        `SELECT * FROM patients
+         WHERE (id = ? AND id != '')
+            OR (serialNo = ? AND appointmentDate = ? AND serialNo != '')
+            OR (phone = ? AND appointmentDate = ? AND phone != '' AND phone != '01700000000')
+            OR (serialNo = ? AND serialNo != '' AND (? = '' OR appointmentDate = ?))
+         LIMIT 1 FOR UPDATE`,
+        [
+          idStr || '__none__',
+          serialStr || '__none__', dateStr || '__none__',
+          phoneStr || '__none__', dateStr || '__none__',
+          idStr || '__none__', dateStr, dateStr
+        ]
+      );
+
+      if (!Array.isArray(dbRows) || dbRows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      const patient = formatPatientRow(dbRows[0]);
+      const targetDate = dateStr || patient.appointmentDate || new Date().toISOString().split('T')[0];
+
+      let updatedP: any;
+      if (isConfirmed === false) {
+        updatedP = {
+          ...patient,
+          isConfirmed: false,
+          confirmedAt: '',
+          consultationSerial: null,
+          consultationStatus: '',
+          status: 'Pending Counseling'
+        };
+      } else {
+        const existingSerial = (patient.isConfirmed || patient.isOnHold) &&
+          patient.consultationSerial !== null &&
+          patient.consultationSerial !== undefined &&
+          Number(patient.consultationSerial) > 0
+          ? Number(patient.consultationSerial)
+          : null;
+        const nextSerial = existingSerial ?? await allocateDailySerialInTx(conn, targetDate);
+
+        updatedP = {
+          ...patient,
+          isConfirmed: true,
+          confirmedAt: patient.confirmedAt || new Date().toISOString(),
+          consultationSerial: nextSerial,
+          consultationStatus: 'Pre Consultation',
+          status: 'Pre Consultation',
+          isOnHold: false,
+          heldAt: '',
+          holdReason: ''
+        };
+      }
+
+      await conn.execute(
+        `UPDATE patients
          SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?, isOnHold = ?, heldAt = ?, holdReason = ?
          WHERE id = ?`,
         [
@@ -1517,65 +2595,199 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
           String(updatedP.id)
         ]
       );
-      if (upRes && upRes.affectedRows === 0 && updatedP.serialNo) {
-        await mysqlPool.execute(
-          `UPDATE patients 
-           SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?, isOnHold = ?, heldAt = ?, holdReason = ?
-           WHERE serialNo = ?`,
-          [
-            updatedP.isConfirmed ? 1 : 0,
-            updatedP.confirmedAt || '',
-            updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
-            updatedP.consultationStatus || '',
-            updatedP.status || 'Pending Counseling',
-            updatedP.isOnHold ? 1 : 0,
-            updatedP.heldAt || '',
-            updatedP.holdReason || '',
-            String(updatedP.serialNo)
-          ]
-        );
+
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.execute('UPDATE patients SET lastModifiedVersion = ? WHERE id = ?', [nextVer, String(updatedP.id)]);
+      await conn.commit();
+      serverDataVersion = nextVer;
+      updatedP.lastModifiedVersion = nextVer;
+
+      const localIdx = localData.patients.findIndex(p => String(p.id).trim() === String(updatedP.id).trim());
+      if (localIdx >= 0) {
+        localData.patients[localIdx] = { ...localData.patients[localIdx], ...updatedP };
+      } else {
+        localData.patients.unshift(updatedP);
       }
-    } catch (err) {
-      console.error('MySQL patient confirm update error:', err);
+      saveLocalDb();
+
+      return res.json({ success: true, patient: updatedP });
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
+      console.error('MySQL patient confirm transaction error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to confirm patient in database' });
+    } finally {
+      conn.release();
     }
   }
 
-  res.json({ success: true, patient: localData.patients[idx], patients: localData.patients });
-});
-
-// Single patient Hold / Un-Hold endpoint with sequential serial reservation
-app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
-  const { id, isOnHold = true, holdReason = '' } = req.body;
-  if (!id && id !== 0) return res.status(400).json({ error: 'Patient ID is required' });
-
-  const idStr = String(id).trim();
-  let idx = localData.patients.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
-
-  // If patient not in local memory, search MySQL database directly
-  if (idx === -1 && isMySqlActive && mysqlPool) {
-    try {
-      const [dbRows]: any = await mysqlPool.execute(
-        'SELECT * FROM patients WHERE id = ? OR serialNo = ? LIMIT 1',
-        [idStr, idStr]
-      );
-      if (Array.isArray(dbRows) && dbRows.length > 0) {
-        const loadedPatient = formatPatientRow(dbRows[0]);
-        localData.patients.unshift(loadedPatient);
-        idx = 0;
-      }
-    } catch (dbErr) {
-      console.warn('MySQL lookup in hold endpoint warning:', dbErr);
-    }
-  }
+  // Local File Persistence Mode
+  const idx = localData.patients.findIndex(p => {
+    if (idStr && String(p.id).trim() === idStr) return true;
+    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
+    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
+    if (idStr && p.serialNo && String(p.serialNo).trim() === idStr && (!dateStr || p.appointmentDate === dateStr)) return true;
+    return false;
+  });
 
   if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
 
   const patient = localData.patients[idx];
+  const targetDate = dateStr || patient.appointmentDate || new Date().toISOString().split('T')[0];
+
+  if (isConfirmed === false) {
+    localData.patients[idx] = {
+      ...patient,
+      isConfirmed: false,
+      confirmedAt: '',
+      consultationSerial: null,
+      consultationStatus: '',
+      status: 'Pending Counseling'
+    };
+  } else {
+    let nextSerial: number;
+    if ((patient.isConfirmed || patient.isOnHold) && patient.consultationSerial && typeof patient.consultationSerial === 'number') {
+      nextSerial = patient.consultationSerial;
+    } else {
+      let maxSerial = 0;
+      localData.patients.forEach(p => {
+        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+        }
+      });
+      nextSerial = maxSerial + 1;
+    }
+    localData.patients[idx] = {
+      ...patient,
+      isConfirmed: true,
+      confirmedAt: patient.confirmedAt || new Date().toISOString(),
+      consultationSerial: nextSerial,
+      consultationStatus: 'Pre Consultation',
+      status: 'Pre Consultation',
+      isOnHold: false,
+      heldAt: '',
+      holdReason: ''
+    };
+  }
+
+  const nextLocalVer = bumpLocalDataVersion();
+  localData.patients[idx].lastModifiedVersion = nextLocalVer;
+  saveLocalDb();
+
+  res.json({ success: true, patient: localData.patients[idx] });
+});
+
+// Single patient Hold / Un-Hold endpoint with atomic sequential serial reservation
+app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
+  const { id, isOnHold = true, holdReason = '', serialNo, appointmentDate, phone } = req.body;
+  if (!id && id !== 0 && !serialNo && !phone) return res.status(400).json({ error: 'Patient ID is required' });
+
+  const idStr = id != null ? String(id).trim() : '';
+  const serialStr = serialNo != null ? String(serialNo).trim() : '';
+  const dateStr = appointmentDate != null ? String(appointmentDate).trim() : '';
+  const phoneStr = phone != null ? String(phone).trim() : '';
   const willHold = Boolean(isOnHold);
-  const targetDate = patient.appointmentDate || new Date().toISOString().split('T')[0];
+
+  if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [dbRows]: any = await conn.execute(
+        `SELECT * FROM patients
+         WHERE (id = ? AND id != '')
+            OR (serialNo = ? AND appointmentDate = ? AND serialNo != '')
+            OR (phone = ? AND appointmentDate = ? AND phone != '' AND phone != '01700000000')
+            OR (serialNo = ? AND serialNo != '' AND (? = '' OR appointmentDate = ?))
+         LIMIT 1 FOR UPDATE`,
+        [
+          idStr || '__none__',
+          serialStr || '__none__', dateStr || '__none__',
+          phoneStr || '__none__', dateStr || '__none__',
+          idStr || '__none__', dateStr, dateStr
+        ]
+      );
+
+      if (!Array.isArray(dbRows) || dbRows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      const patient = formatPatientRow(dbRows[0]);
+      const targetDate = dateStr || patient.appointmentDate || new Date().toISOString().split('T')[0];
+      let assignedSerial = patient.consultationSerial;
+
+      if (willHold && (!assignedSerial || typeof assignedSerial !== 'number')) {
+        assignedSerial = await allocateDailySerialInTx(conn, targetDate);
+      }
+
+      const updatedP = {
+        ...patient,
+        isConfirmed: willHold ? false : true,
+        confirmedAt: willHold ? (patient.confirmedAt || '') : (patient.confirmedAt || new Date().toISOString()),
+        consultationSerial: assignedSerial,
+        consultationStatus: willHold ? (patient.consultationStatus || 'Pre Consultation') : 'Pre Consultation',
+        status: willHold ? (patient.status || 'Pending Counseling') : 'Pre Consultation',
+        isOnHold: willHold,
+        heldAt: willHold ? (patient.heldAt || new Date().toISOString()) : '',
+        holdReason: willHold ? (holdReason || 'Patient absent when turn called') : ''
+      };
+
+      await conn.execute(
+        `UPDATE patients
+         SET isOnHold = ?, heldAt = ?, holdReason = ?, isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+         WHERE id = ?`,
+        [
+          willHold ? 1 : 0,
+          updatedP.heldAt || '',
+          updatedP.holdReason || '',
+          updatedP.isConfirmed ? 1 : 0,
+          updatedP.confirmedAt || '',
+          updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
+          updatedP.consultationStatus || '',
+          updatedP.status || 'Pre Consultation',
+          String(updatedP.id)
+        ]
+      );
+
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.execute('UPDATE patients SET lastModifiedVersion = ? WHERE id = ?', [nextVer, String(updatedP.id)]);
+      await conn.commit();
+      serverDataVersion = nextVer;
+      (updatedP as any).lastModifiedVersion = nextVer;
+
+      const localIdx = localData.patients.findIndex(p => String(p.id).trim() === String(updatedP.id).trim());
+      if (localIdx >= 0) {
+        localData.patients[localIdx] = { ...localData.patients[localIdx], ...updatedP };
+      } else {
+        localData.patients.unshift(updatedP);
+      }
+      saveLocalDb();
+
+      return res.json({ success: true, patient: updatedP });
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
+      console.error('MySQL patient hold transaction error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to update hold status in database' });
+    } finally {
+      conn.release();
+    }
+  }
+
+  // Local File Persistence Mode
+  const idx = localData.patients.findIndex(p => {
+    if (idStr && String(p.id).trim() === idStr) return true;
+    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
+    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
+    if (idStr && p.serialNo && String(p.serialNo).trim() === idStr && (!dateStr || p.appointmentDate === dateStr)) return true;
+    return false;
+  });
+
+  if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
+
+  const patient = localData.patients[idx];
+  const targetDate = dateStr || patient.appointmentDate || new Date().toISOString().split('T')[0];
   let assignedSerial = patient.consultationSerial;
 
-  // If putting on Hold and patient does not yet have a consultationSerial, reserve the next sequential serial!
   if (willHold && (!assignedSerial || typeof assignedSerial !== 'number')) {
     let maxSerial = 0;
     localData.patients.forEach(p => {
@@ -1583,22 +2795,6 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
         if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
       }
     });
-
-    if (isMySqlActive && mysqlPool) {
-      try {
-        const [mRows]: any = await mysqlPool.execute(
-          'SELECT MAX(consultationSerial) AS maxDbSerial FROM patients WHERE appointmentDate = ?',
-          [targetDate]
-        );
-        if (mRows && mRows[0] && mRows[0].maxDbSerial !== null && mRows[0].maxDbSerial !== undefined) {
-          const dbMax = Number(mRows[0].maxDbSerial);
-          if (dbMax > maxSerial) maxSerial = dbMax;
-        }
-      } catch (err) {
-        console.warn('MySQL maxSerial query error:', err);
-      }
-    }
-
     assignedSerial = maxSerial + 1;
   }
 
@@ -1614,52 +2810,11 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
     holdReason: willHold ? (holdReason || 'Patient absent when turn called') : ''
   };
 
+  const nextLocalVer = bumpLocalDataVersion();
+  localData.patients[idx].lastModifiedVersion = nextLocalVer;
   saveLocalDb();
-  touchServerDataVersion();
 
-  if (isMySqlActive && mysqlPool) {
-    try {
-      const updatedP = localData.patients[idx];
-      const [upRes]: any = await mysqlPool.execute(
-        `UPDATE patients 
-         SET isOnHold = ?, heldAt = ?, holdReason = ?, isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
-         WHERE id = ?`,
-        [
-          willHold ? 1 : 0,
-          updatedP.heldAt || '',
-          updatedP.holdReason || '',
-          updatedP.isConfirmed ? 1 : 0,
-          updatedP.confirmedAt || '',
-          updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
-          updatedP.consultationStatus || '',
-          updatedP.status || 'Pre Consultation',
-          String(updatedP.id)
-        ]
-      );
-      if (upRes && upRes.affectedRows === 0 && updatedP.serialNo) {
-        await mysqlPool.execute(
-          `UPDATE patients 
-           SET isOnHold = ?, heldAt = ?, holdReason = ?, isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
-           WHERE serialNo = ?`,
-          [
-            willHold ? 1 : 0,
-            updatedP.heldAt || '',
-            updatedP.holdReason || '',
-            updatedP.isConfirmed ? 1 : 0,
-            updatedP.confirmedAt || '',
-            updatedP.consultationSerial !== null && updatedP.consultationSerial !== undefined ? updatedP.consultationSerial : null,
-            updatedP.consultationStatus || '',
-            updatedP.status || 'Pre Consultation',
-            String(updatedP.serialNo)
-          ]
-        );
-      }
-    } catch (err) {
-      console.warn('MySQL patient hold update error:', err);
-    }
-  }
-
-  res.json({ success: true, patient: localData.patients[idx], patients: localData.patients });
+  res.json({ success: true, patient: localData.patients[idx] });
 });
 
 // Update Department Clearance / Service Tracking (Pathology, Organic, Nutrition)
@@ -1670,7 +2825,7 @@ app.post('/api/patients/department-status', authenticateToken, requireRole('Syst
   }
 
   const idx = localData.patients.findIndex(p => p.id === patientId);
-  if (idx === -1) {
+  if (idx === -1 && (!isMySqlActive || !mysqlPool)) {
     return res.status(404).json({ error: 'Patient not found' });
   }
 
@@ -1678,30 +2833,39 @@ app.post('/api/patients/department-status', authenticateToken, requireRole('Syst
   const now = new Date().toISOString();
   const updaterName = req.user?.name || req.user?.username || 'Department Staff';
 
-  const patient = { ...localData.patients[idx] };
-  if (department === 'pathology') {
-    patient.pathologyStatus = normalizedStatus;
-    patient.pathologyUpdatedAt = normalizedStatus ? now : '';
-    patient.pathologyUpdatedBy = normalizedStatus ? updaterName : '';
-  } else if (department === 'organic') {
-    patient.organicStatus = normalizedStatus;
-    patient.organicUpdatedAt = normalizedStatus ? now : '';
-    patient.organicUpdatedBy = normalizedStatus ? updaterName : '';
-  } else if (department === 'nutrition') {
-    patient.nutritionStatus = normalizedStatus;
-    patient.nutritionUpdatedAt = normalizedStatus ? now : '';
-    patient.nutritionUpdatedBy = normalizedStatus ? updaterName : '';
-  } else {
+  const applyDepartmentUpdate = (target: any) => {
+    const updated = { ...target };
+    if (department === 'pathology') {
+      updated.pathologyStatus = normalizedStatus;
+      updated.pathologyUpdatedAt = normalizedStatus ? now : '';
+      updated.pathologyUpdatedBy = normalizedStatus ? updaterName : '';
+    } else if (department === 'organic') {
+      updated.organicStatus = normalizedStatus;
+      updated.organicUpdatedAt = normalizedStatus ? now : '';
+      updated.organicUpdatedBy = normalizedStatus ? updaterName : '';
+    } else if (department === 'nutrition') {
+      updated.nutritionStatus = normalizedStatus;
+      updated.nutritionUpdatedAt = normalizedStatus ? now : '';
+      updated.nutritionUpdatedBy = normalizedStatus ? updaterName : '';
+    }
+    return updated;
+  };
+
+  if (department !== 'pathology' && department !== 'organic' && department !== 'nutrition') {
     return res.status(400).json({ error: 'Invalid department specified. Allowed: pathology, organic, nutrition' });
   }
 
-  localData.patients[idx] = patient;
-  saveLocalDb();
-  touchServerDataVersion();
-
   if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
     try {
-      await mysqlPool.execute(
+      await conn.beginTransaction();
+      const [dbRows]: any = await conn.execute('SELECT * FROM patients WHERE id = ? LIMIT 1 FOR UPDATE', [patientId]);
+      if (!Array.isArray(dbRows) || dbRows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+      const patient = applyDepartmentUpdate(formatPatientRow(dbRows[0]));
+      await conn.execute(
         `UPDATE patients 
          SET pathologyStatus = ?, pathologyUpdatedAt = ?, pathologyUpdatedBy = ?,
              organicStatus = ?, organicUpdatedAt = ?, organicUpdatedBy = ?,
@@ -1720,56 +2884,186 @@ app.post('/api/patients/department-status', authenticateToken, requireRole('Syst
           patient.id
         ]
       );
-    } catch (err) {
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.execute('UPDATE patients SET lastModifiedVersion = ? WHERE id = ?', [nextVer, patient.id]);
+      await conn.commit();
+      serverDataVersion = nextVer;
+      patient.lastModifiedVersion = nextVer;
+
+      if (idx >= 0) {
+        localData.patients[idx] = { ...localData.patients[idx], ...patient };
+      } else {
+        localData.patients.unshift(patient);
+      }
+      saveLocalDb();
+
+      return res.json({ success: true, patient });
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
       console.error('MySQL update department status error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to update department status' });
+    } finally {
+      conn.release();
     }
   }
 
-  res.json({ success: true, patient: localData.patients[idx], patients: localData.patients });
+  const patient = applyDepartmentUpdate(localData.patients[idx]);
+  localData.patients[idx] = patient;
+  const nextLocalVer = bumpLocalDataVersion();
+  localData.patients[idx].lastModifiedVersion = nextLocalVer;
+  saveLocalDb();
+
+  res.json({ success: true, patient: localData.patients[idx] });
 });
 
-// Batch confirm endpoint
+// Batch confirm endpoint with atomic daily serial allocation
 app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor'), async (req, res) => {
-  const { ids } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No patient IDs provided' });
+  const { ids, patients: reqPatients } = req.body;
+  const targetItems: any[] = Array.isArray(reqPatients) && reqPatients.length > 0 
+    ? reqPatients 
+    : (Array.isArray(ids) ? ids.map(id => (typeof id === 'object' ? id : { id })) : []);
 
-  const updated: any[] = [];
-  for (const id of ids) {
-    const idStr = String(id).trim();
-    let idx = localData.patients.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
+  if (targetItems.length === 0) return res.status(400).json({ error: 'No patient IDs provided' });
 
-    // If patient not in local memory, load from MySQL database directly
-    if (idx === -1 && isMySqlActive && mysqlPool) {
-      try {
-        const [dbRows]: any = await mysqlPool.execute(
-          'SELECT * FROM patients WHERE id = ? OR serialNo = ? LIMIT 1',
-          [idStr, idStr]
+  if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const updated: any[] = [];
+
+      for (const item of targetItems) {
+        const idStr = item.id != null ? String(item.id).trim() : '';
+        const serialStr = item.serialNo != null ? String(item.serialNo).trim() : '';
+        const dateStr = item.appointmentDate != null ? String(item.appointmentDate).trim() : '';
+        const phoneStr = item.phone != null ? String(item.phone).trim() : '';
+
+        const [dbRows]: any = await conn.execute(
+          `SELECT * FROM patients
+           WHERE (id = ? AND id != '')
+              OR (serialNo = ? AND appointmentDate = ? AND serialNo != '')
+              OR (phone = ? AND appointmentDate = ? AND phone != '' AND phone != '01700000000')
+              OR (serialNo = ? AND serialNo != '' AND (? = '' OR appointmentDate = ?))
+           LIMIT 1 FOR UPDATE`,
+          [
+            idStr || '__none__',
+            serialStr || '__none__', dateStr || '__none__',
+            phoneStr || '__none__', dateStr || '__none__',
+            idStr || '__none__', dateStr, dateStr
+          ]
         );
+
         if (Array.isArray(dbRows) && dbRows.length > 0) {
-          const loadedPatient = formatPatientRow(dbRows[0]);
-          localData.patients.unshift(loadedPatient);
-          idx = 0;
+          const patient = formatPatientRow(dbRows[0]);
+          if (!patient.isConfirmed) {
+            const targetDate = dateStr || patient.appointmentDate || new Date().toISOString().split('T')[0];
+            const existingSerial = patient.isOnHold &&
+              patient.consultationSerial !== null &&
+              patient.consultationSerial !== undefined &&
+              Number(patient.consultationSerial) > 0
+              ? Number(patient.consultationSerial)
+              : null;
+            const nextSerial = existingSerial ?? await allocateDailySerialInTx(conn, targetDate);
+
+            const updatedP = {
+              ...patient,
+              isConfirmed: true,
+              confirmedAt: patient.confirmedAt || new Date().toISOString(),
+              consultationSerial: nextSerial,
+              consultationStatus: 'Pre Consultation',
+              status: 'Pre Consultation'
+            };
+
+            await conn.execute(
+              `UPDATE patients
+               SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
+               WHERE id = ?`,
+              [
+                1,
+                updatedP.confirmedAt,
+                updatedP.consultationSerial,
+                'Pre Consultation',
+                'Pre Consultation',
+                String(updatedP.id)
+              ]
+            );
+            updated.push(updatedP);
+          }
         }
-      } catch (dbErr) {
-        console.warn('MySQL batch confirm lookup warning:', dbErr);
       }
+
+      if (updated.length > 0) {
+        const nextVer = await bumpDataVersionInTx(conn);
+        for (let i = 0; i < updated.length; i += 500) {
+          const chunkIds = updated.slice(i, i + 500).map((u: any) => String(u.id));
+          const placeholders = chunkIds.map(() => '?').join(',');
+          await conn.execute(
+            `UPDATE patients SET lastModifiedVersion = ? WHERE id IN (${placeholders})`,
+            [nextVer, ...chunkIds]
+          );
+        }
+        await conn.commit();
+        serverDataVersion = nextVer;
+
+        for (const p of updated) {
+          p.lastModifiedVersion = nextVer;
+          const localIdx = localData.patients.findIndex(lp => String(lp.id).trim() === String(p.id).trim());
+          if (localIdx >= 0) {
+            localData.patients[localIdx] = { ...localData.patients[localIdx], ...p };
+          } else {
+            localData.patients.unshift(p);
+          }
+        }
+        saveLocalDb();
+      } else {
+        await conn.commit();
+      }
+
+      return res.json({ success: true, count: updated.length, updated });
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
+      console.error('MySQL batch confirm transaction error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to batch confirm patients in database' });
+    } finally {
+      conn.release();
     }
+  }
+
+  // Local File Persistence Mode
+  const updated: any[] = [];
+  for (const item of targetItems) {
+    const idStr = item.id != null ? String(item.id).trim() : '';
+    const serialStr = item.serialNo != null ? String(item.serialNo).trim() : '';
+    const dateStr = item.appointmentDate != null ? String(item.appointmentDate).trim() : '';
+    const phoneStr = item.phone != null ? String(item.phone).trim() : '';
+
+    const idx = localData.patients.findIndex(p => {
+      if (idStr && String(p.id).trim() === idStr) return true;
+      if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
+      if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
+      if (idStr && p.serialNo && String(p.serialNo).trim() === idStr && (!dateStr || p.appointmentDate === dateStr)) return true;
+      return false;
+    });
 
     if (idx !== -1) {
       const patient = localData.patients[idx];
       if (!patient.isConfirmed) {
-        const targetDate = patient.appointmentDate || new Date().toISOString().split('T')[0];
-        let maxSerial = 0;
-        localData.patients.forEach(p => {
-          if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
-            if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
-          }
-        });
-        const nextSerial = maxSerial + 1;
+        const targetDate = dateStr || patient.appointmentDate || new Date().toISOString().split('T')[0];
+        let nextSerial: number;
+        if (patient.isOnHold && patient.consultationSerial && typeof patient.consultationSerial === 'number') {
+          nextSerial = patient.consultationSerial;
+        } else {
+          let maxSerial = 0;
+          localData.patients.forEach(p => {
+            if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
+              if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
+            }
+          });
+          nextSerial = maxSerial + 1;
+        }
         localData.patients[idx] = {
           ...patient,
           isConfirmed: true,
-          confirmedAt: new Date().toISOString(),
+          confirmedAt: patient.confirmedAt || new Date().toISOString(),
           consultationSerial: nextSerial,
           consultationStatus: 'Pre Consultation',
           status: 'Pre Consultation'
@@ -1779,47 +3073,13 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
     }
   }
 
-  saveLocalDb();
-  touchServerDataVersion();
-
-  if (isMySqlActive && mysqlPool && updated.length > 0) {
-    try {
-      for (const p of updated) {
-        const [upRes]: any = await mysqlPool.execute(
-          `UPDATE patients 
-           SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
-           WHERE id = ?`,
-          [
-            p.isConfirmed ? 1 : 0,
-            p.confirmedAt || '',
-            p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null,
-            p.consultationStatus || '',
-            p.status || 'Pending Counseling',
-            String(p.id)
-          ]
-        );
-        if (upRes && upRes.affectedRows === 0 && p.serialNo) {
-          await mysqlPool.execute(
-            `UPDATE patients 
-             SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
-             WHERE serialNo = ?`,
-            [
-              p.isConfirmed ? 1 : 0,
-              p.confirmedAt || '',
-              p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null,
-              p.consultationStatus || '',
-              p.status || 'Pending Counseling',
-              String(p.serialNo)
-            ]
-          );
-        }
-      }
-    } catch (err) {
-      console.error('MySQL batch confirm error:', err);
-    }
+  const nextLocalVer = bumpLocalDataVersion();
+  for (const u of updated) {
+    u.lastModifiedVersion = nextLocalVer;
   }
+  saveLocalDb();
 
-  res.json({ success: true, count: updated.length, patients: localData.patients });
+  res.json({ success: true, count: updated.length, updated });
 });
 
 app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 'Call Center'), async (req, res) => {
@@ -1828,20 +3088,31 @@ app.post('/api/patients/delete', authenticateToken, requireRole('System Admin', 
     return res.status(400).json({ error: 'No patient IDs provided for deletion' });
   }
 
+  if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const placeholders = ids.map(() => '?').join(',');
+      await conn.execute(`DELETE FROM patients WHERE id IN (${placeholders})`, ids);
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.commit();
+      serverDataVersion = nextVer;
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
+      console.error('MySQL patient batch delete error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to delete patients from database' });
+    } finally {
+      conn.release();
+    }
+  } else {
+    bumpLocalDataVersion();
+  }
+
   const idSet = new Set(ids);
   localData.patients = localData.patients.filter(p => !idSet.has(p.id));
   saveLocalDb();
 
-  if (isMySqlActive && mysqlPool) {
-    try {
-      const placeholders = ids.map(() => '?').join(',');
-      await mysqlPool.execute(`DELETE FROM patients WHERE id IN (${placeholders})`, ids);
-    } catch (err) {
-      console.error('MySQL patient batch delete error:', err);
-    }
-  }
-
-  res.json({ message: `${ids.length} patient(s) deleted successfully`, deletedCount: ids.length, patients: localData.patients });
+  res.json({ success: true, message: `${ids.length} patient(s) deleted successfully`, deletedCount: ids.length, deletedIds: ids });
 });
 
 // PDF Upload Endpoint to parse Patient Name, Gender, Age, Phone Number, Remark (Disease)
@@ -2297,8 +3568,9 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
 });
 
 // Helper for high-performance MySQL batch upsert
-async function batchUpsertPatientsToMySQL(patientsList: any[]) {
-  if (!isMySqlActive || !mysqlPool || !Array.isArray(patientsList) || patientsList.length === 0) {
+async function batchUpsertPatientsToMySQL(patientsList: any[], conn?: mysql.PoolConnection) {
+  const execTarget: mysql.PoolConnection | mysql.Pool | null = conn || mysqlPool;
+  if (!isMySqlActive || !execTarget || !Array.isArray(patientsList) || patientsList.length === 0) {
     return;
   }
 
@@ -2382,57 +3654,53 @@ async function batchUpsertPatientsToMySQL(patientsList: any[]) {
     `;
 
     try {
-      await mysqlPool.execute(sql, values);
+      await execTarget.execute(sql, values);
     } catch (batchErr) {
       console.warn(`Batch upsert chunk failed, attempting single-row fallback:`, batchErr);
       for (const p of chunk) {
-        try {
-          await mysqlPool.execute(
-            `INSERT INTO patients (
-              id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
-              isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
-              consultationComment, postConsultationConfirmed, postConfirmedAt, isInstant, instantFee, isEd
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-              serialNo = VALUES(serialNo),
-              name = VALUES(name),
-              phone = VALUES(phone),
-              age = VALUES(age),
-              gender = VALUES(gender),
-              address = VALUES(address),
-              doctorName = VALUES(doctorName),
-              appointmentDate = VALUES(appointmentDate),
-              appointmentTime = VALUES(appointmentTime),
-              department = VALUES(department),
-              status = VALUES(status),
-              notes = VALUES(notes),
-              remark = VALUES(remark),
-              isConfirmed = VALUES(isConfirmed),
-              confirmedAt = VALUES(confirmedAt),
-              consultationSerial = VALUES(consultationSerial),
-              consultationStatus = VALUES(consultationStatus),
-              profession = VALUES(profession),
-              preDoctorName = VALUES(preDoctorName),
-              postDoctorName = VALUES(postDoctorName),
-              preConsultationAt = VALUES(preConsultationAt),
-              postConsultationAt = VALUES(postConsultationAt),
-              consultationComment = VALUES(consultationComment),
-              postConsultationConfirmed = VALUES(postConsultationConfirmed),
-              postConfirmedAt = VALUES(postConfirmedAt),
-              isInstant = VALUES(isInstant),
-              instantFee = VALUES(instantFee),
-              isEd = VALUES(isEd)`,
-            [
-              p.id, p.serialNo || '', p.name || '', p.phone || '', p.age || '', p.gender || 'Other', p.address || '', p.doctorName || '', p.appointmentDate || '', p.appointmentTime || '', p.department || '', p.status || '', p.notes || '', p.remark || '', p.createdAt || '',
-              p.isConfirmed ? 1 : 0, p.confirmedAt || '', p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null, p.consultationStatus || '', p.profession || '', p.preDoctorName || '', p.postDoctorName || '', p.preConsultationAt || '', p.postConsultationAt || '',
-              p.consultationComment || '', p.postConsultationConfirmed ? 1 : 0, p.postConfirmedAt || '',
-              p.isInstant ? 1 : 0, p.instantFee != null ? p.instantFee : (p.isInstant ? 2000 : 0), p.isEd ? 1 : 0
-            ]
-          );
-        } catch (singleErr) {
-          console.error('MySQL single row fallback save error:', singleErr);
-        }
+        await execTarget.execute(
+          `INSERT INTO patients (
+            id, serialNo, name, phone, age, gender, address, doctorName, appointmentDate, appointmentTime, department, status, notes, remark, createdAt,
+            isConfirmed, confirmedAt, consultationSerial, consultationStatus, profession, preDoctorName, postDoctorName, preConsultationAt, postConsultationAt,
+            consultationComment, postConsultationConfirmed, postConfirmedAt, isInstant, instantFee, isEd
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            serialNo = VALUES(serialNo),
+            name = VALUES(name),
+            phone = VALUES(phone),
+            age = VALUES(age),
+            gender = VALUES(gender),
+            address = VALUES(address),
+            doctorName = VALUES(doctorName),
+            appointmentDate = VALUES(appointmentDate),
+            appointmentTime = VALUES(appointmentTime),
+            department = VALUES(department),
+            status = IF(patients.isConfirmed = 1 OR patients.status = 'Pre Consultation' OR patients.status = 'Post Consultation', patients.status, VALUES(status)),
+            notes = VALUES(notes),
+            remark = VALUES(remark),
+            isConfirmed = IF(patients.isConfirmed = 1, 1, VALUES(isConfirmed)),
+            confirmedAt = IF(patients.isConfirmed = 1 AND patients.confirmedAt IS NOT NULL AND patients.confirmedAt != '', patients.confirmedAt, VALUES(confirmedAt)),
+            consultationSerial = IF(patients.consultationSerial IS NOT NULL AND patients.consultationSerial > 0, patients.consultationSerial, VALUES(consultationSerial)),
+            consultationStatus = IF(patients.consultationStatus IS NOT NULL AND patients.consultationStatus != '', patients.consultationStatus, VALUES(consultationStatus)),
+            profession = IF(patients.profession IS NOT NULL AND patients.profession != '', patients.profession, VALUES(profession)),
+            preDoctorName = IF(patients.preDoctorName IS NOT NULL AND patients.preDoctorName != '', patients.preDoctorName, VALUES(preDoctorName)),
+            postDoctorName = IF(patients.postDoctorName IS NOT NULL AND patients.postDoctorName != '', patients.postDoctorName, VALUES(postDoctorName)),
+            preConsultationAt = IF(patients.preConsultationAt IS NOT NULL AND patients.preConsultationAt != '', patients.preConsultationAt, VALUES(preConsultationAt)),
+            postConsultationAt = IF(patients.postConsultationAt IS NOT NULL AND patients.postConsultationAt != '', patients.postConsultationAt, VALUES(postConsultationAt)),
+            consultationComment = IF(patients.consultationComment IS NOT NULL AND patients.consultationComment != '', patients.consultationComment, VALUES(consultationComment)),
+            postConsultationConfirmed = IF(patients.postConsultationConfirmed = 1, 1, VALUES(postConsultationConfirmed)),
+            postConfirmedAt = IF(patients.postConfirmedAt IS NOT NULL AND patients.postConfirmedAt != '', patients.postConfirmedAt, VALUES(postConfirmedAt)),
+            isInstant = VALUES(isInstant),
+            instantFee = VALUES(instantFee),
+            isEd = VALUES(isEd)`,
+          [
+            p.id, p.serialNo || '', p.name || '', p.phone || '', p.age || '', p.gender || 'Other', p.address || '', p.doctorName || '', p.appointmentDate || '', p.appointmentTime || '', p.department || '', p.status || '', p.notes || '', p.remark || '', p.createdAt || '',
+            p.isConfirmed ? 1 : 0, p.confirmedAt || '', p.consultationSerial !== null && p.consultationSerial !== undefined ? p.consultationSerial : null, p.consultationStatus || '', p.profession || '', p.preDoctorName || '', p.postDoctorName || '', p.preConsultationAt || '', p.postConsultationAt || '',
+            p.consultationComment || '', p.postConsultationConfirmed ? 1 : 0, p.postConfirmedAt || '',
+            p.isInstant ? 1 : 0, p.instantFee != null ? p.instantFee : (p.isInstant ? 2000 : 0), p.isEd ? 1 : 0
+          ]
+        );
       }
     }
   }
@@ -2448,6 +3716,7 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
   let updated = 0;
   const todayStr = new Date().toISOString().split('T')[0];
   const newPatientsBatch: any[] = [];
+  const updatedEntries: Array<{ idx: number; data: any }> = [];
   const allFormattedForDb: any[] = [];
 
   const bnToEnMap: Record<string, string> = {
@@ -2464,8 +3733,6 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
     const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
 
-    const existingIdx = p.id ? localData.patients.findIndex(x => x.id === p.id) : -1;
-
     let cleanSerial = '';
     if (p.serialNo) {
       const enSerial = convertBnToEn(String(p.serialNo));
@@ -2476,35 +3743,46 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
       cleanSerial = String(idx + 1);
     }
 
-    const uniqueId = existingIdx >= 0
-      ? localData.patients[existingIdx].id
-      : (p.id || `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`);
+    const apptDate = p.appointmentDate || todayStr;
+    const existingIdx = localData.patients.findIndex(x => {
+      if (p.id && String(x.id).trim() === String(p.id).trim()) return true;
+      if (cleanSerial && x.serialNo === cleanSerial && x.appointmentDate === apptDate) return true;
+      if (cleanPhone && cleanPhone !== '01700000000' && x.phone === cleanPhone && x.appointmentDate === apptDate) return true;
+      return false;
+    });
+
+    const existingPatient = existingIdx >= 0 ? localData.patients[existingIdx] : null;
+    const uniqueId = existingPatient ? existingPatient.id : (p.id || makeUniqueId());
 
     const formattedPatient = {
       id: uniqueId,
       serialNo: cleanSerial,
       name: cleanName,
       phone: cleanPhone,
-      age: p.age || '',
-      gender: p.gender || 'Other',
-      address: p.address || '',
-      doctorName: p.doctorName || 'Dr. S.M. Shahidul Islam PhD',
-      appointmentDate: p.appointmentDate || todayStr,
-      appointmentTime: p.appointmentTime || '09:00 AM',
-      department: p.department || 'Acupuncture',
-      status: p.status || 'Pending Counseling',
-      notes: p.notes || p.remark || '',
-      remark: p.remark || p.notes || '',
-      isInstant: Boolean(p.isInstant),
-      instantFee: p.isInstant ? (p.instantFee != null ? p.instantFee : 2000) : 0,
-      isEd: Boolean(p.isEd),
-      createdAt: p.createdAt || new Date().toISOString()
+      age: p.age || (existingPatient?.age || ''),
+      gender: p.gender || (existingPatient?.gender || 'Other'),
+      address: p.address || (existingPatient?.address || ''),
+      doctorName: p.doctorName || (existingPatient?.doctorName || 'Dr. S.M. Shahidul Islam PhD'),
+      appointmentDate: apptDate,
+      appointmentTime: p.appointmentTime || (existingPatient?.appointmentTime || '09:00 AM'),
+      department: p.department || (existingPatient?.department || 'Acupuncture'),
+      status: existingPatient ? existingPatient.status : (p.status || 'Pending Counseling'),
+      isConfirmed: existingPatient ? existingPatient.isConfirmed : false,
+      confirmedAt: existingPatient ? existingPatient.confirmedAt : '',
+      consultationSerial: existingPatient ? existingPatient.consultationSerial : null,
+      consultationStatus: existingPatient ? existingPatient.consultationStatus : '',
+      notes: p.notes || p.remark || (existingPatient?.notes || ''),
+      remark: p.remark || p.notes || (existingPatient?.remark || ''),
+      isInstant: p.isInstant !== undefined ? Boolean(p.isInstant) : Boolean(existingPatient?.isInstant),
+      instantFee: p.instantFee !== undefined ? Number(p.instantFee) : (existingPatient?.instantFee || 0),
+      isEd: p.isEd !== undefined ? Boolean(p.isEd) : Boolean(existingPatient?.isEd),
+      createdAt: existingPatient?.createdAt || p.createdAt || new Date().toISOString()
     };
 
     allFormattedForDb.push(formattedPatient);
 
     if (existingIdx >= 0) {
-      localData.patients[existingIdx] = { ...localData.patients[existingIdx], ...formattedPatient };
+      updatedEntries.push({ idx: existingIdx, data: formattedPatient });
       updated++;
     } else {
       newPatientsBatch.push(formattedPatient);
@@ -2512,26 +3790,53 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     }
   }
 
-  // Prepend newly imported batch in exact top-to-bottom sheet order
-  localData.patients = [...newPatientsBatch, ...localData.patients];
-  saveLocalDb();
-
-  // Perform fast batch upsert to MySQL database
   if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
     try {
-      await batchUpsertPatientsToMySQL(allFormattedForDb);
-    } catch (err) {
-      console.error('MySQL patient batch upsert top-level error:', err);
+      await conn.beginTransaction();
+      if (allFormattedForDb.length > 0) {
+        await batchUpsertPatientsToMySQL(allFormattedForDb, conn);
+      }
+      const nextVer = await bumpDataVersionInTx(conn);
+      for (let i = 0; i < allFormattedForDb.length; i += 500) {
+        const chunkIds = allFormattedForDb.slice(i, i + 500).map((p: any) => String(p.id));
+        const placeholders = chunkIds.map(() => '?').join(',');
+        await conn.execute(
+          `UPDATE patients SET lastModifiedVersion = ? WHERE id IN (${placeholders})`,
+          [nextVer, ...chunkIds]
+        );
+      }
+      await conn.commit();
+      serverDataVersion = nextVer;
+      for (const p of allFormattedForDb) {
+        p.lastModifiedVersion = nextVer;
+      }
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
+      console.error('MySQL patient batch import transaction error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to import patients into database' });
+    } finally {
+      conn.release();
+    }
+  } else {
+    const nextLocalVer = bumpLocalDataVersion();
+    for (const p of allFormattedForDb) {
+      p.lastModifiedVersion = nextLocalVer;
     }
   }
+
+  for (const entry of updatedEntries) {
+    localData.patients[entry.idx] = { ...localData.patients[entry.idx], ...entry.data };
+  }
+  localData.patients = [...newPatientsBatch, ...localData.patients];
+  saveLocalDb();
 
   res.json({
     success: true,
     message: `${added} new appointments imported, ${updated} updated.`,
     added,
     updated,
-    totalPatients: localData.patients.length,
-    patients: localData.patients
+    totalPatients: localData.patients.length
   });
 });
 
@@ -2539,14 +3844,12 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
 app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center', 'SSD'), async (req, res) => {
   if (isMySqlActive && mysqlPool) {
     try {
-      const [rows]: any = await mysqlPool.execute('SELECT * FROM quotations ORDER BY createdAt DESC');
-      const parsedRows = rows.map((r: any) => ({
-        ...r,
-        items: typeof r.items === 'string' ? JSON.parse(r.items) : (r.items || [])
-      }));
+      const [rows]: any = await mysqlPool.execute('SELECT * FROM quotations_v2 ORDER BY createdAt DESC');
+      const parsedRows = Array.isArray(rows) ? rows.map(formatQuotationRow) : [];
       return res.json(parsedRows);
-    } catch (err) {
+    } catch (err: any) {
       console.error('MySQL get quotations error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to fetch quotations from database' });
     }
   }
   res.json(localData.quotations);
@@ -2554,8 +3857,11 @@ app.get('/api/quotations', authenticateToken, requireRole('System Admin', 'Docto
 
 app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   const quotation = req.body;
-  if (!quotation || !quotation.id) {
+  if (!quotation || typeof quotation !== 'object') {
     return res.status(400).json({ error: 'Invalid quotation payload' });
+  }
+  if (!quotation.id) {
+    quotation.id = makeUniqueId();
   }
 
   // Server-side calculation verification
@@ -2575,6 +3881,86 @@ app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doct
     quotation.netPayable = Math.round(computedTotal);
   }
 
+  if (!quotation.createdAt) {
+    quotation.createdAt = quotation.createdDate || new Date().toISOString();
+  }
+
+  if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [existingIdRows]: any = await conn.execute(
+        'SELECT id, quotationNumber FROM quotations_v2 WHERE id = ? FOR UPDATE',
+        [quotation.id ?? null]
+      );
+      const existingRow = Array.isArray(existingIdRows) && existingIdRows.length > 0 ? existingIdRows[0] : null;
+
+      if (existingRow) {
+        if (existingRow.quotationNumber) {
+          quotation.quotationNumber = existingRow.quotationNumber;
+        } else if (!quotation.quotationNumber) {
+          quotation.quotationNumber = await allocateNextInvoiceNumber(conn, new Date().getFullYear());
+        }
+      } else {
+        quotation.quotationNumber = await allocateNextInvoiceNumber(conn, new Date().getFullYear());
+      }
+
+      const [clashRows]: any = await conn.execute(
+        'SELECT id FROM quotations_v2 WHERE quotationNumber = ? AND id <> ?',
+        [quotation.quotationNumber ?? null, quotation.id ?? null]
+      );
+      if (Array.isArray(clashRows) && clashRows.length > 0) {
+        await conn.rollback();
+        return res.status(409).json({
+          error: `Quotation number "${quotation.quotationNumber}" already exists on another invoice (${clashRows[0].id}).`
+        });
+      }
+
+      await conn.execute(QUOTATION_UPSERT_SQL, buildQuotationDbParams(quotation));
+      const hasLinkedPatient = Boolean(quotation.patientId && quotation.patientId !== 'walkin');
+      if (hasLinkedPatient) {
+        await conn.execute('UPDATE patients SET status = ? WHERE id = ?', ['Quotation Created', quotation.patientId ?? null]);
+      }
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.execute('UPDATE quotations_v2 SET lastModifiedVersion = ? WHERE id = ?', [nextVer, quotation.id]);
+      if (hasLinkedPatient) {
+        await conn.execute('UPDATE patients SET lastModifiedVersion = ? WHERE id = ?', [nextVer, quotation.patientId]);
+      }
+      await conn.commit();
+      serverDataVersion = nextVer;
+      quotation.lastModifiedVersion = nextVer;
+    } catch (err: any) {
+      try {
+        await conn.rollback();
+      } catch {}
+      console.error('MySQL quotation save error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to save quotation to MySQL database' });
+    } finally {
+      conn.release();
+    }
+  } else {
+    if (!quotation.quotationNumber) {
+      const existingLocal = localData.quotations.find(q => q.id === quotation.id);
+      if (existingLocal && existingLocal.quotationNumber) {
+        quotation.quotationNumber = existingLocal.quotationNumber;
+      } else {
+        const year = new Date().getFullYear();
+        const prefix = `SXH-${year}-`;
+        let maxSeq = 0;
+        for (const q of localData.quotations) {
+          if (typeof q?.quotationNumber === 'string' && q.quotationNumber.startsWith(prefix)) {
+            const num = Number(q.quotationNumber.slice(prefix.length));
+            if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+          }
+        }
+        quotation.quotationNumber = `${prefix}${String(maxSeq + 1).padStart(5, '0')}`;
+      }
+    }
+    const nextLocalVer = bumpLocalDataVersion();
+    quotation.lastModifiedVersion = nextLocalVer;
+  }
+
   const existingIdx = localData.quotations.findIndex(q => q.id === quotation.id);
   if (existingIdx >= 0) {
     localData.quotations[existingIdx] = quotation;
@@ -2582,46 +3968,43 @@ app.post('/api/quotations', authenticateToken, requireRole('System Admin', 'Doct
     localData.quotations.unshift(quotation);
   }
 
-  const pIdx = localData.patients.findIndex(p => p.phone === quotation.patientPhone);
+  const pIdx = quotation.patientId && quotation.patientId !== 'walkin'
+    ? localData.patients.findIndex(p => p.id === quotation.patientId)
+    : -1;
   if (pIdx >= 0) {
     localData.patients[pIdx].status = 'Quotation Created';
+    localData.patients[pIdx].lastModifiedVersion = serverDataVersion;
   }
 
   saveLocalDb();
-
-  if (isMySqlActive && mysqlPool) {
-    try {
-      const itemsJson = JSON.stringify(quotation.items || []);
-      await mysqlPool.execute(
-        `INSERT INTO quotations (id, patientName, patientPhone, patientAge, patientGender, doctorName, totalAmount, discountAmount, netPayable, paymentType, status, items, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE patientName=?, patientPhone=?, patientAge=?, patientGender=?, doctorName=?, totalAmount=?, discountAmount=?, netPayable=?, paymentType=?, status=?, items=?`,
-        [quotation.id, quotation.patientName, quotation.patientPhone, quotation.patientAge, quotation.patientGender, quotation.doctorName, quotation.totalAmount, quotation.discountAmount, quotation.netPayable, quotation.paymentType, quotation.status, itemsJson, quotation.createdAt || new Date().toISOString(),
-         quotation.patientName, quotation.patientPhone, quotation.patientAge, quotation.patientGender, quotation.doctorName, quotation.totalAmount, quotation.discountAmount, quotation.netPayable, quotation.paymentType, quotation.status, itemsJson]
-      );
-      if (quotation.patientPhone) {
-        await mysqlPool.execute('UPDATE patients SET status = ? WHERE phone = ?', ['Quotation Created', quotation.patientPhone]);
-      }
-    } catch (err) {
-      console.error('MySQL quotation save error:', err);
-    }
-  }
 
   res.json({ message: 'Quotation saved successfully', quotation, quotations: localData.quotations });
 });
 
 app.delete('/api/quotations/:id', authenticateToken, requireRole('System Admin', 'Doctor', 'Billing Counter', 'Call Center'), async (req, res) => {
   const { id } = req.params;
-  localData.quotations = localData.quotations.filter(q => q.id !== id);
-  saveLocalDb();
 
   if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
     try {
-      await mysqlPool.execute('DELETE FROM quotations WHERE id = ?', [id]);
-    } catch (err) {
+      await conn.beginTransaction();
+      await conn.execute('DELETE FROM quotations_v2 WHERE id = ?', [id ?? null]);
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.commit();
+      serverDataVersion = nextVer;
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
       console.error('MySQL quotation delete error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to delete quotation from database' });
+    } finally {
+      conn.release();
     }
+  } else {
+    bumpLocalDataVersion();
   }
+
+  localData.quotations = localData.quotations.filter(q => q.id !== id);
+  saveLocalDb();
 
   res.json({ message: 'Quotation deleted successfully', quotations: localData.quotations });
 });
@@ -2632,18 +4015,29 @@ app.post('/api/quotations/delete', authenticateToken, requireRole('System Admin'
     return res.status(400).json({ error: 'No quotation IDs provided for deletion' });
   }
 
+  if (isMySqlActive && mysqlPool) {
+    const conn = await mysqlPool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const placeholders = ids.map(() => '?').join(',');
+      await conn.execute(`DELETE FROM quotations_v2 WHERE id IN (${placeholders})`, ids);
+      const nextVer = await bumpDataVersionInTx(conn);
+      await conn.commit();
+      serverDataVersion = nextVer;
+    } catch (err: any) {
+      try { await conn.rollback(); } catch {}
+      console.error('MySQL quotation batch delete error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to delete quotations from database' });
+    } finally {
+      conn.release();
+    }
+  } else {
+    bumpLocalDataVersion();
+  }
+
   const idSet = new Set(ids);
   localData.quotations = localData.quotations.filter(q => !idSet.has(q.id));
   saveLocalDb();
-
-  if (isMySqlActive && mysqlPool) {
-    try {
-      const placeholders = ids.map(() => '?').join(',');
-      await mysqlPool.execute(`DELETE FROM quotations WHERE id IN (${placeholders})`, ids);
-    } catch (err) {
-      console.error('MySQL quotation batch delete error:', err);
-    }
-  }
 
   res.json({ message: `${ids.length} quotation(s) deleted successfully`, deletedCount: ids.length, quotations: localData.quotations });
 });
@@ -2671,17 +4065,16 @@ app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor'
       orderIndex: typeof item.orderIndex === 'number' ? item.orderIndex : idx
     }));
 
-    localData.catalog = enrichedCatalog;
-    saveLocalDb();
-
     if (isMySqlActive && mysqlPool) {
+      const conn = await mysqlPool.getConnection();
       try {
-        await mysqlPool.execute('DELETE FROM catalog');
+        await conn.beginTransaction();
+        await conn.execute('DELETE FROM catalog');
         for (let idx = 0; idx < enrichedCatalog.length; idx++) {
           const item = enrichedCatalog[idx];
           const orderIdx = typeof item.orderIndex === 'number' ? item.orderIndex : idx;
           const detailsJson = JSON.stringify(item);
-          await mysqlPool.execute(
+          await conn.execute(
             `INSERT INTO catalog (
               id, name, category, defaultPrice, defaultDiscountPercent,
               fixedDiscountAmount, outdoorDiscountPercent, outdoorDiscountAmount,
@@ -2709,10 +4102,29 @@ app.post('/api/catalog', authenticateToken, requireRole('System Admin', 'Doctor'
             ]
           );
         }
-      } catch (err) {
+        const nextVer = await bumpDataVersionInTx(conn);
+        await conn.execute('UPDATE catalog SET lastModifiedVersion = ?', [nextVer]);
+        await conn.commit();
+        serverDataVersion = nextVer;
+        for (const item of enrichedCatalog) {
+          item.lastModifiedVersion = nextVer;
+        }
+      } catch (err: any) {
+        try { await conn.rollback(); } catch {}
         console.error('MySQL catalog save error:', err);
+        return res.status(500).json({ error: err?.message || 'Failed to save catalog to database' });
+      } finally {
+        conn.release();
+      }
+    } else {
+      const nextLocalVer = bumpLocalDataVersion();
+      for (const item of enrichedCatalog) {
+        item.lastModifiedVersion = nextLocalVer;
       }
     }
+
+    localData.catalog = enrichedCatalog;
+    saveLocalDb();
 
     return res.json({ message: 'Catalog price updated successfully', catalog: localData.catalog });
   }
@@ -2736,19 +4148,30 @@ app.get('/api/settings/professions', authenticateToken, async (req, res) => {
 app.post('/api/settings/professions', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
   const { professions } = req.body;
   if (Array.isArray(professions) && professions.length > 0) {
-    (localData as any).professions = professions.map((p: string) => String(p).trim()).filter(Boolean);
-    saveLocalDb();
-    touchServerDataVersion();
+    const cleaned = professions.map((p: string) => String(p).trim()).filter(Boolean);
     if (isMySqlActive && mysqlPool) {
+      const conn = await mysqlPool.getConnection();
       try {
-        await mysqlPool.execute(
+        await conn.beginTransaction();
+        await conn.execute(
           'INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
-          ['professions', JSON.stringify((localData as any).professions)]
+          ['professions', JSON.stringify(cleaned)]
         );
-      } catch (err) {
+        const nextVer = await bumpDataVersionInTx(conn);
+        await conn.commit();
+        serverDataVersion = nextVer;
+      } catch (err: any) {
+        try { await conn.rollback(); } catch {}
         console.error('MySQL save professions error:', err);
+        return res.status(500).json({ error: err?.message || 'Failed to save professions setting' });
+      } finally {
+        conn.release();
       }
+    } else {
+      bumpLocalDataVersion();
     }
+    (localData as any).professions = cleaned;
+    saveLocalDb();
     return res.json({ success: true, professions: (localData as any).professions });
   }
   res.status(400).json({ error: 'Invalid professions data' });
@@ -2771,19 +4194,30 @@ app.get('/api/settings/comments', authenticateToken, async (req, res) => {
 app.post('/api/settings/comments', authenticateToken, requireRole('System Admin', 'Doctor'), async (req, res) => {
   const { comments } = req.body;
   if (Array.isArray(comments) && comments.length > 0) {
-    (localData as any).comments = comments.map((c: string) => String(c).trim()).filter(Boolean);
-    saveLocalDb();
-    touchServerDataVersion();
+    const cleaned = comments.map((c: string) => String(c).trim()).filter(Boolean);
     if (isMySqlActive && mysqlPool) {
+      const conn = await mysqlPool.getConnection();
       try {
-        await mysqlPool.execute(
+        await conn.beginTransaction();
+        await conn.execute(
           'INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
-          ['comments', JSON.stringify((localData as any).comments)]
+          ['comments', JSON.stringify(cleaned)]
         );
-      } catch (err) {
+        const nextVer = await bumpDataVersionInTx(conn);
+        await conn.commit();
+        serverDataVersion = nextVer;
+      } catch (err: any) {
+        try { await conn.rollback(); } catch {}
         console.error('MySQL save comments error:', err);
+        return res.status(500).json({ error: err?.message || 'Failed to save comments setting' });
+      } finally {
+        conn.release();
       }
+    } else {
+      bumpLocalDataVersion();
     }
+    (localData as any).comments = cleaned;
+    saveLocalDb();
     return res.json({ success: true, comments: (localData as any).comments });
   }
   res.status(400).json({ error: 'Invalid comments data' });
@@ -2792,6 +4226,25 @@ app.post('/api/settings/comments', authenticateToken, requireRole('System Admin'
 // 7. System Admin Clear Demo Data API
 app.post('/api/admin/clear-demo-data', authenticateToken, requireRole('System Admin'), async (req, res) => {
   try {
+    if (isMySqlActive && mysqlPool) {
+      const conn = await mysqlPool.getConnection();
+      try {
+        await conn.beginTransaction();
+        await conn.execute("DELETE FROM patients WHERE id IN ('pat-101', 'pat-102')");
+        await conn.execute("DELETE FROM users WHERE id IN ('usr-doctor', 'usr-callcenter', 'usr-billing')");
+        const nextVer = await bumpDataVersionInTx(conn);
+        await conn.commit();
+        serverDataVersion = nextVer;
+      } catch (err) {
+        try { await conn.rollback(); } catch {}
+        throw err;
+      } finally {
+        conn.release();
+      }
+    } else {
+      bumpLocalDataVersion();
+    }
+
     // Remove demo patients pat-101, pat-102
     localData.patients = localData.patients.filter(p => p.id !== 'pat-101' && p.id !== 'pat-102');
 
@@ -2803,15 +4256,6 @@ app.post('/api/admin/clear-demo-data', authenticateToken, requireRole('System Ad
 
     saveLocalDb();
 
-    if (isMySqlActive && mysqlPool) {
-      try {
-        await mysqlPool.execute("DELETE FROM patients WHERE id IN ('pat-101', 'pat-102')");
-        await mysqlPool.execute("DELETE FROM users WHERE id IN ('usr-doctor', 'usr-callcenter', 'usr-billing')");
-      } catch (err) {
-        console.error('MySQL clear demo error:', err);
-      }
-    }
-
     return res.json({
       message: 'Demo data cleared successfully. Only admin login credentials remain.',
       users: localData.users,
@@ -2819,6 +4263,177 @@ app.post('/api/admin/clear-demo-data', authenticateToken, requireRole('System Ad
     });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to clear demo data: ' + err.message });
+  }
+});
+
+// Read-only Admin Diagnostic: Detect duplicate consultation serial numbers per appointmentDate
+app.get('/api/admin/duplicate-serials', authenticateToken, requireRole('System Admin'), async (req, res) => {
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [rows]: any = await mysqlPool.execute(
+        `SELECT appointmentDate, consultationSerial, COUNT(*) c, GROUP_CONCAT(id) ids
+         FROM patients WHERE consultationSerial IS NOT NULL
+         GROUP BY appointmentDate, consultationSerial HAVING c > 1`
+      );
+      const duplicates = Array.isArray(rows) ? rows : [];
+      return res.json({ duplicates, count: duplicates.length });
+    } catch (err: any) {
+      console.error('MySQL duplicate-serials query error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to query duplicate consultation serials' });
+    }
+  }
+
+  const groups = new Map<string, { appointmentDate: string; consultationSerial: number; ids: string[] }>();
+  for (const p of localData.patients) {
+    if (p && p.consultationSerial !== null && p.consultationSerial !== undefined) {
+      const apptDate = p.appointmentDate || '';
+      const serial = Number(p.consultationSerial);
+      const key = `${apptDate}__${serial}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.ids.push(String(p.id));
+      } else {
+        groups.set(key, { appointmentDate: apptDate, consultationSerial: serial, ids: [String(p.id)] });
+      }
+    }
+  }
+  const duplicates = Array.from(groups.values())
+    .filter(g => g.ids.length > 1)
+    .map(g => ({
+      appointmentDate: g.appointmentDate,
+      consultationSerial: g.consultationSerial,
+      c: g.ids.length,
+      ids: g.ids.join(',')
+    }));
+  res.json({ duplicates, count: duplicates.length });
+});
+
+// One-time Backfill Endpoint: Recover quotations from localData into MySQL quotations_v2
+app.post('/api/admin/backfill-quotations', authenticateToken, requireRole('System Admin'), async (req, res) => {
+  if (!isMySqlActive || !mysqlPool) {
+    return res.status(503).json({ error: 'MySQL database is not connected' });
+  }
+
+  const sourceQuotations = Array.isArray(localData.quotations) ? localData.quotations : [];
+  if (sourceQuotations.length === 0) {
+    return res.json({
+      message: 'No local quotations to backfill.',
+      totalLocal: 0,
+      inserted: 0,
+      reassigned: 0,
+      skipped: 0,
+      skippedIds: []
+    });
+  }
+
+  const conn = await mysqlPool.getConnection();
+  try {
+    await conn.beginTransaction();
+    let inserted = 0;
+    let reassigned = 0;
+    let skipped = 0;
+    const insertedIds: string[] = [];
+    const skippedIds: Array<{ id: string; quotationNumber: string; reason: 'already existed' | 'quotationNumber collision' | 'invalid payload' }> = [];
+
+    for (const q of sourceQuotations) {
+      if (!q || !q.id) {
+        skipped++;
+        skippedIds.push({
+          id: String(q?.id || ''),
+          quotationNumber: String(q?.quotationNumber || ''),
+          reason: 'invalid payload'
+        });
+        continue;
+      }
+
+      const [result]: any = await conn.execute(QUOTATION_INSERT_IGNORE_SQL, buildQuotationDbParams(q));
+      if (result && result.affectedRows > 0) {
+        inserted++;
+        insertedIds.push(String(q.id));
+        continue;
+      }
+
+      // INSERT IGNORE skipped this row — check why
+      const [idCheckRows]: any = await conn.execute('SELECT id FROM quotations_v2 WHERE id = ? LIMIT 1', [q.id]);
+      if (Array.isArray(idCheckRows) && idCheckRows.length > 0) {
+        skipped++;
+        skippedIds.push({
+          id: String(q.id),
+          quotationNumber: String(q.quotationNumber || ''),
+          reason: 'already existed'
+        });
+        continue;
+      }
+
+      // Skipped due to quotationNumber collision: record collision and re-assign fresh number from invoice_counters
+      const collidingNumber = String(q.quotationNumber || '');
+      const freshYear = new Date(q.createdAt || q.createdDate || Date.now()).getFullYear() || new Date().getFullYear();
+      const freshNumber = await allocateNextInvoiceNumber(conn, freshYear);
+      const reassignedQuotation = { ...q, quotationNumber: freshNumber };
+
+      const [retryResult]: any = await conn.execute(QUOTATION_INSERT_IGNORE_SQL, buildQuotationDbParams(reassignedQuotation));
+      if (retryResult && retryResult.affectedRows > 0) {
+        q.quotationNumber = freshNumber;
+        inserted++;
+        reassigned++;
+        insertedIds.push(String(q.id));
+        skippedIds.push({
+          id: String(q.id),
+          quotationNumber: collidingNumber,
+          reason: 'quotationNumber collision'
+        });
+      } else {
+        skipped++;
+        skippedIds.push({
+          id: String(q.id),
+          quotationNumber: collidingNumber,
+          reason: 'quotationNumber collision'
+        });
+      }
+    }
+
+    let nextVer: number | null = null;
+    if (inserted > 0 || reassigned > 0) {
+      nextVer = await bumpDataVersionInTx(conn);
+      for (let i = 0; i < insertedIds.length; i += 500) {
+        const chunkIds = insertedIds.slice(i, i + 500);
+        const placeholders = chunkIds.map(() => '?').join(',');
+        await conn.execute(
+          `UPDATE quotations_v2 SET lastModifiedVersion = ? WHERE id IN (${placeholders})`,
+          [nextVer, ...chunkIds]
+        );
+      }
+      const insertedIdSet = new Set(insertedIds);
+      for (const q of sourceQuotations) {
+        if (q && q.id && insertedIdSet.has(String(q.id))) {
+          q.lastModifiedVersion = nextVer;
+        }
+      }
+    }
+    await conn.commit();
+    if (nextVer !== null) {
+      serverDataVersion = nextVer;
+    }
+    if (reassigned > 0 || inserted > 0) {
+      saveLocalDb();
+    }
+
+    return res.json({
+      message: 'Quotation backfill completed',
+      totalLocal: sourceQuotations.length,
+      inserted,
+      reassigned,
+      skipped,
+      skippedIds
+    });
+  } catch (err: any) {
+    try {
+      await conn.rollback();
+    } catch {}
+    console.error('MySQL quotation backfill error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to backfill quotations to MySQL' });
+  } finally {
+    conn.release();
   }
 });
 
@@ -2837,22 +4452,32 @@ app.use((err: any, req: any, res: any, next: any) => {
 
 // Start Server & Integrate Vite Middleware
 async function startServer() {
-  try {
-    await initDatabase();
-  } catch (dbErr) {
+  // Always load local DB synchronously first so routes are immediately ready
+  loadLocalDb();
+
+  // Initialize MySQL in background (with 2s grace period) so slow/offline MySQL never blocks port binding
+  const dbInitPromise = initDatabase().catch((dbErr) => {
     console.error('Database initialization warning (falling back to local DB):', dbErr);
-  }
+  });
+  await Promise.race([
+    dbInitPromise,
+    new Promise(resolve => setTimeout(resolve, 2000))
+  ]);
+
+  const httpServer = http.createServer(app);
+  let viteServer: any = null;
 
   if (process.env.NODE_ENV !== 'production') {
     const isHmrDisabled = process.env.DISABLE_HMR === 'true';
-    const vite = await createViteServer({
+    viteServer = await createViteServer({
       server: { 
         middlewareMode: true,
-        hmr: isHmrDisabled ? false : undefined,
+        ws: isHmrDisabled ? false : undefined,
+        hmr: isHmrDisabled ? false : { server: httpServer },
       },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+    app.use(viteServer.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
@@ -2861,11 +4486,33 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SUO XI Hospital Billing System Server running on http://0.0.0.0:${PORT}`);
   });
+
+  const gracefulShutdown = async (signal: string) => {
+    console.log(`Received ${signal}, shutting down server cleanly...`);
+    try {
+      if (saveLocalDbTimer || saveLocalDbInFlight || saveLocalDbDirty) {
+        await flushLocalDb();
+      }
+    } catch (err) {
+      console.error('Error flushing local DB on shutdown:', err);
+    }
+    try {
+      if (viteServer) await viteServer.close();
+    } catch {}
+    httpServer.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 1500).unref();
+  };
+
+  process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 startServer().catch((err) => {
   console.error('Fatal server startup error:', err);
+  process.exit(1);
 });

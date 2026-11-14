@@ -1,6 +1,7 @@
 import { Patient, InvoiceQuotation, CatalogItem, User } from '../types';
 import { DEFAULT_CATALOG } from '../data/defaultCatalog';
 import { idbGet, idbSet, idbDel, idbClear, migrateFromLocalStorageToIndexedDb } from './indexedDb';
+import { makeUniqueId } from './id';
 
 // Automatically migrate heavy browser data from localStorage to IndexedDB once (0 data loss)
 if (typeof window !== 'undefined') {
@@ -151,7 +152,117 @@ let inMemoryPatients: Patient[] = [];
 let inMemoryQuotations: InvoiceQuotation[] = [];
 let inMemoryCatalog: CatalogItem[] = [];
 
+const IDB_DEBOUNCE_MS = 5000;
+let patientsIdbTimer: ReturnType<typeof setTimeout> | null = null;
+let quotationsIdbTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearIdbDebounceTimers(): void {
+  if (patientsIdbTimer) {
+    clearTimeout(patientsIdbTimer);
+    patientsIdbTimer = null;
+  }
+  if (quotationsIdbTimer) {
+    clearTimeout(quotationsIdbTimer);
+    quotationsIdbTimer = null;
+  }
+}
+
+function schedulePatientsIdbWrite(): void {
+  if (patientsIdbTimer) return;
+  patientsIdbTimer = setTimeout(() => {
+    patientsIdbTimer = null;
+    idbSet(PATIENTS_KEY, inMemoryPatients).catch(() => {});
+  }, IDB_DEBOUNCE_MS);
+}
+
+function scheduleQuotationsIdbWrite(): void {
+  if (quotationsIdbTimer) return;
+  quotationsIdbTimer = setTimeout(() => {
+    quotationsIdbTimer = null;
+    idbSet(QUOTATIONS_KEY, inMemoryQuotations).catch(() => {});
+  }, IDB_DEBOUNCE_MS);
+}
+
+function writePatientsLightSlice(): void {
+  try {
+    const lightSlice = inMemoryPatients.slice(0, 50);
+    localStorage.setItem(PATIENTS_KEY, JSON.stringify(lightSlice));
+  } catch {
+    try {
+      localStorage.removeItem(PATIENTS_KEY);
+    } catch {}
+  }
+}
+
+function writeQuotationsLightSlice(): void {
+  try {
+    const lightSlice = inMemoryQuotations.slice(0, 10);
+    localStorage.setItem(QUOTATIONS_KEY, JSON.stringify(lightSlice));
+  } catch {
+    try {
+      localStorage.removeItem(QUOTATIONS_KEY);
+    } catch {}
+  }
+}
+
+export const patchPatientsDeltaLocal = (changedPatients: Patient[]): void => {
+  if (!Array.isArray(changedPatients) || changedPatients.length === 0) return;
+  if (inMemoryPatients.length === 0) {
+    inMemoryPatients = [...getPatientsLocal()];
+  }
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < inMemoryPatients.length; i++) {
+    const p = inMemoryPatients[i];
+    if (p && p.id) indexById.set(String(p.id), i);
+  }
+  const newItems: Patient[] = [];
+  for (const item of changedPatients) {
+    if (!item || !item.id) continue;
+    const key = String(item.id);
+    const existingIdx = indexById.get(key);
+    if (existingIdx !== undefined) {
+      inMemoryPatients[existingIdx] = item;
+    } else {
+      newItems.push(item);
+    }
+  }
+  if (newItems.length > 0) {
+    inMemoryPatients.unshift(...newItems);
+  }
+  writePatientsLightSlice();
+  schedulePatientsIdbWrite();
+};
+
+export const patchQuotationsDeltaLocal = (changedQuotations: InvoiceQuotation[]): void => {
+  if (!Array.isArray(changedQuotations) || changedQuotations.length === 0) return;
+  if (inMemoryQuotations.length === 0) {
+    inMemoryQuotations = [...getQuotationsLocal()];
+  }
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < inMemoryQuotations.length; i++) {
+    const q = inMemoryQuotations[i];
+    if (q && q.id) indexById.set(String(q.id), i);
+  }
+  const newItems: InvoiceQuotation[] = [];
+  for (const item of changedQuotations) {
+    if (!item || !item.id) continue;
+    const key = String(item.id);
+    const existingIdx = indexById.get(key);
+    if (existingIdx !== undefined) {
+      inMemoryQuotations[existingIdx] = item;
+    } else {
+      newItems.push(item);
+    }
+  }
+  if (newItems.length > 0) {
+    inMemoryQuotations.unshift(...newItems);
+  }
+  writeQuotationsLightSlice();
+  scheduleQuotationsIdbWrite();
+};
+
 export const invalidateLocalCaches = (): void => {
+  clearIdbDebounceTimers();
   inMemoryPatients = [];
   inMemoryQuotations = [];
   inMemoryCatalog = [];
@@ -346,9 +457,14 @@ export interface InitDataResponse {
   comments?: string[];
   dbMode?: string;
   dataVersion?: number;
+  patientsTruncated?: boolean;
+  quotationsTruncated?: boolean;
 }
 
-export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataResponse | null> => {
+export const fetchInitApi = async (
+  forceBypassCache = false,
+  options?: { skipSavePatients?: boolean }
+): Promise<InitDataResponse | null> => {
   const user = getActiveUser();
   const localPatients = getPatientsLocal();
   const localQuotations = getQuotationsLocal();
@@ -381,7 +497,9 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
         const serverProfessions = Array.isArray(data.professions) && data.professions.length > 0 ? data.professions : localProfessions;
         const serverComments = Array.isArray(data.comments) && data.comments.length > 0 ? data.comments : localComments;
 
-        savePatientsLocal(serverPatients);
+        if (!options?.skipSavePatients) {
+          savePatientsLocal(serverPatients);
+        }
         saveQuotationsLocal(serverQuotations);
         saveCatalogLocal(serverCatalog);
         saveUsersLocal(serverUsers);
@@ -400,7 +518,9 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
           professions: serverProfessions,
           comments: serverComments,
           dbMode: data.dbMode,
-          dataVersion: data.dataVersion
+          dataVersion: data.dataVersion,
+          patientsTruncated: Boolean(data.patientsTruncated),
+          quotationsTruncated: Boolean(data.quotationsTruncated)
         };
       }
     }
@@ -419,13 +539,91 @@ export const fetchInitApi = async (forceBypassCache = false): Promise<InitDataRe
 };
 
 
+export interface ChangesDataResponse {
+  dataVersion: number;
+  patients: Patient[];
+  quotations: InvoiceQuotation[];
+  catalog: CatalogItem[];
+  truncated: boolean;
+  fullInit?: InitDataResponse;
+}
+
+export const fetchChangesApi = async (since: number): Promise<ChangesDataResponse | null> => {
+  const user = getActiveUser();
+  if (!user || !user.token) return null;
+
+  if (!Number.isFinite(since) || since <= 0) {
+    const fullInit = await fetchInitApi(true);
+    if (!fullInit) return null;
+    return {
+      dataVersion: Number(fullInit.dataVersion || 1),
+      patients: fullInit.patients,
+      quotations: fullInit.quotations,
+      catalog: fullInit.catalog,
+      truncated: true,
+      fullInit
+    };
+  }
+
+  try {
+    const res = await fetch(`/api/changes?since=${encodeURIComponent(String(since))}&t=${Date.now()}`, {
+      headers: getAuthHeader()
+    });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (!data) return null;
+
+    if (data.truncated) {
+      const fullInit = await fetchInitApi(true);
+      if (!fullInit) return null;
+      return {
+        dataVersion: Number(fullInit.dataVersion || data.dataVersion || since),
+        patients: fullInit.patients,
+        quotations: fullInit.quotations,
+        catalog: fullInit.catalog,
+        truncated: true,
+        fullInit
+      };
+    }
+
+    const changedPatients: Patient[] = Array.isArray(data.patients) ? data.patients : [];
+    const changedQuotations: InvoiceQuotation[] = Array.isArray(data.quotations) ? data.quotations : [];
+    const changedCatalog: CatalogItem[] = Array.isArray(data.catalog) ? data.catalog : [];
+
+    // Mutate only changed entries in inMemoryPatients / inMemoryQuotations with debounced IndexedDB writes
+    if (changedPatients.length > 0) {
+      patchPatientsDeltaLocal(changedPatients);
+    }
+
+    if (changedQuotations.length > 0) {
+      patchQuotationsDeltaLocal(changedQuotations);
+    }
+
+    if (changedCatalog.length > 0) {
+      saveCatalogLocal(changedCatalog);
+    }
+
+    const nextVersion = Number(data.dataVersion || since);
+    if (nextVersion > 0) {
+      setStoredDataVersion(nextVersion);
+    }
+
+    return {
+      dataVersion: nextVersion,
+      patients: changedPatients,
+      quotations: changedQuotations,
+      catalog: changedCatalog,
+      truncated: false
+    };
+  } catch (err) {
+    console.warn('Delta changes API fetch failed:', err);
+    return null;
+  }
+};
+
 export interface PatientSummary {
-  count: number;
-  latestCreatedAt: string;
-  latestId: string;
-  quotationsCount?: number;
-  catalogLength?: number;
-  dataVersion?: number;
+  dataVersion: number;
   timestamp: number;
 }
 
@@ -441,8 +639,112 @@ export const fetchPatientsSummaryApi = async (): Promise<PatientSummary | null> 
   return null;
 };
 
+export interface ReportsSummaryResponse {
+  allTimeTotalPatients: number;
+  allDoctors: string[];
+  funnel: {
+    totalAppointments: number;
+    confirmedCount: number;
+    unconfirmedCount: number;
+    preConsultationCount: number;
+    postConsultationCount: number;
+  };
+  instant: {
+    instantCount: number;
+    instantRevenue: number;
+  };
+  ed: {
+    edCount: number;
+  };
+  departments: {
+    totalPost: number;
+    pathYes: number;
+    pathNo: number;
+    pathPending: number;
+    orgYes: number;
+    orgNo: number;
+    orgPending: number;
+    nutYes: number;
+    nutNo: number;
+    nutPending: number;
+  };
+  doctors: Array<{
+    doctorName: string;
+    preCount: number;
+    postCount: number;
+    totalConsulted: number;
+  }>;
+  professions: Array<{
+    name: string;
+    count: number;
+  }>;
+  comments: Array<{
+    comment: string;
+    count: number;
+  }>;
+  demographics: {
+    total: number;
+    male: number;
+    female: number;
+    other: number;
+    ageGroups: {
+      under20: number;
+      age20to35: number;
+      age36to50: number;
+      age51to65: number;
+      above65: number;
+      unknown: number;
+    };
+  };
+  quotations: {
+    count: number;
+    grandTotal: number;
+    advancePaid: number;
+    dueAmount: number;
+  };
+}
+
+export const fetchReportsSummaryApi = async (options?: {
+  dateFrom?: string;
+  dateTo?: string;
+  doctor?: string;
+  q?: string;
+}): Promise<ReportsSummaryResponse | null> => {
+  try {
+    const params = new URLSearchParams();
+    if (options?.dateFrom) params.set('dateFrom', options.dateFrom);
+    if (options?.dateTo) params.set('dateTo', options.dateTo);
+    if (options?.doctor && options.doctor !== 'all') params.set('doctor', options.doctor);
+    if (options?.q && options.q.trim()) params.set('q', options.q.trim());
+    params.set('t', String(Date.now()));
+
+    const res = await fetch(`/api/reports/summary?${params.toString()}`, {
+      headers: getAuthHeader()
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Reports summary API fetch failed:', err);
+  }
+  return null;
+};
+
+export interface PatientsFetchResponse {
+  patients: Patient[];
+  truncated: boolean;
+  fromServer: boolean;
+}
+
 // Patient APIs
-export const fetchPatientsApi = async (options?: { limit?: number; offset?: number; date?: string }): Promise<Patient[]> => {
+export const fetchPatientsWithMetaApi = async (options?: {
+  limit?: number;
+  offset?: number;
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  saveLocal?: boolean;
+}): Promise<PatientsFetchResponse> => {
   try {
     let url = '/api/patients';
     if (options) {
@@ -450,24 +752,60 @@ export const fetchPatientsApi = async (options?: { limit?: number; offset?: numb
       if (options.limit) params.set('limit', String(options.limit));
       if (options.offset) params.set('offset', String(options.offset));
       if (options.date) params.set('date', options.date);
-      url += `?${params.toString()}`;
+      if (options.dateFrom) params.set('dateFrom', options.dateFrom);
+      if (options.dateTo) params.set('dateTo', options.dateTo);
+      const qs = params.toString();
+      if (qs) url += `?${qs}`;
     }
 
     const res = await fetch(url, { headers: getAuthHeader() });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data)) {
-        savePatientsLocal(data);
-        return data;
+      const rows = Array.isArray(data) ? data : (Array.isArray(data?.patients) ? data.patients : null);
+      const truncated = Array.isArray(data) ? false : Boolean(data?.truncated);
+      if (rows) {
+        if (options?.saveLocal !== false) {
+          savePatientsLocal(rows);
+        }
+        return { patients: rows, truncated, fromServer: true };
       }
     }
   } catch (err) {
     console.warn('API fetch failed, reading local cache:', err);
   }
-  return getPatientsLocal();
+
+  let localList = getPatientsLocal();
+  if (options?.date && options.date !== 'all') {
+    localList = localList.filter(p => p.appointmentDate === options.date);
+  } else if (options?.dateFrom || options?.dateTo) {
+    localList = localList.filter(p => {
+      const d = p.appointmentDate || '';
+      if (!d) return false;
+      if (options.dateFrom && d < options.dateFrom) return false;
+      if (options.dateTo && d > options.dateTo) return false;
+      return true;
+    });
+  }
+  return { patients: localList, truncated: false, fromServer: false };
 };
 
-export const searchPatientsLiveApi = async (query: string, limit = 50, date?: string): Promise<Patient[]> => {
+export const fetchPatientsApi = async (options?: {
+  limit?: number;
+  offset?: number;
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<Patient[]> => {
+  const result = await fetchPatientsWithMetaApi(options);
+  return result.patients;
+};
+
+export const searchPatientsLiveApi = async (
+  query: string,
+  limit = 50,
+  date?: string,
+  signal?: AbortSignal
+): Promise<Patient[]> => {
   if (!query || !query.trim()) return [];
   try {
     let url = `/api/patients/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`;
@@ -475,20 +813,19 @@ export const searchPatientsLiveApi = async (query: string, limit = 50, date?: st
       url += `&date=${encodeURIComponent(date)}`;
     }
     const res = await fetch(url, {
-      headers: getAuthHeader()
+      headers: getAuthHeader(),
+      signal
     });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        if (data.length > 0) {
-          const current = getPatientsLocal();
-          const merged = mergePatientsList(data, current);
-          savePatientsLocal(merged);
-        }
         return data;
       }
     }
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw err;
+    }
     console.warn('Live patient search API error:', err);
   }
   return [];
@@ -511,7 +848,7 @@ export const getPatientsLocal = (): Patient[] => {
     patients.forEach((p, idx) => {
       let id = p.id;
       if (!id || seen.has(id)) {
-        id = `pat-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 9)}`;
+        id = makeUniqueId();
       }
       seen.add(id);
       let sanitized = { ...p, id };
@@ -534,20 +871,15 @@ export const getPatientsLocal = (): Patient[] => {
 
 export const savePatientsLocal = (patients: Patient[]): void => {
   if (!Array.isArray(patients)) return;
+  if (patientsIdbTimer) {
+    clearTimeout(patientsIdbTimer);
+    patientsIdbTimer = null;
+  }
   // Always keep all patients intact in active memory (0ms access)
   inMemoryPatients = patients;
   // Persist full list to IndexedDB asynchronously without blocking the UI
   idbSet(PATIENTS_KEY, patients).catch(() => {});
-
-  try {
-    // Keep a lightweight top 50 slice in localStorage for instant synchronous bootstrap
-    const lightSlice = patients.slice(0, 50);
-    localStorage.setItem(PATIENTS_KEY, JSON.stringify(lightSlice));
-  } catch (err: any) {
-    try {
-      localStorage.removeItem(PATIENTS_KEY);
-    } catch {}
-  }
+  writePatientsLightSlice();
 };
 
 export const updatePatientLocal = (patient: Patient): void => {
@@ -580,7 +912,36 @@ export const updatePatientLocal = (patient: Patient): void => {
   }
 };
 
-export const addOrUpdatePatientApi = async (patient: Patient): Promise<{ success: boolean; patient: Patient; patients?: Patient[] }> => {
+export const patchPatientsLocal = (updatedPatients: Patient[]): Patient[] => {
+  if (!Array.isArray(updatedPatients) || updatedPatients.length === 0) {
+    return getPatientsLocal();
+  }
+  const current = [...getPatientsLocal()];
+  for (const patient of updatedPatients) {
+    if (!patient) continue;
+    const pIdStr = patient.id ? String(patient.id).trim() : '';
+    const pSerialStr = patient.serialNo ? String(patient.serialNo).trim() : '';
+    const pDateStr = patient.appointmentDate ? String(patient.appointmentDate).trim() : '';
+    const pPhoneStr = patient.phone ? String(patient.phone).trim() : '';
+
+    const idx = current.findIndex(p => {
+      if (pIdStr && p.id && String(p.id).trim() === pIdStr) return true;
+      if (pDateStr && pSerialStr && p.serialNo && String(p.serialNo).trim() === pSerialStr && p.appointmentDate === pDateStr) return true;
+      if (pDateStr && pPhoneStr && pPhoneStr !== '01700000000' && p.phone && String(p.phone).trim() === pPhoneStr && p.appointmentDate === pDateStr) return true;
+      return false;
+    });
+
+    if (idx >= 0) {
+      current[idx] = { ...current[idx], ...patient };
+    } else {
+      current.unshift(patient);
+    }
+  }
+  savePatientsLocal(current);
+  return current;
+};
+
+export const addOrUpdatePatientApi = async (patient: Patient): Promise<{ success: boolean; patient: Patient }> => {
   // Instant local update (1ms)
   updatePatientLocal(patient);
 
@@ -594,7 +955,7 @@ export const addOrUpdatePatientApi = async (patient: Patient): Promise<{ success
       const data = await res.json();
       const savedPatient = data.patient || patient;
       updatePatientLocal(savedPatient);
-      return { success: true, patient: savedPatient, patients: data.patients };
+      return { success: true, patient: savedPatient };
     }
   } catch (err) {
     console.warn('Error saving patient to backend:', err);
@@ -603,24 +964,34 @@ export const addOrUpdatePatientApi = async (patient: Patient): Promise<{ success
   return { success: false, patient };
 };
 
-export const confirmPatientApi = async (id: string, isConfirmed: boolean = true): Promise<{ patient?: Patient; patients: Patient[] }> => {
+export const confirmPatientApi = async (patientOrId: string | Patient, isConfirmed: boolean = true): Promise<{ patient?: Patient; patients: Patient[] }> => {
   const current = getPatientsLocal();
-  const idStr = String(id).trim();
-  const idx = current.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
+  const isObj = typeof patientOrId === 'object' && patientOrId !== null;
+  const idStr = String(isObj ? patientOrId.id : patientOrId || '').trim();
+  const serialStr = isObj && patientOrId.serialNo ? String(patientOrId.serialNo).trim() : '';
+  const dateStr = isObj && patientOrId.appointmentDate ? String(patientOrId.appointmentDate).trim() : '';
+  const phoneStr = isObj && patientOrId.phone ? String(patientOrId.phone).trim() : '';
+
+  const idx = current.findIndex(p => {
+    if (idStr && String(p.id).trim() === idStr) return true;
+    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
+    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
+    if (!isObj && idStr && p.serialNo && String(p.serialNo).trim() === idStr) return true;
+    return false;
+  });
+
+  const resolvedSerial = serialStr || (idx !== -1 ? current[idx].serialNo : undefined);
+  const resolvedDate = dateStr || (idx !== -1 ? current[idx].appointmentDate : undefined);
+  const resolvedPhone = phoneStr || (idx !== -1 ? current[idx].phone : undefined);
+  const previousPatient = idx !== -1 ? { ...current[idx] } : null;
+
   if (idx !== -1) {
-    const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
     if (isConfirmed) {
-      let maxSerial = 0;
-      current.forEach(p => {
-        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
-          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
-        }
-      });
       current[idx] = {
         ...current[idx],
         isConfirmed: true,
-        confirmedAt: new Date().toISOString(),
-        consultationSerial: maxSerial + 1,
+        confirmedAt: current[idx].confirmedAt || new Date().toISOString(),
+        consultationSerial: current[idx].consultationSerial ?? null,
         consultationStatus: 'Pre Consultation',
         status: 'Pre Consultation',
         isOnHold: false,
@@ -644,47 +1015,60 @@ export const confirmPatientApi = async (id: string, isConfirmed: boolean = true)
     const res = await fetch('/api/patients/confirm', {
       method: 'POST',
       headers: getAuthHeader(),
-      body: JSON.stringify({ id, isConfirmed })
+      body: JSON.stringify({
+        id: idStr,
+        serialNo: resolvedSerial,
+        appointmentDate: resolvedDate,
+        phone: resolvedPhone,
+        isConfirmed
+      })
     });
     if (res.ok) {
       const data = await res.json();
       if (data.patient) {
         updatePatientLocal(data.patient);
       }
-      return { patient: data.patient, patients: data.patients || inMemoryPatients };
+      return { patient: data.patient, patients: inMemoryPatients };
     } else {
       const errData = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(errData.error || errData.message || `Server returned error (${res.status}) while confirming appointment`);
     }
   } catch (err) {
+    if (previousPatient) {
+      updatePatientLocal(previousPatient);
+    }
     console.warn('Backend confirm error:', err);
     throw err;
   }
 };
 
-export const holdPatientApi = async (id: string, isOnHold: boolean = true, holdReason?: string): Promise<{ patient?: Patient; patients: Patient[] }> => {
+export const holdPatientApi = async (patientOrId: string | Patient, isOnHold: boolean = true, holdReason?: string): Promise<{ patient?: Patient; patients: Patient[] }> => {
   const current = getPatientsLocal();
-  const idStr = String(id).trim();
-  const idx = current.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
+  const isObj = typeof patientOrId === 'object' && patientOrId !== null;
+  const idStr = String(isObj ? patientOrId.id : patientOrId || '').trim();
+  const serialStr = isObj && patientOrId.serialNo ? String(patientOrId.serialNo).trim() : '';
+  const dateStr = isObj && patientOrId.appointmentDate ? String(patientOrId.appointmentDate).trim() : '';
+  const phoneStr = isObj && patientOrId.phone ? String(patientOrId.phone).trim() : '';
+
+  const idx = current.findIndex(p => {
+    if (idStr && String(p.id).trim() === idStr) return true;
+    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
+    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
+    if (!isObj && idStr && p.serialNo && String(p.serialNo).trim() === idStr) return true;
+    return false;
+  });
+
+  const resolvedSerial = serialStr || (idx !== -1 ? current[idx].serialNo : undefined);
+  const resolvedDate = dateStr || (idx !== -1 ? current[idx].appointmentDate : undefined);
+  const resolvedPhone = phoneStr || (idx !== -1 ? current[idx].phone : undefined);
+  const previousPatient = idx !== -1 ? { ...current[idx] } : null;
+
   if (idx !== -1) {
-    const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
-    let assignedSerial = current[idx].consultationSerial;
-
-    if (isOnHold && (!assignedSerial || typeof assignedSerial !== 'number')) {
-      let maxSerial = 0;
-      current.forEach(p => {
-        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
-          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
-        }
-      });
-      assignedSerial = maxSerial + 1;
-    }
-
     current[idx] = {
       ...current[idx],
       isConfirmed: isOnHold ? false : true,
       confirmedAt: isOnHold ? (current[idx].confirmedAt || '') : (current[idx].confirmedAt || new Date().toISOString()),
-      consultationSerial: assignedSerial,
+      consultationSerial: current[idx].consultationSerial ?? null,
       consultationStatus: isOnHold ? (current[idx].consultationStatus || 'Pre Consultation') : 'Pre Consultation',
       status: isOnHold ? (current[idx].status || 'Pending Counseling') : 'Pre Consultation',
       isOnHold,
@@ -698,19 +1082,29 @@ export const holdPatientApi = async (id: string, isOnHold: boolean = true, holdR
     const res = await fetch('/api/patients/hold', {
       method: 'POST',
       headers: getAuthHeader(),
-      body: JSON.stringify({ id, isOnHold, holdReason })
+      body: JSON.stringify({
+        id: idStr,
+        serialNo: resolvedSerial,
+        appointmentDate: resolvedDate,
+        phone: resolvedPhone,
+        isOnHold,
+        holdReason
+      })
     });
     if (res.ok) {
       const data = await res.json();
       if (data.patient) {
         updatePatientLocal(data.patient);
       }
-      return { patient: data.patient, patients: data.patients || inMemoryPatients };
+      return { patient: data.patient, patients: inMemoryPatients };
     } else {
       const errData = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(errData.error || errData.message || `Server returned error (${res.status}) while updating hold status`);
     }
   } catch (err) {
+    if (previousPatient) {
+      updatePatientLocal(previousPatient);
+    }
     console.warn('Backend hold error:', err);
     throw err;
   }
@@ -757,7 +1151,7 @@ export const updateDepartmentStatusApi = async (
       if (data.patient) {
         updatePatientLocal(data.patient);
       }
-      return { patient: data.patient, patients: data.patients || inMemoryPatients };
+      return { patient: data.patient, patients: inMemoryPatients };
     }
   } catch (err) {
     console.warn('Backend updateDepartmentStatusApi error:', err);
@@ -766,29 +1160,48 @@ export const updateDepartmentStatusApi = async (
   return { patient: current[idx], patients: current };
 };
 
-export const confirmBatchPatientsApi = async (ids: string[]): Promise<Patient[]> => {
+export const confirmBatchPatientsApi = async (patientsOrIds: (string | Patient)[]): Promise<Patient[]> => {
   const current = getPatientsLocal();
-  const idStrs = ids.map(id => String(id).trim());
+  const payloadPatients: Array<{ id: string; serialNo?: string; appointmentDate?: string; phone?: string }> = [];
+  const ids: string[] = [];
 
-  for (const idStr of idStrs) {
-    const idx = current.findIndex(p => String(p.id).trim() === idStr || (p.serialNo && String(p.serialNo).trim() === idStr));
+  const previousPatients: Patient[] = [];
+  const optimisticUpdated: Patient[] = [];
+  for (const item of patientsOrIds) {
+    const isObj = typeof item === 'object' && item !== null;
+    const idStr = String(isObj ? item.id : item || '').trim();
+    const serialStr = isObj && item.serialNo ? String(item.serialNo).trim() : '';
+    const dateStr = isObj && item.appointmentDate ? String(item.appointmentDate).trim() : '';
+    const phoneStr = isObj && item.phone ? String(item.phone).trim() : '';
+
+    const idx = current.findIndex(p => {
+      if (idStr && String(p.id).trim() === idStr) return true;
+      if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
+      if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
+      if (!isObj && idStr && p.serialNo && String(p.serialNo).trim() === idStr) return true;
+      return false;
+    });
+
     if (idx !== -1 && !current[idx].isConfirmed) {
-      const targetDate = current[idx].appointmentDate || new Date().toISOString().split('T')[0];
-      let maxSerial = 0;
-      current.forEach(p => {
-        if (p.appointmentDate === targetDate && p.consultationSerial && typeof p.consultationSerial === 'number') {
-          if (p.consultationSerial > maxSerial) maxSerial = p.consultationSerial;
-        }
-      });
+      previousPatients.push({ ...current[idx] });
       current[idx] = {
         ...current[idx],
         isConfirmed: true,
-        confirmedAt: new Date().toISOString(),
-        consultationSerial: maxSerial + 1,
+        confirmedAt: current[idx].confirmedAt || new Date().toISOString(),
+        consultationSerial: current[idx].consultationSerial ?? null,
         consultationStatus: 'Pre Consultation',
         status: 'Pre Consultation'
       };
+      optimisticUpdated.push(current[idx]);
     }
+
+    ids.push(idStr);
+    payloadPatients.push({
+      id: idStr,
+      serialNo: serialStr || (idx !== -1 ? current[idx].serialNo : undefined),
+      appointmentDate: dateStr || (idx !== -1 ? current[idx].appointmentDate : undefined),
+      phone: phoneStr || (idx !== -1 ? current[idx].phone : undefined)
+    });
   }
   savePatientsLocal([...current]);
 
@@ -796,24 +1209,24 @@ export const confirmBatchPatientsApi = async (ids: string[]): Promise<Patient[]>
     const res = await fetch('/api/patients/confirm-batch', {
       method: 'POST',
       headers: getAuthHeader(),
-      body: JSON.stringify({ ids })
+      body: JSON.stringify({ ids, patients: payloadPatients })
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.patients) {
-        savePatientsLocal(data.patients);
-        return data.patients;
-      }
+      const updatedRows: Patient[] = Array.isArray(data.updated) ? data.updated : optimisticUpdated;
+      patchPatientsLocal(updatedRows);
+      return updatedRows;
     } else {
       const errData = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(errData.error || errData.message || `Server returned error (${res.status}) while confirming batch`);
     }
   } catch (err) {
+    if (previousPatients.length > 0) {
+      patchPatientsLocal(previousPatients);
+    }
     console.warn('Backend confirm batch error:', err);
     throw err;
   }
-
-  return current;
 };
 
 export const deletePatientsApi = async (ids: string[]): Promise<Patient[]> => {
@@ -830,10 +1243,10 @@ export const deletePatientsApi = async (ids: string[]): Promise<Patient[]> => {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.patients) {
-        savePatientsLocal(data.patients);
-        return data.patients;
-      }
+      const deletedSet = new Set(Array.isArray(data.deletedIds) ? data.deletedIds : ids);
+      const next = getPatientsLocal().filter(p => !deletedSet.has(p.id));
+      savePatientsLocal(next);
+      return next;
     }
   } catch (err) {
     console.warn('Error deleting patients on backend:', err);
@@ -853,7 +1266,6 @@ export const importPatientsFromExcelApi = async (
   const chunkSize = 100;
   let totalAdded = 0;
   let totalUpdated = 0;
-  let latestList: Patient[] = [];
 
   for (let i = 0; i < newPatients.length; i += chunkSize) {
     const chunk = newPatients.slice(i, i + chunkSize);
@@ -872,7 +1284,6 @@ export const importPatientsFromExcelApi = async (
       const data = await res.json();
       totalAdded += data.added || 0;
       totalUpdated += data.updated || 0;
-      latestList = data.patients || latestList;
 
       if (onProgress) {
         onProgress(Math.min(i + chunkSize, newPatients.length), newPatients.length);
@@ -883,13 +1294,7 @@ export const importPatientsFromExcelApi = async (
     }
   }
 
-  // Update local memory and cache only after server database confirms 100% successful persistence
-  if (latestList && latestList.length > 0) {
-    savePatientsLocal(latestList);
-    return { added: totalAdded, updated: totalUpdated, list: latestList };
-  }
-
-  // Refetch fresh data directly from server database
+  // Refetch fresh data once after all batches succeed
   const freshList = await fetchPatientsApi();
   return { added: totalAdded, updated: totalUpdated, list: freshList };
 };
@@ -927,58 +1332,59 @@ export const getQuotationsLocal = (): InvoiceQuotation[] => {
 
 export const saveQuotationsLocal = (quotations: InvoiceQuotation[]): void => {
   if (!Array.isArray(quotations)) return;
+  if (quotationsIdbTimer) {
+    clearTimeout(quotationsIdbTimer);
+    quotationsIdbTimer = null;
+  }
   // Instant in-memory update (0ms)
   inMemoryQuotations = quotations;
   // Non-blocking async persist to IndexedDB (virtually unlimited quota)
   idbSet(QUOTATIONS_KEY, quotations).catch(() => {});
-
-  try {
-    // Keep only the latest 10 quotations in localStorage to prevent 5MB overflow
-    const lightSlice = quotations.slice(0, 10);
-    localStorage.setItem(QUOTATIONS_KEY, JSON.stringify(lightSlice));
-  } catch (err) {
-    try {
-      localStorage.removeItem(QUOTATIONS_KEY);
-    } catch {}
-  }
+  writeQuotationsLightSlice();
 };
 
-export const saveQuotationApi = async (quotation: InvoiceQuotation): Promise<InvoiceQuotation[]> => {
-  const current = getQuotationsLocal();
-  const index = current.findIndex(q => q.id === quotation.id);
-  if (index >= 0) {
-    current[index] = quotation;
+export const saveQuotationApi = async (quotation: InvoiceQuotation): Promise<{ quotation: InvoiceQuotation; quotations: InvoiceQuotation[] }> => {
+  const res = await fetch('/api/quotations', {
+    method: 'POST',
+    headers: getAuthHeader(),
+    body: JSON.stringify(quotation)
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(errData.error || errData.message || `Server returned error (${res.status}) while saving quotation`);
+  }
+
+  const data = await res.json();
+  const savedQuotation: InvoiceQuotation = data?.quotation || quotation;
+  let updatedQuotations: InvoiceQuotation[];
+
+  if (Array.isArray(data?.quotations)) {
+    updatedQuotations = data.quotations;
   } else {
-    current.unshift(quotation);
-  }
-  saveQuotationsLocal(current);
-
-  // Update patient status locally
-  const patients = getPatientsLocal();
-  const pIdx = patients.findIndex(p => p.phone === quotation.patientPhone);
-  if (pIdx >= 0) {
-    patients[pIdx].status = 'Quotation Created';
-    savePatientsLocal(patients);
-  }
-
-  try {
-    const res = await fetch('/api/quotations', {
-      method: 'POST',
-      headers: getAuthHeader(),
-      body: JSON.stringify(quotation)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.quotations) {
-        saveQuotationsLocal(data.quotations);
-        return data.quotations;
-      }
+    const current = getQuotationsLocal();
+    const index = current.findIndex(q => q.id === savedQuotation.id);
+    if (index >= 0) {
+      current[index] = savedQuotation;
+    } else {
+      current.unshift(savedQuotation);
     }
-  } catch (err) {
-    console.warn('Error saving quotation to server:', err);
+    updatedQuotations = current;
   }
 
-  return current;
+  saveQuotationsLocal(updatedQuotations);
+
+  // Update exact patient status locally by patientId
+  if (savedQuotation.patientId && savedQuotation.patientId !== 'walkin') {
+    const patients = getPatientsLocal();
+    const pIdx = patients.findIndex(p => p.id === savedQuotation.patientId);
+    if (pIdx >= 0) {
+      patients[pIdx].status = 'Quotation Created';
+      savePatientsLocal(patients);
+    }
+  }
+
+  return { quotation: savedQuotation, quotations: updatedQuotations };
 };
 
 export const deleteQuotationsApi = async (ids: string[]): Promise<InvoiceQuotation[]> => {
