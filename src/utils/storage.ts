@@ -885,13 +885,9 @@ export const savePatientsLocal = (patients: Patient[]): void => {
 export const updatePatientLocal = (patient: Patient): void => {
   if (!patient || !patient.id) return;
   const pIdStr = String(patient.id).trim();
-  const pSerialStr = patient.serialNo ? String(patient.serialNo).trim() : '';
 
   // 1. Update in-memory cache instantly (0ms)
-  const mIdx = inMemoryPatients.findIndex(p => 
-    String(p.id).trim() === pIdStr || 
-    (pSerialStr && p.serialNo && String(p.serialNo).trim() === pSerialStr)
-  );
+  const mIdx = inMemoryPatients.findIndex(p => Boolean(p && p.id && String(p.id).trim() === pIdStr));
   if (mIdx >= 0) {
     inMemoryPatients[mIdx] = { ...inMemoryPatients[mIdx], ...patient };
   } else {
@@ -920,16 +916,10 @@ export const patchPatientsLocal = (updatedPatients: Patient[]): Patient[] => {
   for (const patient of updatedPatients) {
     if (!patient) continue;
     const pIdStr = patient.id ? String(patient.id).trim() : '';
-    const pSerialStr = patient.serialNo ? String(patient.serialNo).trim() : '';
-    const pDateStr = patient.appointmentDate ? String(patient.appointmentDate).trim() : '';
-    const pPhoneStr = patient.phone ? String(patient.phone).trim() : '';
 
-    const idx = current.findIndex(p => {
-      if (pIdStr && p.id && String(p.id).trim() === pIdStr) return true;
-      if (pDateStr && pSerialStr && p.serialNo && String(p.serialNo).trim() === pSerialStr && p.appointmentDate === pDateStr) return true;
-      if (pDateStr && pPhoneStr && pPhoneStr !== '01700000000' && p.phone && String(p.phone).trim() === pPhoneStr && p.appointmentDate === pDateStr) return true;
-      return false;
-    });
+    const idx = pIdStr
+      ? current.findIndex(p => Boolean(p && p.id && String(p.id).trim() === pIdStr))
+      : -1;
 
     if (idx >= 0) {
       current[idx] = { ...current[idx], ...patient };
@@ -968,21 +958,13 @@ export const confirmPatientApi = async (patientOrId: string | Patient, isConfirm
   const current = getPatientsLocal();
   const isObj = typeof patientOrId === 'object' && patientOrId !== null;
   const idStr = String(isObj ? patientOrId.id : patientOrId || '').trim();
-  const serialStr = isObj && patientOrId.serialNo ? String(patientOrId.serialNo).trim() : '';
   const dateStr = isObj && patientOrId.appointmentDate ? String(patientOrId.appointmentDate).trim() : '';
-  const phoneStr = isObj && patientOrId.phone ? String(patientOrId.phone).trim() : '';
 
-  const idx = current.findIndex(p => {
-    if (idStr && String(p.id).trim() === idStr) return true;
-    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
-    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
-    if (!isObj && idStr && p.serialNo && String(p.serialNo).trim() === idStr) return true;
-    return false;
-  });
+  const idx = idStr
+    ? current.findIndex(p => Boolean(p && p.id && String(p.id).trim() === idStr))
+    : -1;
 
-  const resolvedSerial = serialStr || (idx !== -1 ? current[idx].serialNo : undefined);
   const resolvedDate = dateStr || (idx !== -1 ? current[idx].appointmentDate : undefined);
-  const resolvedPhone = phoneStr || (idx !== -1 ? current[idx].phone : undefined);
   const previousPatient = idx !== -1 ? { ...current[idx] } : null;
 
   if (idx !== -1) {
@@ -1017,9 +999,7 @@ export const confirmPatientApi = async (patientOrId: string | Patient, isConfirm
       headers: getAuthHeader(),
       body: JSON.stringify({
         id: idStr,
-        serialNo: resolvedSerial,
         appointmentDate: resolvedDate,
-        phone: resolvedPhone,
         isConfirmed
       })
     });
@@ -1046,21 +1026,13 @@ export const holdPatientApi = async (patientOrId: string | Patient, isOnHold: bo
   const current = getPatientsLocal();
   const isObj = typeof patientOrId === 'object' && patientOrId !== null;
   const idStr = String(isObj ? patientOrId.id : patientOrId || '').trim();
-  const serialStr = isObj && patientOrId.serialNo ? String(patientOrId.serialNo).trim() : '';
   const dateStr = isObj && patientOrId.appointmentDate ? String(patientOrId.appointmentDate).trim() : '';
-  const phoneStr = isObj && patientOrId.phone ? String(patientOrId.phone).trim() : '';
 
-  const idx = current.findIndex(p => {
-    if (idStr && String(p.id).trim() === idStr) return true;
-    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
-    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
-    if (!isObj && idStr && p.serialNo && String(p.serialNo).trim() === idStr) return true;
-    return false;
-  });
+  const idx = idStr
+    ? current.findIndex(p => Boolean(p && p.id && String(p.id).trim() === idStr))
+    : -1;
 
-  const resolvedSerial = serialStr || (idx !== -1 ? current[idx].serialNo : undefined);
   const resolvedDate = dateStr || (idx !== -1 ? current[idx].appointmentDate : undefined);
-  const resolvedPhone = phoneStr || (idx !== -1 ? current[idx].phone : undefined);
   const previousPatient = idx !== -1 ? { ...current[idx] } : null;
 
   if (idx !== -1) {
@@ -1084,9 +1056,7 @@ export const holdPatientApi = async (patientOrId: string | Patient, isOnHold: bo
       headers: getAuthHeader(),
       body: JSON.stringify({
         id: idStr,
-        serialNo: resolvedSerial,
         appointmentDate: resolvedDate,
-        phone: resolvedPhone,
         isOnHold,
         holdReason
       })
@@ -1162,7 +1132,7 @@ export const updateDepartmentStatusApi = async (
 
 export const confirmBatchPatientsApi = async (patientsOrIds: (string | Patient)[]): Promise<Patient[]> => {
   const current = getPatientsLocal();
-  const payloadPatients: Array<{ id: string; serialNo?: string; appointmentDate?: string; phone?: string }> = [];
+  const payloadPatients: Array<{ id: string; appointmentDate?: string }> = [];
   const ids: string[] = [];
 
   const previousPatients: Patient[] = [];
@@ -1170,17 +1140,11 @@ export const confirmBatchPatientsApi = async (patientsOrIds: (string | Patient)[
   for (const item of patientsOrIds) {
     const isObj = typeof item === 'object' && item !== null;
     const idStr = String(isObj ? item.id : item || '').trim();
-    const serialStr = isObj && item.serialNo ? String(item.serialNo).trim() : '';
     const dateStr = isObj && item.appointmentDate ? String(item.appointmentDate).trim() : '';
-    const phoneStr = isObj && item.phone ? String(item.phone).trim() : '';
 
-    const idx = current.findIndex(p => {
-      if (idStr && String(p.id).trim() === idStr) return true;
-      if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
-      if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
-      if (!isObj && idStr && p.serialNo && String(p.serialNo).trim() === idStr) return true;
-      return false;
-    });
+    const idx = idStr
+      ? current.findIndex(p => Boolean(p && p.id && String(p.id).trim() === idStr))
+      : -1;
 
     if (idx !== -1 && !current[idx].isConfirmed) {
       previousPatients.push({ ...current[idx] });
@@ -1195,13 +1159,13 @@ export const confirmBatchPatientsApi = async (patientsOrIds: (string | Patient)[
       optimisticUpdated.push(current[idx]);
     }
 
-    ids.push(idStr);
-    payloadPatients.push({
-      id: idStr,
-      serialNo: serialStr || (idx !== -1 ? current[idx].serialNo : undefined),
-      appointmentDate: dateStr || (idx !== -1 ? current[idx].appointmentDate : undefined),
-      phone: phoneStr || (idx !== -1 ? current[idx].phone : undefined)
-    });
+    if (idStr) {
+      ids.push(idStr);
+      payloadPatients.push({
+        id: idStr,
+        appointmentDate: dateStr || (idx !== -1 ? current[idx].appointmentDate : undefined)
+      });
+    }
   }
   savePatientsLocal([...current]);
 

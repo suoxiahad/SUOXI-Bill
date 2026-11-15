@@ -186,10 +186,9 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     if (!editingQuotation) return;
 
     // Find or reconstruct patient
-    const foundPatient = patients.find(
-      p => (editingQuotation.patientPhone && p.phone === editingQuotation.patientPhone) ||
-           (editingQuotation.patientId && p.id === editingQuotation.patientId)
-    ) || {
+    const foundPatient = (editingQuotation.patientId && editingQuotation.patientId !== 'walkin'
+      ? patients.find(p => p.id === editingQuotation.patientId)
+      : undefined) || {
       id: editingQuotation.patientId || makeUniqueId(),
       name: editingQuotation.patientName || 'Walk-in Patient',
       phone: editingQuotation.patientPhone || '01700000000',
@@ -474,8 +473,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           if (Array.isArray(liveResults)) {
             setMatchingPatients(prev => {
               const map = new Map<string, Patient>();
-              prev.forEach(p => map.set(p.id || p.phone, p));
-              liveResults.forEach(p => map.set(p.id || p.phone, p));
+              prev.forEach(p => map.set(p.id || `${p.name}__${p.phone}`, p));
+              liveResults.forEach(p => map.set(p.id || `${p.name}__${p.phone}`, p));
               const combined = Array.from(map.values()).filter(p => {
                 const matchesText = matchPatient(val, p);
                 if (!matchesText) return false;

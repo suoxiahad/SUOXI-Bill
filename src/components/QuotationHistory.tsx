@@ -43,6 +43,7 @@ interface QuotationHistoryProps {
 
 interface PatientHistoryGroup {
   patientKey: string;
+  patientId?: string;
   patientName: string;
   patientPhone: string;
   doctorName: string;
@@ -453,12 +454,16 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
   };
 
   const handleCreateNewQuotationForPatient = (group: PatientHistoryGroup) => {
-    const existingPatient = patients?.find(
-      p => (p.phone && p.phone === group.patientPhone) || (p.name === group.patientName && p.phone === group.patientPhone)
-    );
+    const targetPatientId =
+      group.patientId ||
+      group.quotations.find(q => q.patientId && q.patientId !== 'walkin')?.patientId;
+    const existingPatient =
+      targetPatientId && targetPatientId !== 'walkin'
+        ? patients?.find(p => p.id === targetPatientId)
+        : undefined;
 
     const patientToSelect: Patient = existingPatient || {
-      id: makeUniqueId(),
+      id: targetPatientId && targetPatientId !== 'walkin' ? targetPatientId : makeUniqueId(),
       name: group.patientName,
       phone: group.patientPhone || '',
       age: group.patientAge,
@@ -665,9 +670,11 @@ export const QuotationHistory: React.FC<QuotationHistoryProps> = ({
       const totalDue = groupQuotations.reduce((sum, item) => sum + (item.dueAmount || 0), 0);
       
       const latestQuot = newestFirst[0] || groupQuotations[0];
+      const resolvedPatientId = groupQuotations.find(q => q.patientId && q.patientId !== 'walkin')?.patientId || latestQuot.patientId;
 
       return {
         patientKey: key,
+        patientId: resolvedPatientId,
         patientName: latestQuot.patientName || 'Walk-in Patient',
         patientPhone: latestQuot.patientPhone || '',
         doctorName: latestQuot.doctorName || 'Senior Consultant',

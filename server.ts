@@ -2509,15 +2509,13 @@ app.post('/api/patients', authenticateToken, requireRole('System Admin', 'Call C
 
 // Single patient confirm / un-confirm endpoint with atomic daily consultation serial allocation
 app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
-  const { id, isConfirmed = true, serialNo, appointmentDate, phone } = req.body;
-  if (!id && id !== 0 && !serialNo && !phone) {
-    return res.status(400).json({ error: 'Patient ID or identification is required' });
+  const { id, isConfirmed = true, appointmentDate } = req.body;
+  const idStr = id != null ? String(id).trim() : '';
+  if (!idStr) {
+    return res.status(400).json({ error: 'Patient ID is required' });
   }
 
-  const idStr = id != null ? String(id).trim() : '';
-  const serialStr = serialNo != null ? String(serialNo).trim() : '';
   const dateStr = appointmentDate != null ? String(appointmentDate).trim() : '';
-  const phoneStr = phone != null ? String(phone).trim() : '';
 
   if (isMySqlActive && mysqlPool) {
     const conn = await mysqlPool.getConnection();
@@ -2525,18 +2523,8 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
       await conn.beginTransaction();
 
       const [dbRows]: any = await conn.execute(
-        `SELECT * FROM patients
-         WHERE (id = ? AND id != '')
-            OR (serialNo = ? AND appointmentDate = ? AND serialNo != '')
-            OR (phone = ? AND appointmentDate = ? AND phone != '' AND phone != '01700000000')
-            OR (serialNo = ? AND serialNo != '' AND (? = '' OR appointmentDate = ?))
-         LIMIT 1 FOR UPDATE`,
-        [
-          idStr || '__none__',
-          serialStr || '__none__', dateStr || '__none__',
-          phoneStr || '__none__', dateStr || '__none__',
-          idStr || '__none__', dateStr, dateStr
-        ]
+        `SELECT * FROM patients WHERE id = ? LIMIT 1 FOR UPDATE`,
+        [idStr]
       );
 
       if (!Array.isArray(dbRows) || dbRows.length === 0) {
@@ -2579,7 +2567,7 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
         };
       }
 
-      await conn.execute(
+      const [updateRes]: any = await conn.execute(
         `UPDATE patients
          SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?, isOnHold = ?, heldAt = ?, holdReason = ?
          WHERE id = ?`,
@@ -2596,13 +2584,18 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
         ]
       );
 
+      if (!updateRes || updateRes.affectedRows === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
       const nextVer = await bumpDataVersionInTx(conn);
       await conn.execute('UPDATE patients SET lastModifiedVersion = ? WHERE id = ?', [nextVer, String(updatedP.id)]);
       await conn.commit();
       serverDataVersion = nextVer;
       updatedP.lastModifiedVersion = nextVer;
 
-      const localIdx = localData.patients.findIndex(p => String(p.id).trim() === String(updatedP.id).trim());
+      const localIdx = localData.patients.findIndex(p => p && String(p.id).trim() === String(updatedP.id).trim());
       if (localIdx >= 0) {
         localData.patients[localIdx] = { ...localData.patients[localIdx], ...updatedP };
       } else {
@@ -2621,13 +2614,7 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
   }
 
   // Local File Persistence Mode
-  const idx = localData.patients.findIndex(p => {
-    if (idStr && String(p.id).trim() === idStr) return true;
-    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
-    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
-    if (idStr && p.serialNo && String(p.serialNo).trim() === idStr && (!dateStr || p.appointmentDate === dateStr)) return true;
-    return false;
-  });
+  const idx = localData.patients.findIndex(p => p && p.id != null && String(p.id).trim() === idStr);
 
   if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
 
@@ -2678,13 +2665,11 @@ app.post('/api/patients/confirm', authenticateToken, requireRole('System Admin',
 
 // Single patient Hold / Un-Hold endpoint with atomic sequential serial reservation
 app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'Call Center', 'Doctor', 'Billing Counter'), async (req, res) => {
-  const { id, isOnHold = true, holdReason = '', serialNo, appointmentDate, phone } = req.body;
-  if (!id && id !== 0 && !serialNo && !phone) return res.status(400).json({ error: 'Patient ID is required' });
-
+  const { id, isOnHold = true, holdReason = '', appointmentDate } = req.body;
   const idStr = id != null ? String(id).trim() : '';
-  const serialStr = serialNo != null ? String(serialNo).trim() : '';
+  if (!idStr) return res.status(400).json({ error: 'Patient ID is required' });
+
   const dateStr = appointmentDate != null ? String(appointmentDate).trim() : '';
-  const phoneStr = phone != null ? String(phone).trim() : '';
   const willHold = Boolean(isOnHold);
 
   if (isMySqlActive && mysqlPool) {
@@ -2693,18 +2678,8 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
       await conn.beginTransaction();
 
       const [dbRows]: any = await conn.execute(
-        `SELECT * FROM patients
-         WHERE (id = ? AND id != '')
-            OR (serialNo = ? AND appointmentDate = ? AND serialNo != '')
-            OR (phone = ? AND appointmentDate = ? AND phone != '' AND phone != '01700000000')
-            OR (serialNo = ? AND serialNo != '' AND (? = '' OR appointmentDate = ?))
-         LIMIT 1 FOR UPDATE`,
-        [
-          idStr || '__none__',
-          serialStr || '__none__', dateStr || '__none__',
-          phoneStr || '__none__', dateStr || '__none__',
-          idStr || '__none__', dateStr, dateStr
-        ]
+        `SELECT * FROM patients WHERE id = ? LIMIT 1 FOR UPDATE`,
+        [idStr]
       );
 
       if (!Array.isArray(dbRows) || dbRows.length === 0) {
@@ -2732,7 +2707,7 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
         holdReason: willHold ? (holdReason || 'Patient absent when turn called') : ''
       };
 
-      await conn.execute(
+      const [updateRes]: any = await conn.execute(
         `UPDATE patients
          SET isOnHold = ?, heldAt = ?, holdReason = ?, isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
          WHERE id = ?`,
@@ -2749,13 +2724,18 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
         ]
       );
 
+      if (!updateRes || updateRes.affectedRows === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
       const nextVer = await bumpDataVersionInTx(conn);
       await conn.execute('UPDATE patients SET lastModifiedVersion = ? WHERE id = ?', [nextVer, String(updatedP.id)]);
       await conn.commit();
       serverDataVersion = nextVer;
       (updatedP as any).lastModifiedVersion = nextVer;
 
-      const localIdx = localData.patients.findIndex(p => String(p.id).trim() === String(updatedP.id).trim());
+      const localIdx = localData.patients.findIndex(p => p && String(p.id).trim() === String(updatedP.id).trim());
       if (localIdx >= 0) {
         localData.patients[localIdx] = { ...localData.patients[localIdx], ...updatedP };
       } else {
@@ -2774,13 +2754,7 @@ app.post('/api/patients/hold', authenticateToken, requireRole('System Admin', 'C
   }
 
   // Local File Persistence Mode
-  const idx = localData.patients.findIndex(p => {
-    if (idStr && String(p.id).trim() === idStr) return true;
-    if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
-    if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
-    if (idStr && p.serialNo && String(p.serialNo).trim() === idStr && (!dateStr || p.appointmentDate === dateStr)) return true;
-    return false;
-  });
+  const idx = localData.patients.findIndex(p => p && p.id != null && String(p.id).trim() === idStr);
 
   if (idx === -1) return res.status(404).json({ error: 'Patient not found' });
 
@@ -2932,24 +2906,13 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
       const updated: any[] = [];
 
       for (const item of targetItems) {
-        const idStr = item.id != null ? String(item.id).trim() : '';
-        const serialStr = item.serialNo != null ? String(item.serialNo).trim() : '';
-        const dateStr = item.appointmentDate != null ? String(item.appointmentDate).trim() : '';
-        const phoneStr = item.phone != null ? String(item.phone).trim() : '';
+        const idStr = item && item.id != null ? String(item.id).trim() : '';
+        const dateStr = item && item.appointmentDate != null ? String(item.appointmentDate).trim() : '';
+        if (!idStr) continue;
 
         const [dbRows]: any = await conn.execute(
-          `SELECT * FROM patients
-           WHERE (id = ? AND id != '')
-              OR (serialNo = ? AND appointmentDate = ? AND serialNo != '')
-              OR (phone = ? AND appointmentDate = ? AND phone != '' AND phone != '01700000000')
-              OR (serialNo = ? AND serialNo != '' AND (? = '' OR appointmentDate = ?))
-           LIMIT 1 FOR UPDATE`,
-          [
-            idStr || '__none__',
-            serialStr || '__none__', dateStr || '__none__',
-            phoneStr || '__none__', dateStr || '__none__',
-            idStr || '__none__', dateStr, dateStr
-          ]
+          `SELECT * FROM patients WHERE id = ? LIMIT 1 FOR UPDATE`,
+          [idStr]
         );
 
         if (Array.isArray(dbRows) && dbRows.length > 0) {
@@ -2973,7 +2936,7 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
               status: 'Pre Consultation'
             };
 
-            await conn.execute(
+            const [updateRes]: any = await conn.execute(
               `UPDATE patients
                SET isConfirmed = ?, confirmedAt = ?, consultationSerial = ?, consultationStatus = ?, status = ?
                WHERE id = ?`,
@@ -2986,6 +2949,10 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
                 String(updatedP.id)
               ]
             );
+            if (!updateRes || updateRes.affectedRows === 0) {
+              await conn.rollback();
+              return res.status(404).json({ error: `Patient not found: ${idStr}` });
+            }
             updated.push(updatedP);
           }
         }
@@ -3006,7 +2973,7 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
 
         for (const p of updated) {
           p.lastModifiedVersion = nextVer;
-          const localIdx = localData.patients.findIndex(lp => String(lp.id).trim() === String(p.id).trim());
+          const localIdx = localData.patients.findIndex(lp => lp && String(lp.id).trim() === String(p.id).trim());
           if (localIdx >= 0) {
             localData.patients[localIdx] = { ...localData.patients[localIdx], ...p };
           } else {
@@ -3031,18 +2998,11 @@ app.post('/api/patients/confirm-batch', authenticateToken, requireRole('System A
   // Local File Persistence Mode
   const updated: any[] = [];
   for (const item of targetItems) {
-    const idStr = item.id != null ? String(item.id).trim() : '';
-    const serialStr = item.serialNo != null ? String(item.serialNo).trim() : '';
-    const dateStr = item.appointmentDate != null ? String(item.appointmentDate).trim() : '';
-    const phoneStr = item.phone != null ? String(item.phone).trim() : '';
+    const idStr = item && item.id != null ? String(item.id).trim() : '';
+    const dateStr = item && item.appointmentDate != null ? String(item.appointmentDate).trim() : '';
+    if (!idStr) continue;
 
-    const idx = localData.patients.findIndex(p => {
-      if (idStr && String(p.id).trim() === idStr) return true;
-      if (dateStr && serialStr && String(p.serialNo).trim() === serialStr && p.appointmentDate === dateStr) return true;
-      if (dateStr && phoneStr && phoneStr !== '01700000000' && String(p.phone).trim() === phoneStr && p.appointmentDate === dateStr) return true;
-      if (idStr && p.serialNo && String(p.serialNo).trim() === idStr && (!dateStr || p.appointmentDate === dateStr)) return true;
-      return false;
-    });
+    const idx = localData.patients.findIndex(p => p && p.id != null && String(p.id).trim() === idStr);
 
     if (idx !== -1) {
       const patient = localData.patients[idx];
@@ -3747,7 +3707,6 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     const existingIdx = localData.patients.findIndex(x => {
       if (p.id && String(x.id).trim() === String(p.id).trim()) return true;
       if (cleanSerial && x.serialNo === cleanSerial && x.appointmentDate === apptDate) return true;
-      if (cleanPhone && cleanPhone !== '01700000000' && x.phone === cleanPhone && x.appointmentDate === apptDate) return true;
       return false;
     });
 
@@ -4306,6 +4265,57 @@ app.get('/api/admin/duplicate-serials', authenticateToken, requireRole('System A
       ids: g.ids.join(',')
     }));
   res.json({ duplicates, count: duplicates.length });
+});
+
+// Read-only Admin Diagnostic: Detect multiple patients sharing phone + appointmentDate
+app.get('/api/admin/phone-collisions', authenticateToken, requireRole('System Admin'), async (req, res) => {
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [rows]: any = await mysqlPool.execute(
+        `SELECT phone, appointmentDate, COUNT(*) c, GROUP_CONCAT(id) ids, GROUP_CONCAT(name) names
+         FROM patients
+         WHERE phone != '' AND phone != '01700000000'
+         GROUP BY phone, appointmentDate
+         HAVING c > 1`
+      );
+      const collisions = Array.isArray(rows) ? rows : [];
+      return res.json({ collisions, count: collisions.length });
+    } catch (err: any) {
+      console.error('MySQL phone-collisions query error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to query phone collisions' });
+    }
+  }
+
+  const groups = new Map<string, { phone: string; appointmentDate: string; ids: string[]; names: string[] }>();
+  for (const p of localData.patients) {
+    const phone = p?.phone ? String(p.phone).trim() : '';
+    if (phone && phone !== '01700000000') {
+      const apptDate = p.appointmentDate || '';
+      const key = `${phone}__${apptDate}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.ids.push(String(p.id));
+        existing.names.push(String(p.name || ''));
+      } else {
+        groups.set(key, {
+          phone,
+          appointmentDate: apptDate,
+          ids: [String(p.id)],
+          names: [String(p.name || '')]
+        });
+      }
+    }
+  }
+  const collisions = Array.from(groups.values())
+    .filter(g => g.ids.length > 1)
+    .map(g => ({
+      phone: g.phone,
+      appointmentDate: g.appointmentDate,
+      c: g.ids.length,
+      ids: g.ids.join(','),
+      names: g.names.join(',')
+    }));
+  res.json({ collisions, count: collisions.length });
 });
 
 // One-time Backfill Endpoint: Recover quotations from localData into MySQL quotations_v2

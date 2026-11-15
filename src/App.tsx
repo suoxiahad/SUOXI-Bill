@@ -128,11 +128,7 @@ export default function App() {
   // Instant 1ms optimistic update handler for single patient:
   const handleUpdatePatient = useCallback((updatedPatient: Patient) => {
     setPatients(prev => {
-      const idx = prev.findIndex(p =>
-        (p.id && updatedPatient.id && p.id === updatedPatient.id) ||
-        (p.serialNo && updatedPatient.serialNo && p.serialNo === updatedPatient.serialNo && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate) ||
-        (p.phone && updatedPatient.phone && p.phone !== '01700000000' && p.phone === updatedPatient.phone && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate)
-      );
+      const idx = prev.findIndex(p => Boolean(p.id && updatedPatient.id && p.id === updatedPatient.id));
       if (idx >= 0) {
         const copy = [...prev];
         copy[idx] = updatedPatient;
@@ -150,11 +146,7 @@ export default function App() {
       const copy = [...prev];
       for (const updatedPatient of updatedRows) {
         if (!updatedPatient) continue;
-        const idx = copy.findIndex(p =>
-          (p.id && updatedPatient.id && p.id === updatedPatient.id) ||
-          (p.serialNo && updatedPatient.serialNo && p.serialNo === updatedPatient.serialNo && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate) ||
-          (p.phone && updatedPatient.phone && p.phone !== '01700000000' && p.phone === updatedPatient.phone && p.appointmentDate && p.appointmentDate === updatedPatient.appointmentDate)
-        );
+        const idx = copy.findIndex(p => Boolean(p.id && updatedPatient.id && p.id === updatedPatient.id));
         if (idx >= 0) {
           copy[idx] = { ...copy[idx], ...updatedPatient };
         } else {
