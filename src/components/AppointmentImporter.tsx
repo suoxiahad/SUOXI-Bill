@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { Patient, InvoiceQuotation, User as UserModel } from '../types';
 import { parseExcelAppointmentFile, downloadSampleExcelTemplate, ParsedExcelPatient } from '../utils/excelHelper';
-import { importPatientsFromExcelApi, deletePatientsApi, confirmPatientApi, confirmBatchPatientsApi, addOrUpdatePatientApi } from '../utils/storage';
+import { importPatientsFromExcelApi, previewImportPatientsApi, ImportPatientRowOutcome, PatientCountsResponse, deletePatientsApi, confirmPatientApi, confirmBatchPatientsApi, addOrUpdatePatientApi } from '../utils/storage';
 import { matchPatient, matchSearchQuery } from '../utils/searchHelper';
 
 interface AppointmentImporterProps {
@@ -39,7 +39,13 @@ interface AppointmentImporterProps {
   quotations?: InvoiceQuotation[];
   selectedDateFilter?: string;
   onDateFilterChange?: (date: string) => void;
-  isPatientsTruncated?: boolean;
+  serverTotalPatients?: number;
+  serverPage?: number;
+  serverPageSize?: number;
+  serverCounts?: PatientCountsResponse | null;
+  onServerPageChange?: (page: number) => void;
+  onServerPageSizeChange?: (pageSize: number) => void;
+  onServerFilterChange?: (filters: { status: 'all' | 'confirmed' | 'pending'; q: string }) => void;
   onRefreshPatients: () => void;
   onUpdatePatient?: (patient: Patient) => void;
   onUpdatePatients?: (patients: Patient[]) => void;
@@ -55,7 +61,13 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   quotations = [],
   selectedDateFilter: controlledDateFilter,
   onDateFilterChange,
-  isPatientsTruncated = false,
+  serverTotalPatients,
+  serverPage,
+  serverPageSize,
+  serverCounts,
+  onServerPageChange,
+  onServerPageSizeChange,
+  onServerFilterChange,
   onRefreshPatients,
   onUpdatePatient,
   onUpdatePatients,
@@ -88,9 +100,23 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Pagination state for high-volume patient lists (2000+ records)
+  // Pagination state for high-volume patient lists
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
+  const [importOverwriteConfirm, setImportOverwriteConfirm] = useState<{
+    recordsToSave: Partial<Patient>[];
+    updateRows: ImportPatientRowOutcome[];
+    addedCount: number;
+  } | null>(null);
+
+  const [debouncedSearchQ, setDebouncedSearchQ] = useState<string>('');
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQ(filterText.trim());
+    }, 250);
+    return () => clearTimeout(t);
+  }, [filterText]);
 
   // Reset page to 1 whenever search query, sub-tab or date filter changes
   useEffect(() => {
@@ -382,33 +408,14 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
     });
   };
 
-  const handleSaveParsedRecords = async () => {
-    if (parsedPreview.length === 0) return;
-
-    const selectedRecords = parsedPreview.filter((_, idx) => selectedPreviewIndexes.includes(idx));
-    if (selectedRecords.length === 0) {
-      setUploadMessage({
-        type: 'error',
-        text: 'No patient records selected from preview to import. Please check at least one record.'
-      });
-      return;
-    }
-
+  const commitImportRecords = async (recordsToSave: Partial<Patient>[]) => {
     setIsProcessing(true);
     setUploadMessage({
       type: 'info',
-      text: `Directly writing ${selectedRecords.length} appointment records for date ${formatDateDisplay(selectedDate)} to database... (0/${selectedRecords.length})`
+      text: `Directly writing ${recordsToSave.length} appointment records for date ${formatDateDisplay(selectedDate)} to database... (0/${recordsToSave.length})`
     });
 
     try {
-      const recordsToSave = selectedRecords.map(p => ({
-        ...p,
-        appointmentDate: selectedDate,
-        isInstant: Boolean(p.isInstant),
-        instantFee: p.isInstant ? (p.instantFee != null ? p.instantFee : 2000) : 0,
-        isEd: Boolean(p.isEd)
-      }));
-
       const summary = await importPatientsFromExcelApi(recordsToSave, (processed, total) => {
         setUploadMessage({
           type: 'info',
@@ -425,13 +432,14 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
       setUploadMessage({
         type: 'success',
-        text: `Successfully imported ${summary.added + summary.updated} appointment records directly into database for date (${formatDateDisplay(selectedDate)})! All connected doctors can now search them instantly.`
+        text: `Successfully imported ${summary.added + summary.updated} appointment records (${summary.added} added, ${summary.updated} updated) for date (${formatDateDisplay(selectedDate)})! All connected doctors can now search them instantly.`
       });
 
       // Clear preview after saving to prevent accidental re-imports
       setParsedPreview([]);
       setSelectedPreviewIndexes([]);
       setSelectedFile(null);
+      setImportOverwriteConfirm(null);
     } catch (err: any) {
       console.error('Import error:', err);
       setUploadMessage({
@@ -439,6 +447,60 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         text: err?.message || 'Failed to import records to database. Please try again.'
       });
     } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleSaveParsedRecords = async () => {
+    if (parsedPreview.length === 0) return;
+
+    const selectedRecords = parsedPreview.filter((_, idx) => selectedPreviewIndexes.includes(idx));
+    if (selectedRecords.length === 0) {
+      setUploadMessage({
+        type: 'error',
+        text: 'No patient records selected from preview to import. Please check at least one record.'
+      });
+      return;
+    }
+
+    const recordsToSave = selectedRecords.map(p => ({
+      ...p,
+      appointmentDate: selectedDate,
+      isInstant: Boolean(p.isInstant),
+      instantFee: p.isInstant ? (p.instantFee != null ? p.instantFee : 2000) : 0,
+      isEd: Boolean(p.isEd)
+    }));
+
+    setIsProcessing(true);
+    setUploadMessage({
+      type: 'info',
+      text: `Checking ${recordsToSave.length} appointment records for date ${formatDateDisplay(selectedDate)}...`
+    });
+
+    try {
+      const preview = await previewImportPatientsApi(recordsToSave);
+      const updateRows = (preview.rows || []).filter(r => r.action === 'updated');
+      if (updateRows.length > 0) {
+        setImportOverwriteConfirm({
+          recordsToSave,
+          updateRows,
+          addedCount: preview.added
+        });
+        setUploadMessage({
+          type: 'info',
+          text: `Found ${updateRows.length} existing patient record(s) that would be updated/overwritten. Please confirm to continue.`
+        });
+        setIsProcessing(false);
+        return;
+      }
+
+      await commitImportRecords(recordsToSave);
+    } catch (err: any) {
+      console.error('Import preview error:', err);
+      setUploadMessage({
+        type: 'error',
+        text: err?.message || 'Failed to check import records against database. Please try again.'
+      });
       setIsProcessing(false);
     }
   };
@@ -483,28 +545,50 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
   // Compute counts for the tabs respecting the selected date filter (or all if 'all' is selected)
   const isDateFiltering = selectedDateFilter !== 'all' && !!selectedDateFilter;
 
+  const isServerPaginated =
+    selectedDateFilter === 'all' &&
+    typeof serverTotalPatients === 'number' &&
+    typeof onServerPageChange === 'function';
+
+  useEffect(() => {
+    if (!isServerPaginated || !onServerFilterChange) return;
+    onServerFilterChange({ status: activeSubTab, q: debouncedSearchQ });
+  }, [isServerPaginated, activeSubTab, debouncedSearchQ, onServerFilterChange]);
+
   const totalAppointmentsCount = useMemo(() => {
+    if (isServerPaginated) {
+      return serverCounts?.total ?? serverTotalPatients ?? patients.length;
+    }
     if (isDateFiltering) {
       return patients.filter(p => getPatientDate(p) === selectedDateFilter).length;
     }
     return patients.length;
-  }, [patients, isDateFiltering, selectedDateFilter]);
+  }, [patients, isDateFiltering, selectedDateFilter, isServerPaginated, serverTotalPatients, serverCounts]);
 
   const confirmedCountTotal = useMemo(() => {
+    if (isServerPaginated) {
+      return serverCounts?.confirmed ?? 0;
+    }
     if (isDateFiltering) {
       return patients.filter(p => !!p.isConfirmed && getPatientDate(p) === selectedDateFilter).length;
     }
     return patients.filter(p => !!p.isConfirmed).length;
-  }, [patients, isDateFiltering, selectedDateFilter]);
+  }, [patients, isDateFiltering, selectedDateFilter, isServerPaginated, serverCounts]);
 
   const pendingCountTotal = useMemo(() => {
+    if (isServerPaginated) {
+      return serverCounts?.pending ?? 0;
+    }
     if (isDateFiltering) {
       return patients.filter(p => !p.isConfirmed && p.consultationSerial == null && getPatientDate(p) === selectedDateFilter).length;
     }
     return patients.filter(p => !p.isConfirmed && p.consultationSerial == null).length;
-  }, [patients, isDateFiltering, selectedDateFilter]);
+  }, [patients, isDateFiltering, selectedDateFilter, isServerPaginated, serverCounts]);
 
   const filteredPatients = useMemo(() => {
+    if (isServerPaginated) {
+      return patients;
+    }
     return patients.filter(p => {
       if (activeSubTab === 'confirmed') {
         if (!p.isConfirmed) return false;
@@ -521,15 +605,36 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
 
       return matchesText && matchesDate;
     });
-  }, [patients, activeSubTab, deferredFilterText, selectedDateFilter]);
+  }, [patients, activeSubTab, deferredFilterText, selectedDateFilter, isServerPaginated]);
 
-  const totalPatientsCount = filteredPatients.length;
-  const totalPages = Math.max(1, Math.ceil(totalPatientsCount / pageSize));
-  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
-  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const activePageSize = isServerPaginated ? (serverPageSize ?? pageSize) : pageSize;
+  const totalPatientsCount = isServerPaginated ? serverTotalPatients! : filteredPatients.length;
+  const totalPages = Math.max(1, Math.ceil(totalPatientsCount / activePageSize));
+  const rawCurrentPage = isServerPaginated ? (serverPage ?? 1) : currentPage;
+  const safeCurrentPage = Math.min(Math.max(1, rawCurrentPage), totalPages);
+  const startIndex = (safeCurrentPage - 1) * activePageSize;
   const paginatedPatients = useMemo(() => {
-    return filteredPatients.slice(startIndex, startIndex + pageSize);
-  }, [filteredPatients, startIndex, pageSize]);
+    if (isServerPaginated) return filteredPatients;
+    return filteredPatients.slice(startIndex, startIndex + activePageSize);
+  }, [filteredPatients, startIndex, activePageSize, isServerPaginated]);
+
+  const handlePageChange = (nextPage: number) => {
+    const clamped = Math.min(totalPages, Math.max(1, nextPage));
+    if (isServerPaginated) {
+      onServerPageChange!(clamped);
+    } else {
+      setCurrentPage(clamped);
+    }
+  };
+
+  const handlePageSizeChange = (nextSize: number) => {
+    if (isServerPaginated && onServerPageSizeChange) {
+      onServerPageSizeChange(nextSize);
+    } else {
+      setPageSize(nextSize);
+      setCurrentPage(1);
+    }
+  };
 
   return (
     <div className="space-y-6 print:hidden">
@@ -871,7 +976,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
           <div>
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-              <span>Patient List ({filteredPatients.length} shown)</span>
+              <span>Patient List ({totalPatientsCount} shown)</span>
               {selectedPatientIds.length > 0 && (
                 <span className="ml-2 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                   {selectedPatientIds.length} Selected
@@ -977,13 +1082,6 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
             </div>
           </div>
         </div>
-
-        {isPatientsTruncated && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 text-xs text-amber-800 flex items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span>Showing the most recent 2,000 records — filter by date to see older entries.</span>
-          </div>
-        )}
 
         {filteredPatients.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs space-y-2">
@@ -1176,16 +1274,13 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-3 text-slate-600 font-medium">
                 <span>
-                  Showing <strong className="text-slate-900">{totalPatientsCount > 0 ? startIndex + 1 : 0}</strong> - <strong className="text-slate-900">{Math.min(startIndex + pageSize, totalPatientsCount)}</strong> of <strong className="text-slate-900">{totalPatientsCount}</strong> patients
+                  Showing <strong className="text-slate-900">{totalPatientsCount > 0 ? startIndex + 1 : 0}</strong> - <strong className="text-slate-900">{Math.min(startIndex + activePageSize, totalPatientsCount)}</strong> of <strong className="text-slate-900">{totalPatientsCount}</strong> patients
                 </span>
                 <div className="flex items-center gap-1.5 border-l border-slate-300 pl-3">
                   <span className="text-[11px] text-slate-500">Per page:</span>
                   <select
-                    value={pageSize}
-                    onChange={(e) => {
-                      setPageSize(Number(e.target.value));
-                      setCurrentPage(1);
-                    }}
+                    value={activePageSize}
+                    onChange={(e) => handlePageSizeChange(Number(e.target.value))}
                     className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                   >
                     <option value={25}>25</option>
@@ -1199,7 +1294,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
               {totalPages > 1 && (
                 <div className="flex items-center gap-1 self-end sm:self-auto">
                   <button
-                    onClick={() => setCurrentPage(1)}
+                    onClick={() => handlePageChange(1)}
                     disabled={safeCurrentPage <= 1}
                     className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
                     title="First Page"
@@ -1207,7 +1302,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                     <ChevronsLeft className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    onClick={() => handlePageChange(safeCurrentPage - 1)}
                     disabled={safeCurrentPage <= 1}
                     className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
                     title="Previous Page"
@@ -1220,7 +1315,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                   </span>
 
                   <button
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    onClick={() => handlePageChange(safeCurrentPage + 1)}
                     disabled={safeCurrentPage >= totalPages}
                     className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
                     title="Next Page"
@@ -1228,7 +1323,7 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                     <ChevronRight className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => setCurrentPage(totalPages)}
+                    onClick={() => handlePageChange(totalPages)}
                     disabled={safeCurrentPage >= totalPages}
                     className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
                     title="Last Page"
@@ -1363,6 +1458,79 @@ export const AppointmentImporter: React.FC<AppointmentImporterProps> = ({
                     <span>Yes, Delete</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Overwrite Confirmation Modal */}
+      {importOverwriteConfirm && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-base">
+                  Confirm Overwriting Existing Patients?
+                </h4>
+                <p className="text-xs text-slate-600 mt-1">
+                  <strong className="text-amber-700">{importOverwriteConfirm.updateRows.length}</strong> row(s) match existing patient records for{' '}
+                  <strong>{formatDateDisplay(selectedDate)}</strong> and will overwrite them ({importOverwriteConfirm.addedCount} new row(s) will be added).
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto border border-amber-200 rounded-xl bg-amber-50/40 divide-y divide-amber-100 text-xs">
+              {importOverwriteConfirm.updateRows.map((row, idx) => (
+                <div key={`${row.id}-${idx}`} className="px-3 py-2 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-900 truncate">
+                      {row.serialNo ? `#${row.serialNo} • ` : ''}{row.name}
+                    </p>
+                    <p className="text-[11px] text-slate-600">
+                      Phone: {row.phone}
+                      {row.existingName && row.existingName !== row.name
+                        ? ` (replaces: ${row.existingName})`
+                        : ''}
+                    </p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold border border-amber-300 text-[10px] shrink-0">
+                    UPDATE
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={() => {
+                  setImportOverwriteConfirm(null);
+                  setUploadMessage({
+                    type: 'info',
+                    text: 'Import cancelled. No existing patient records were modified.'
+                  });
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={async () => {
+                  const targetRecords = importOverwriteConfirm.recordsToSave;
+                  setImportOverwriteConfirm(null);
+                  await commitImportRecords(targetRecords);
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span>Confirm Overwrite & Import</span>
               </button>
             </div>
           </div>

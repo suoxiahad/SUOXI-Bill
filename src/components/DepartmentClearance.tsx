@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useDeferredValue } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import { 
   Patient, 
   InvoiceQuotation, 
@@ -28,7 +28,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { updateDepartmentStatusApi } from '../utils/storage';
+import { updateDepartmentStatusApi, PatientCountsResponse } from '../utils/storage';
 
 interface DepartmentClearanceProps {
   patients: Patient[];
@@ -36,7 +36,16 @@ interface DepartmentClearanceProps {
   currentUser: UserModel | null;
   selectedDateFilter?: string;
   onDateFilterChange?: (date: string) => void;
-  isPatientsTruncated?: boolean;
+  serverTotalPatients?: number;
+  serverPage?: number;
+  serverPageSize?: number;
+  serverCounts?: PatientCountsResponse | null;
+  onServerPageChange?: (page: number) => void;
+  onServerPageSizeChange?: (pageSize: number) => void;
+  onServerFilterChange?: (filters: {
+    deptStatus: 'all' | 'pending' | 'cleared' | 'pathology_pending' | 'organic_pending' | 'nutrition_pending';
+    q: string;
+  }) => void;
   onRefreshPatients?: () => void;
   onUpdatePatient: (patient: Patient) => void;
 }
@@ -47,7 +56,13 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
   currentUser,
   selectedDateFilter: controlledDateFilter,
   onDateFilterChange,
-  isPatientsTruncated = false,
+  serverTotalPatients,
+  serverPage,
+  serverPageSize,
+  serverCounts,
+  onServerPageChange,
+  onServerPageSizeChange,
+  onServerFilterChange,
   onRefreshPatients,
   onUpdatePatient
 }) => {
@@ -81,6 +96,24 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
   // Pagination state
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
+  const [debouncedSearchQ, setDebouncedSearchQ] = useState<string>('');
+
+  const isServerPaginated =
+    selectedDateFilter === 'all' &&
+    typeof serverTotalPatients === 'number' &&
+    typeof onServerPageChange === 'function';
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQ(filterText.trim());
+    }, 250);
+    return () => clearTimeout(t);
+  }, [filterText]);
+
+  useEffect(() => {
+    if (!isServerPaginated || !onServerFilterChange) return;
+    onServerFilterChange({ deptStatus: activeFilterTab, q: debouncedSearchQ });
+  }, [isServerPaginated, activeFilterTab, debouncedSearchQ, onServerFilterChange]);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
@@ -99,6 +132,10 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
     return patients.filter(isPostConsultation);
   }, [patients]);
 
+  const postPatientsBadgeCount = isServerPaginated
+    ? (serverCounts?.post ?? serverTotalPatients ?? postPatients.length)
+    : postPatients.length;
+
   // Unique list of dates present in post-consultation patients
   const availableDates = useMemo(() => {
     const dates = new Set<string>();
@@ -111,6 +148,10 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
 
   // Filtered post-consultation patients
   const filteredPatients = useMemo(() => {
+    if (isServerPaginated) {
+      return patients;
+    }
+
     let result = [...postPatients];
 
     // 1. Date Filter
@@ -156,16 +197,29 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
     });
 
     return result;
-  }, [postPatients, selectedDateFilter, activeFilterTab, deferredFilterText]);
+  }, [patients, postPatients, selectedDateFilter, activeFilterTab, deferredFilterText, isServerPaginated]);
 
   // Pagination calculations
-  const totalPatients = filteredPatients.length;
-  const totalPages = Math.max(1, Math.ceil(totalPatients / pageSize));
-  const safePage = Math.min(currentPage, totalPages);
-  const startIndex = (safePage - 1) * pageSize;
+
+  const activePageSize = isServerPaginated ? (serverPageSize ?? pageSize) : pageSize;
+  const totalPatients = isServerPaginated ? serverTotalPatients! : filteredPatients.length;
+  const totalPages = Math.max(1, Math.ceil(totalPatients / activePageSize));
+  const rawPage = isServerPaginated ? (serverPage ?? 1) : currentPage;
+  const safePage = Math.min(Math.max(1, rawPage), totalPages);
+  const startIndex = (safePage - 1) * activePageSize;
   const paginatedPatients = useMemo(() => {
-    return filteredPatients.slice(startIndex, startIndex + pageSize);
-  }, [filteredPatients, startIndex, pageSize]);
+    if (isServerPaginated) return filteredPatients;
+    return filteredPatients.slice(startIndex, startIndex + activePageSize);
+  }, [filteredPatients, startIndex, activePageSize, isServerPaginated]);
+
+  const handlePageChange = (nextPage: number) => {
+    const clamped = Math.min(totalPages, Math.max(1, nextPage));
+    if (isServerPaginated) {
+      onServerPageChange!(clamped);
+    } else {
+      setCurrentPage(clamped);
+    }
+  };
 
   // Handle department status toggle
   const handleToggleStatus = async (
@@ -310,7 +364,7 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
                 Department Updates
               </h2>
               <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-md border border-indigo-100">
-                Post Consultation ({postPatients.length})
+                Post Consultation ({postPatientsBadgeCount})
               </span>
               <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-xs font-semibold rounded-md">
                 Role: <strong className="text-slate-900">{userRole}</strong>
@@ -359,7 +413,7 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              All Post Patients ({postPatients.length})
+              All Post Patients ({postPatientsBadgeCount})
             </button>
 
             <button
@@ -493,7 +547,7 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
         <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-700">
-              Showing {filteredPatients.length} Post Consultation Patient(s)
+              Showing {totalPatients} Post Consultation Patient(s)
             </span>
             {selectedDateFilter !== 'all' && (
               <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 font-bold rounded-md text-[11px]">
@@ -514,13 +568,6 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
             </span>
           </div>
         </div>
-
-        {isPatientsTruncated && (
-          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-800 flex items-center gap-2">
-            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span>Showing the most recent 2,000 records — filter by date to see older entries.</span>
-          </div>
-        )}
 
         {/* Scrollable Table */}
         <div className="overflow-x-auto">
@@ -867,18 +914,18 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
         </div>
 
         {/* Pagination Controls */}
-        {totalPatients > pageSize && (
+        {totalPatients > activePageSize && (
           <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
             <div className="text-slate-500">
-              Showing <span className="font-bold text-slate-800">{startIndex + 1}</span> to{' '}
-              <span className="font-bold text-slate-800">{Math.min(startIndex + pageSize, totalPatients)}</span> of{' '}
+              Showing <span className="font-bold text-slate-800">{totalPatients > 0 ? startIndex + 1 : 0}</span> to{' '}
+              <span className="font-bold text-slate-800">{Math.min(startIndex + activePageSize, totalPatients)}</span> of{' '}
               <span className="font-bold text-slate-800">{totalPatients}</span> patients
             </div>
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={safePage === 1}
+                onClick={() => handlePageChange(safePage - 1)}
+                disabled={safePage <= 1}
                 className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer flex items-center gap-1"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -888,8 +935,8 @@ export const DepartmentClearance: React.FC<DepartmentClearanceProps> = ({
                 Page {safePage} of {totalPages}
               </span>
               <button
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={safePage === totalPages}
+                onClick={() => handlePageChange(safePage + 1)}
+                disabled={safePage >= totalPages}
                 className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer flex items-center gap-1"
               >
                 <span>Next</span>

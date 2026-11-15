@@ -325,9 +325,6 @@ export function parseExcelMatrixData(matrix: any[][]): ParsedExcelPatient[] {
         const match = enSerial.match(/\b\d+\b/);
         if (match) cleanSerial = match[0];
       }
-      if (!cleanSerial) {
-        cleanSerial = String(extracted.length + 1);
-      }
 
       extracted.push({
         serialNo: cleanSerial,

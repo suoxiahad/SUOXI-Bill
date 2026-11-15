@@ -732,28 +732,60 @@ export const fetchReportsSummaryApi = async (options?: {
 
 export interface PatientsFetchResponse {
   patients: Patient[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
   truncated: boolean;
   fromServer: boolean;
 }
 
-// Patient APIs
-export const fetchPatientsWithMetaApi = async (options?: {
+export interface PatientCountsResponse {
+  total: number;
+  confirmed: number;
+  pending: number;
+  pre: number;
+  post: number;
+  todayConfirmed?: number;
+  fromServer: boolean;
+}
+
+export interface PatientQueryFilterOptions {
+  page?: number;
+  pageSize?: number;
   limit?: number;
   offset?: number;
   date?: string;
   dateFrom?: string;
   dateTo?: string;
+  status?: 'all' | 'confirmed' | 'pending';
+  consultationStage?: 'pre' | 'post' | '';
+  deptStatus?: string;
+  comment?: string;
+  q?: string;
   saveLocal?: boolean;
-}): Promise<PatientsFetchResponse> => {
+}
+
+// Patient APIs
+export const fetchPatientsWithMetaApi = async (
+  options?: PatientQueryFilterOptions
+): Promise<PatientsFetchResponse> => {
   try {
     let url = '/api/patients';
     if (options) {
       const params = new URLSearchParams();
-      if (options.limit) params.set('limit', String(options.limit));
-      if (options.offset) params.set('offset', String(options.offset));
+      if (options.page !== undefined) params.set('page', String(options.page));
+      if (options.pageSize !== undefined) params.set('pageSize', String(options.pageSize));
+      if (options.limit !== undefined) params.set('limit', String(options.limit));
+      if (options.offset !== undefined) params.set('offset', String(options.offset));
       if (options.date) params.set('date', options.date);
       if (options.dateFrom) params.set('dateFrom', options.dateFrom);
       if (options.dateTo) params.set('dateTo', options.dateTo);
+      if (options.status && options.status !== 'all') params.set('status', options.status);
+      if (options.consultationStage) params.set('consultationStage', options.consultationStage);
+      if (options.deptStatus && options.deptStatus !== 'all') params.set('deptStatus', options.deptStatus);
+      if (options.comment && options.comment !== 'all') params.set('comment', options.comment);
+      if (options.q && options.q.trim()) params.set('q', options.q.trim());
       const qs = params.toString();
       if (qs) url += `?${qs}`;
     }
@@ -762,12 +794,16 @@ export const fetchPatientsWithMetaApi = async (options?: {
     if (res.ok) {
       const data = await res.json();
       const rows = Array.isArray(data) ? data : (Array.isArray(data?.patients) ? data.patients : null);
-      const truncated = Array.isArray(data) ? false : Boolean(data?.truncated);
       if (rows) {
+        const total = Array.isArray(data) ? rows.length : Number(data?.total ?? rows.length);
+        const page = Array.isArray(data) ? 1 : Number(data?.page ?? options?.page ?? 1);
+        const pageSize = Array.isArray(data) ? rows.length : Number(data?.pageSize ?? options?.pageSize ?? (rows.length || 100));
+        const hasMore = Array.isArray(data) ? false : Boolean(data?.hasMore ?? data?.truncated ?? false);
+        const truncated = Array.isArray(data) ? false : Boolean(data?.truncated ?? hasMore);
         if (options?.saveLocal !== false) {
           savePatientsLocal(rows);
         }
-        return { patients: rows, truncated, fromServer: true };
+        return { patients: rows, total, page, pageSize, hasMore, truncated, fromServer: true };
       }
     }
   } catch (err) {
@@ -786,16 +822,134 @@ export const fetchPatientsWithMetaApi = async (options?: {
       return true;
     });
   }
-  return { patients: localList, truncated: false, fromServer: false };
+  if (options?.status === 'confirmed') {
+    localList = localList.filter(p => Boolean(p.isConfirmed) || p.consultationSerial != null || Boolean(p.confirmedAt));
+  } else if (options?.status === 'pending') {
+    localList = localList.filter(p => !(Boolean(p.isConfirmed) || p.consultationSerial != null || Boolean(p.confirmedAt)) && p.consultationSerial == null);
+  }
+  if (options?.consultationStage === 'pre') {
+    localList = localList.filter(p =>
+      (p.isConfirmed === true || (p.consultationSerial !== null && p.consultationSerial !== undefined && Number(p.consultationSerial) > 0)) &&
+      p.status !== 'Post Consultation' && p.consultationStatus !== 'Post Consultation' && !p.postConsultationConfirmed
+    );
+  } else if (options?.consultationStage === 'post') {
+    localList = localList.filter(p =>
+      p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' || Boolean(p.postConsultationConfirmed)
+    );
+  }
+  if (options?.comment && options.comment !== 'all') {
+    localList = localList.filter(p => p.consultationComment === options.comment);
+  }
+  if (options?.deptStatus && options.deptStatus !== 'all') {
+    if (options.deptStatus === 'pending') {
+      localList = localList.filter(p => p.pathologyStatus !== 'Yes' || p.organicStatus !== 'Yes' || p.nutritionStatus !== 'Yes');
+    } else if (options.deptStatus === 'cleared') {
+      localList = localList.filter(p => p.pathologyStatus === 'Yes' && p.organicStatus === 'Yes' && p.nutritionStatus === 'Yes');
+    } else if (options.deptStatus === 'pathology_pending') {
+      localList = localList.filter(p => p.pathologyStatus !== 'Yes');
+    } else if (options.deptStatus === 'organic_pending') {
+      localList = localList.filter(p => p.organicStatus !== 'Yes');
+    } else if (options.deptStatus === 'nutrition_pending') {
+      localList = localList.filter(p => p.nutritionStatus !== 'Yes');
+    }
+  }
+  if (options?.q && options.q.trim()) {
+    const qLower = options.q.trim().toLowerCase();
+    localList = localList.filter(p =>
+      p.name?.toLowerCase().includes(qLower) ||
+      p.phone?.toLowerCase().includes(qLower) ||
+      p.serialNo?.toLowerCase().includes(qLower) ||
+      String(p.consultationSerial || '').includes(qLower) ||
+      p.profession?.toLowerCase().includes(qLower) ||
+      p.consultationComment?.toLowerCase().includes(qLower) ||
+      p.remark?.toLowerCase().includes(qLower) ||
+      p.notes?.toLowerCase().includes(qLower)
+    );
+  }
+
+  const total = localList.length;
+  const page = options?.page ?? 1;
+  const pageSize = options?.pageSize ?? (total || 100);
+  const sliced = options?.page !== undefined || options?.pageSize !== undefined
+    ? localList.slice((page - 1) * pageSize, page * pageSize)
+    : localList;
+  const hasMore = options?.page !== undefined || options?.pageSize !== undefined
+    ? page * pageSize < total
+    : false;
+  return { patients: sliced, total, page, pageSize, hasMore, truncated: hasMore, fromServer: false };
 };
 
-export const fetchPatientsApi = async (options?: {
-  limit?: number;
-  offset?: number;
+export const fetchPatientsCountsApi = async (options?: {
   date?: string;
   dateFrom?: string;
   dateTo?: string;
-}): Promise<Patient[]> => {
+  q?: string;
+  comment?: string;
+}): Promise<PatientCountsResponse> => {
+  try {
+    let url = '/api/patients/counts';
+    if (options) {
+      const params = new URLSearchParams();
+      if (options.date) params.set('date', options.date);
+      if (options.dateFrom) params.set('dateFrom', options.dateFrom);
+      if (options.dateTo) params.set('dateTo', options.dateTo);
+      if (options.comment && options.comment !== 'all') params.set('comment', options.comment);
+      if (options.q && options.q.trim()) params.set('q', options.q.trim());
+      const qs = params.toString();
+      if (qs) url += `?${qs}`;
+    }
+
+    const res = await fetch(url, { headers: getAuthHeader() });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        total: Number(data?.total || 0),
+        confirmed: Number(data?.confirmed || 0),
+        pending: Number(data?.pending || 0),
+        pre: Number(data?.pre || 0),
+        post: Number(data?.post || 0),
+        todayConfirmed: data?.todayConfirmed !== undefined ? Number(data.todayConfirmed) : undefined,
+        fromServer: true
+      };
+    }
+  } catch (err) {
+    console.warn('Patient counts API fetch failed, reading local cache:', err);
+  }
+
+  let localList = getPatientsLocal();
+  if (options?.date && options.date !== 'all') {
+    localList = localList.filter(p => p.appointmentDate === options.date);
+  }
+  const todayStr = new Date().toISOString().split('T')[0];
+  let confirmed = 0;
+  let pending = 0;
+  let pre = 0;
+  let post = 0;
+  let todayConfirmed = 0;
+  for (const p of localList) {
+    const isConf = Boolean(p.isConfirmed) || p.consultationSerial != null || Boolean(p.confirmedAt);
+    const isConsultConf = p.isConfirmed === true || (p.consultationSerial !== null && p.consultationSerial !== undefined && Number(p.consultationSerial) > 0);
+    const isPost = p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' || Boolean(p.postConsultationConfirmed);
+    if (isConf) confirmed++;
+    else if (p.consultationSerial == null) pending++;
+    if (isPost) post++;
+    else if (isConsultConf) pre++;
+    if (isConsultConf && p.appointmentDate === todayStr) todayConfirmed++;
+  }
+  return {
+    total: localList.length,
+    confirmed,
+    pending,
+    pre,
+    post,
+    todayConfirmed,
+    fromServer: false
+  };
+};
+
+export const fetchPatientsApi = async (
+  options?: Omit<PatientQueryFilterOptions, 'saveLocal'>
+): Promise<Patient[]> => {
   const result = await fetchPatientsWithMetaApi(options);
   return result.patients;
 };
@@ -1219,17 +1373,51 @@ export const deletePatientsApi = async (ids: string[]): Promise<Patient[]> => {
   return updated;
 };
 
+export interface ImportPatientRowOutcome {
+  name: string;
+  phone: string;
+  action: 'added' | 'updated';
+  id: string;
+  serialNo?: string;
+  existingName?: string;
+  existingPhone?: string;
+}
+
+export const previewImportPatientsApi = async (
+  newPatients: Partial<Patient>[]
+): Promise<{ added: number; updated: number; rows: ImportPatientRowOutcome[] }> => {
+  if (!Array.isArray(newPatients) || newPatients.length === 0) {
+    return { added: 0, updated: 0, rows: [] };
+  }
+  const res = await fetch('/api/patients/import', {
+    method: 'POST',
+    headers: getAuthHeader(),
+    body: JSON.stringify({ patients: newPatients, dryRun: true })
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `Server database rejected import preview (Status ${res.status})`);
+  }
+  const data = await res.json();
+  return {
+    added: Number(data.added || 0),
+    updated: Number(data.updated || 0),
+    rows: Array.isArray(data.rows) ? data.rows : []
+  };
+};
+
 export const importPatientsFromExcelApi = async (
   newPatients: Partial<Patient>[],
   onProgress?: (processed: number, total: number) => void
-): Promise<{ added: number; updated: number; list: Patient[] }> => {
+): Promise<{ added: number; updated: number; rows: ImportPatientRowOutcome[]; list: Patient[] }> => {
   if (!Array.isArray(newPatients) || newPatients.length === 0) {
-    return { added: 0, updated: 0, list: getPatientsLocal() };
+    return { added: 0, updated: 0, rows: [], list: getPatientsLocal() };
   }
 
   const chunkSize = 100;
   let totalAdded = 0;
   let totalUpdated = 0;
+  const allRows: ImportPatientRowOutcome[] = [];
 
   for (let i = 0; i < newPatients.length; i += chunkSize) {
     const chunk = newPatients.slice(i, i + chunkSize);
@@ -1248,6 +1436,9 @@ export const importPatientsFromExcelApi = async (
       const data = await res.json();
       totalAdded += data.added || 0;
       totalUpdated += data.updated || 0;
+      if (Array.isArray(data.rows)) {
+        allRows.push(...data.rows);
+      }
 
       if (onProgress) {
         onProgress(Math.min(i + chunkSize, newPatients.length), newPatients.length);
@@ -1260,7 +1451,7 @@ export const importPatientsFromExcelApi = async (
 
   // Refetch fresh data once after all batches succeed
   const freshList = await fetchPatientsApi();
-  return { added: totalAdded, updated: totalUpdated, list: freshList };
+  return { added: totalAdded, updated: totalUpdated, rows: allRows, list: freshList };
 };
 
 // Quotation APIs

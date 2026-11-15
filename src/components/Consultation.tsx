@@ -28,7 +28,8 @@ import { Patient, InvoiceQuotation, User as UserModel } from '../types';
 import { 
   addOrUpdatePatientApi, 
   getProfessionsLocal, 
-  getConsultationCommentsLocal
+  getConsultationCommentsLocal,
+  PatientCountsResponse
 } from '../utils/storage';
 
 interface ConsultationProps {
@@ -38,7 +39,13 @@ interface ConsultationProps {
   comments?: string[];
   selectedDateFilter?: string;
   onDateFilterChange?: (date: string) => void;
-  isPatientsTruncated?: boolean;
+  serverTotalPatients?: number;
+  serverPage?: number;
+  serverPageSize?: number;
+  serverCounts?: PatientCountsResponse | null;
+  onServerPageChange?: (page: number) => void;
+  onServerPageSizeChange?: (pageSize: number) => void;
+  onServerFilterChange?: (filters: { comment: string; q: string }) => void;
   onRefreshPatients: () => void;
   onUpdatePatient?: (patient: Patient) => void;
   onSelectPatientForQuotation: (patient: Patient) => void;
@@ -55,7 +62,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
   comments = [],
   selectedDateFilter: controlledDateFilter,
   onDateFilterChange,
-  isPatientsTruncated = false,
+  serverTotalPatients,
+  serverPage,
+  serverPageSize,
+  serverCounts,
+  onServerPageChange,
+  onServerPageSizeChange,
+  onServerFilterChange,
   onRefreshPatients,
   onUpdatePatient,
   onSelectPatientForQuotation,
@@ -131,6 +144,24 @@ export const Consultation: React.FC<ConsultationProps> = ({
   // Pagination state
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
+  const [debouncedSearchQ, setDebouncedSearchQ] = useState<string>('');
+
+  const isServerPaginated =
+    selectedDateFilter === 'all' &&
+    typeof serverTotalPatients === 'number' &&
+    typeof onServerPageChange === 'function';
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQ(filterText.trim());
+    }, 250);
+    return () => clearTimeout(t);
+  }, [filterText]);
+
+  useEffect(() => {
+    if (!isServerPaginated || !onServerFilterChange) return;
+    onServerFilterChange({ comment: selectedCommentFilter, q: debouncedSearchQ });
+  }, [isServerPaginated, selectedCommentFilter, debouncedSearchQ, onServerFilterChange]);
 
   // Helper to determine if a patient is confirmed for Consultation
   const isConfirmedForConsultation = (p: Patient): boolean => {
@@ -163,6 +194,14 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Statistics calculation - based on confirmed consultation patients
   const stats = useMemo(() => {
+    if (isServerPaginated && serverCounts) {
+      return {
+        total: serverCounts.confirmed,
+        today: serverCounts.todayConfirmed ?? 0,
+        preCount: serverCounts.pre,
+        postCount: serverCounts.post
+      };
+    }
     const confirmedList = patients.filter(isConfirmedForConsultation);
     const total = confirmedList.length;
     const today = confirmedList.filter(p => p.appointmentDate === todayStr).length;
@@ -170,7 +209,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
     const preCount = total - postCount;
 
     return { total, today, preCount, postCount };
-  }, [patients, todayStr]);
+  }, [patients, todayStr, isServerPaginated, serverCounts]);
 
   // Count for the current date filter
   const dateFilteredPatients = useMemo(() => {
@@ -180,15 +219,25 @@ export const Consultation: React.FC<ConsultationProps> = ({
   }, [patients, selectedDateFilter]);
 
   const preTabCount = useMemo(() => {
+    if (isServerPaginated && serverCounts) {
+      return serverCounts.pre;
+    }
     return dateFilteredPatients.filter(p => !isPostConsultation(p)).length;
-  }, [dateFilteredPatients]);
+  }, [dateFilteredPatients, isServerPaginated, serverCounts]);
 
   const postTabCount = useMemo(() => {
+    if (isServerPaginated && serverCounts) {
+      return serverCounts.post;
+    }
     return dateFilteredPatients.filter(p => isPostConsultation(p)).length;
-  }, [dateFilteredPatients]);
+  }, [dateFilteredPatients, isServerPaginated, serverCounts]);
 
   // Filter patients by SubTab, Date, Comment, and Search Query
   const filteredPatients = useMemo(() => {
+    if (isServerPaginated) {
+      return patients;
+    }
+
     // Only confirmed patients enter Consultation desk
     let result = patients.filter(isConfirmedForConsultation);
 
@@ -245,16 +294,38 @@ export const Consultation: React.FC<ConsultationProps> = ({
     }
 
     return result;
-  }, [patients, selectedDateFilter, activeSubTab, selectedCommentFilter, deferredFilterText]);
+  }, [patients, selectedDateFilter, activeSubTab, selectedCommentFilter, deferredFilterText, isServerPaginated]);
 
   // Pagination calculation
-  const totalPatientsCount = filteredPatients.length;
-  const totalPages = Math.max(1, Math.ceil(totalPatientsCount / pageSize));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const startIndex = (safeCurrentPage - 1) * pageSize;
+
+  const activePageSize = isServerPaginated ? (serverPageSize ?? pageSize) : pageSize;
+  const totalPatientsCount = isServerPaginated ? serverTotalPatients! : filteredPatients.length;
+  const totalPages = Math.max(1, Math.ceil(totalPatientsCount / activePageSize));
+  const rawCurrentPage = isServerPaginated ? (serverPage ?? 1) : currentPage;
+  const safeCurrentPage = Math.min(Math.max(1, rawCurrentPage), totalPages);
+  const startIndex = (safeCurrentPage - 1) * activePageSize;
   const paginatedPatients = useMemo(() => {
-    return filteredPatients.slice(startIndex, startIndex + pageSize);
-  }, [filteredPatients, startIndex, pageSize]);
+    if (isServerPaginated) return filteredPatients;
+    return filteredPatients.slice(startIndex, startIndex + activePageSize);
+  }, [filteredPatients, startIndex, activePageSize, isServerPaginated]);
+
+  const handlePageChange = (nextPage: number) => {
+    const clamped = Math.min(totalPages, Math.max(1, nextPage));
+    if (isServerPaginated) {
+      onServerPageChange!(clamped);
+    } else {
+      setCurrentPage(clamped);
+    }
+  };
+
+  const handlePageSizeChange = (nextSize: number) => {
+    if (isServerPaginated && onServerPageSizeChange) {
+      onServerPageSizeChange(nextSize);
+    } else {
+      setPageSize(nextSize);
+      setCurrentPage(1);
+    }
+  };
 
   // Action: Update single patient profession (Instant 1ms UI update + Silent background sync)
   const handleUpdateProfession = (patient: Patient, newProfession: string) => {
@@ -777,7 +848,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
               <span>
                 {activeSubTab === 'pre' 
                   ? 'Pre Consultation Patient Queue' 
-                  : 'Post Consultation Completed List'} ({filteredPatients.length} shown)
+                  : 'Post Consultation Completed List'} ({totalPatientsCount} shown)
               </span>
             </h3>
           </div>
@@ -838,13 +909,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
                 onClick={handleDownloadExcel}
                 disabled={filteredPatients.length === 0}
                 className="flex items-center gap-2 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white rounded-xl text-sm font-semibold shadow-xs transition-all cursor-pointer shrink-0"
-                title={filteredPatients.length === 0 ? "No records to export" : `Export ${filteredPatients.length} Post Consultation records to Excel`}
+                title={filteredPatients.length === 0 ? "No records to export" : `Export ${isServerPaginated ? totalPatientsCount : filteredPatients.length} Post Consultation records to Excel`}
               >
                 <Download className="w-4 h-4" />
                 <span>Download Excel</span>
                 {filteredPatients.length > 0 && (
                   <span className="px-1.5 py-0.2 bg-emerald-800 text-[11px] font-bold rounded-full text-white">
-                    {filteredPatients.length}
+                    {isServerPaginated ? totalPatientsCount : filteredPatients.length}
                   </span>
                 )}
               </button>
@@ -863,13 +934,6 @@ export const Consultation: React.FC<ConsultationProps> = ({
             </div>
           </div>
         </div>
-
-        {isPatientsTruncated && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 text-xs text-amber-800 flex items-center gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span>Showing the most recent 2,000 records — filter by date to see older entries.</span>
-          </div>
-        )}
 
         {/* Patient Table Content */}
         {filteredPatients.length === 0 ? (
@@ -1391,16 +1455,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
             <div className="p-4 bg-slate-50 border-t border-slate-200 rounded-b-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm">
               <div className="flex items-center gap-3 text-slate-700 font-normal">
                 <span>
-                  Showing <strong className="text-slate-900 font-medium">{totalPatientsCount > 0 ? startIndex + 1 : 0}</strong> - <strong className="text-slate-900 font-medium">{Math.min(startIndex + pageSize, totalPatientsCount)}</strong> of <strong className="text-slate-900 font-medium">{totalPatientsCount}</strong> patients
+                  Showing <strong className="text-slate-900 font-medium">{totalPatientsCount > 0 ? startIndex + 1 : 0}</strong> - <strong className="text-slate-900 font-medium">{Math.min(startIndex + activePageSize, totalPatientsCount)}</strong> of <strong className="text-slate-900 font-medium">{totalPatientsCount}</strong> patients
                 </span>
                 <div className="flex items-center gap-2 border-l border-slate-300 pl-3">
                   <span className="text-xs text-slate-500">Per page:</span>
                   <select
-                    value={pageSize}
-                    onChange={(e) => {
-                      setPageSize(Number(e.target.value));
-                      setCurrentPage(1);
-                    }}
+                    value={activePageSize}
+                    onChange={(e) => handlePageSizeChange(Number(e.target.value))}
                     className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                   >
                     <option value={25}>25</option>
@@ -1414,7 +1475,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
               {totalPages > 1 && (
                 <div className="flex items-center gap-1.5 self-end sm:self-auto">
                   <button
-                    onClick={() => setCurrentPage(1)}
+                    onClick={() => handlePageChange(1)}
                     disabled={safeCurrentPage <= 1}
                     className="p-2 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
                     title="First Page"
@@ -1422,7 +1483,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                     <ChevronsLeft className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    onClick={() => handlePageChange(safeCurrentPage - 1)}
                     disabled={safeCurrentPage <= 1}
                     className="p-2 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
                     title="Previous Page"
@@ -1435,7 +1496,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                   </span>
 
                   <button
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    onClick={() => handlePageChange(safeCurrentPage + 1)}
                     disabled={safeCurrentPage >= totalPages}
                     className="p-2 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
                     title="Next Page"
@@ -1443,7 +1504,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                     <ChevronRight className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => setCurrentPage(totalPages)}
+                    onClick={() => handlePageChange(totalPages)}
                     disabled={safeCurrentPage >= totalPages}
                     className="p-2 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
                     title="Last Page"

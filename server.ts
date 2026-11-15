@@ -2070,45 +2070,454 @@ app.get('/api/reports/summary', authenticateToken, requireRole('System Admin', '
   });
 });
 
-app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD', 'Pathology', 'Organic', 'Nutrition'), async (req, res) => {
-  const parsedLimit = req.query.limit ? parseInt(String(req.query.limit), 10) : 2000;
-  const effectiveLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 2000) : 2000;
-  const parsedOffset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
-  const offset = Number.isFinite(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
-  const dateFilter = req.query.date ? String(req.query.date).trim() : '';
-  const dateFrom = req.query.dateFrom ? String(req.query.dateFrom).trim() : '';
-  const dateTo = req.query.dateTo ? String(req.query.dateTo).trim() : '';
+const BN_TO_EN_DIGIT_MAP: Record<string, string> = {
+  '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
+  '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'
+};
+
+function convertBnToEnDigitsServer(str: unknown): string {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/[০-৯]/g, (char) => BN_TO_EN_DIGIT_MAP[char] || char);
+}
+
+function normalizePhoneDigitsServer(phone: unknown): string {
+  if (phone === null || phone === undefined) return '';
+  let digits = convertBnToEnDigitsServer(phone).replace(/\D/g, '');
+  if (digits.startsWith('880')) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith('88') && digits.length > 11) {
+    digits = digits.slice(2);
+  }
+  return digits;
+}
+
+function normalizeSearchTextServer(text: unknown): string {
+  if (text === null || text === undefined) return '';
+  return convertBnToEnDigitsServer(text)
+    .toLowerCase()
+    .replace(/[.,/#!$%^&*;:{}=\-_`~()?"'|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const SQL_PATIENT_CONFIRMED = `(COALESCE(isConfirmed, 0) = 1 OR consultationSerial IS NOT NULL OR (confirmedAt IS NOT NULL AND confirmedAt != ''))`;
+const SQL_PATIENT_PENDING = `(NOT ${SQL_PATIENT_CONFIRMED} AND consultationSerial IS NULL)`;
+const SQL_CONSULT_CONFIRMED = `(COALESCE(isConfirmed, 0) = 1 OR (consultationSerial IS NOT NULL AND consultationSerial > 0))`;
+const SQL_STAGE_POST = `(COALESCE(status, '') = 'Post Consultation' OR COALESCE(consultationStatus, '') = 'Post Consultation' OR COALESCE(postConsultationConfirmed, 0) = 1)`;
+const SQL_STAGE_PRE = `(${SQL_CONSULT_CONFIRMED} AND COALESCE(status, '') != 'Post Consultation' AND COALESCE(consultationStatus, '') != 'Post Consultation' AND COALESCE(postConsultationConfirmed, 0) != 1)`;
+
+function isRowConfirmedLocal(p: any): boolean {
+  if (!p) return false;
+  return (
+    p.isConfirmed === true ||
+    p.isConfirmed === 1 ||
+    p.isConfirmed === '1' ||
+    p.isConfirmed === 'true' ||
+    (p.consultationSerial !== null && p.consultationSerial !== undefined && p.consultationSerial !== '') ||
+    (p.confirmedAt !== null && p.confirmedAt !== undefined && String(p.confirmedAt) !== '')
+  );
+}
+
+function isRowPendingLocal(p: any): boolean {
+  if (!p) return false;
+  return (
+    !isRowConfirmedLocal(p) &&
+    (p.consultationSerial === null || p.consultationSerial === undefined || p.consultationSerial === '')
+  );
+}
+
+function isRowConsultConfirmedLocal(p: any): boolean {
+  if (!p) return false;
+  return (
+    p.isConfirmed === true ||
+    p.isConfirmed === 1 ||
+    p.isConfirmed === '1' ||
+    p.isConfirmed === 'true' ||
+    (p.consultationSerial !== null && p.consultationSerial !== undefined && p.consultationSerial !== '' && Number(p.consultationSerial) > 0)
+  );
+}
+
+function isRowPostStageLocal(p: any): boolean {
+  if (!p) return false;
+  return (
+    p.status === 'Post Consultation' ||
+    p.consultationStatus === 'Post Consultation' ||
+    p.postConsultationConfirmed === true ||
+    p.postConsultationConfirmed === 1 ||
+    p.postConsultationConfirmed === '1'
+  );
+}
+
+function isRowPreStageLocal(p: any): boolean {
+  return isRowConsultConfirmedLocal(p) && !isRowPostStageLocal(p);
+}
+
+function matchPatientQueryLocal(p: any, rawQ: string): boolean {
+  if (!rawQ || !rawQ.trim()) return true;
+  if (!p) return false;
+
+  const qLower = rawQ.trim().toLowerCase();
+  const qEn = convertBnToEnDigitsServer(qLower);
+  const qNorm = normalizeSearchTextServer(qLower);
+  const qDigits = normalizePhoneDigitsServer(qLower);
+  const qDigitsNoZero = qDigits.replace(/^0+/, '');
+  const qSerialClean = qEn.replace(/^#/, '').trim();
+  const qSerialNoZero = qSerialClean.replace(/^0+/, '');
+  const qTokens = qNorm.split(' ').filter(t => t.length >= 2);
+
+  const textFields = [
+    p.name,
+    p.phone,
+    p.serialNo,
+    p.consultationSerial !== null && p.consultationSerial !== undefined ? String(p.consultationSerial) : '',
+    p.profession,
+    p.consultationComment,
+    p.remark,
+    p.notes,
+    p.doctorName,
+    p.preDoctorName,
+    p.postDoctorName,
+    p.department,
+    p.address
+  ];
+
+  for (const val of textFields) {
+    if (val === null || val === undefined || val === '') continue;
+    const str = String(val).toLowerCase();
+    const strEn = convertBnToEnDigitsServer(str);
+    const normVal = normalizeSearchTextServer(val);
+    if (str.includes(qLower) || strEn.includes(qEn) || (qNorm && normVal.includes(qNorm))) {
+      return true;
+    }
+  }
+
+  if (qTokens.length > 1 && p.name) {
+    const normName = normalizeSearchTextServer(p.name);
+    if (qTokens.every(tok => normName.includes(tok))) {
+      return true;
+    }
+  }
+
+  if (qDigits.length >= 3 && p.phone) {
+    const pDigits = normalizePhoneDigitsServer(p.phone);
+    const pNoZero = pDigits.replace(/^0+/, '');
+    if (
+      pDigits.includes(qDigits) ||
+      (qDigitsNoZero.length >= 3 && pDigits.includes(qDigitsNoZero)) ||
+      (pNoZero.length >= 3 && qDigits.includes(pNoZero)) ||
+      (qDigitsNoZero.length >= 3 && pNoZero.length >= 3 && pNoZero.includes(qDigitsNoZero))
+    ) {
+      return true;
+    }
+  }
+
+  if (qSerialNoZero) {
+    const rawS = convertBnToEnDigitsServer(p.serialNo || '').toLowerCase().trim().replace(/^#/, '');
+    const sNoZero = rawS.replace(/^0+/, '');
+    const cSerial = p.consultationSerial !== null && p.consultationSerial !== undefined ? String(p.consultationSerial).trim() : '';
+    if (sNoZero === qSerialNoZero || rawS === qSerialClean || cSerial === qSerialNoZero) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildPatientFilterSql(
+  query: any,
+  options: { includeStatusAndStage?: boolean } = { includeStatusAndStage: true }
+) {
+  const dateFilter = query.date ? String(query.date).trim() : '';
+  const dateFrom = query.dateFrom ? String(query.dateFrom).trim() : '';
+  const dateTo = query.dateTo ? String(query.dateTo).trim() : '';
+  const statusFilter = query.status ? String(query.status).trim().toLowerCase() : 'all';
+  const stageFilter = query.consultationStage ? String(query.consultationStage).trim().toLowerCase() : '';
+  const deptStatusFilter = query.deptStatus ? String(query.deptStatus).trim().toLowerCase() : '';
+  const commentFilter = query.comment !== undefined ? String(query.comment).trim() : '';
+  const qRaw = query.q !== undefined ? String(query.q).trim() : '';
+
+  const conditions: string[] = [];
+  const queryParams: any[] = [];
+
+  if (dateFilter && dateFilter !== 'all') {
+    conditions.push('appointmentDate = ?');
+    queryParams.push(dateFilter);
+  } else if (dateFrom || dateTo) {
+    conditions.push("(appointmentDate IS NOT NULL AND appointmentDate != '')");
+    if (dateFrom) {
+      conditions.push('appointmentDate >= ?');
+      queryParams.push(dateFrom);
+    }
+    if (dateTo) {
+      conditions.push('appointmentDate <= ?');
+      queryParams.push(dateTo);
+    }
+  }
+
+  if (options.includeStatusAndStage !== false) {
+    if (statusFilter === 'confirmed') {
+      conditions.push(SQL_PATIENT_CONFIRMED);
+    } else if (statusFilter === 'pending') {
+      conditions.push(SQL_PATIENT_PENDING);
+    }
+
+    if (stageFilter === 'pre') {
+      conditions.push(SQL_STAGE_PRE);
+    } else if (stageFilter === 'post') {
+      conditions.push(SQL_STAGE_POST);
+    }
+
+    if (deptStatusFilter === 'pending') {
+      conditions.push("(COALESCE(pathologyStatus, '') != 'Yes' OR COALESCE(organicStatus, '') != 'Yes' OR COALESCE(nutritionStatus, '') != 'Yes')");
+    } else if (deptStatusFilter === 'cleared') {
+      conditions.push("(COALESCE(pathologyStatus, '') = 'Yes' AND COALESCE(organicStatus, '') = 'Yes' AND COALESCE(nutritionStatus, '') = 'Yes')");
+    } else if (deptStatusFilter === 'pathology_pending') {
+      conditions.push("COALESCE(pathologyStatus, '') != 'Yes'");
+    } else if (deptStatusFilter === 'organic_pending') {
+      conditions.push("COALESCE(organicStatus, '') != 'Yes'");
+    } else if (deptStatusFilter === 'nutrition_pending') {
+      conditions.push("COALESCE(nutritionStatus, '') != 'Yes'");
+    }
+  }
+
+  if (commentFilter && commentFilter !== 'all') {
+    conditions.push("COALESCE(consultationComment, '') = ?");
+    queryParams.push(commentFilter);
+  }
+
+  if (qRaw) {
+    const qLower = qRaw.toLowerCase();
+    const qEn = convertBnToEnDigitsServer(qLower);
+    const qLike = `%${qEn}%`;
+    const qRawLike = `%${qLower}%`;
+    const qDigits = normalizePhoneDigitsServer(qEn);
+    const qDigitsNoZero = qDigits.replace(/^0+/, '');
+    const qSerialClean = qEn.replace(/^#/, '').trim();
+    const qSerialNoZero = qSerialClean.replace(/^0+/, '');
+    const qTokens = normalizeSearchTextServer(qEn).split(' ').filter(t => t.length >= 2);
+
+    const orParts: string[] = [];
+    const textCols = [
+      'name',
+      'phone',
+      'serialNo',
+      'profession',
+      'consultationComment',
+      'remark',
+      'notes',
+      'doctorName',
+      'preDoctorName',
+      'postDoctorName',
+      'department',
+      'address'
+    ];
+
+    for (const col of textCols) {
+      orParts.push(`LOWER(COALESCE(${col}, '')) LIKE ?`);
+      queryParams.push(qLike);
+      if (qRawLike !== qLike) {
+        orParts.push(`LOWER(COALESCE(${col}, '')) LIKE ?`);
+        queryParams.push(qRawLike);
+      }
+    }
+
+    orParts.push(`CAST(COALESCE(consultationSerial, '') AS CHAR) LIKE ?`);
+    queryParams.push(`%${qSerialClean || qEn}%`);
+
+    if (qTokens.length > 1) {
+      const tokenAnds = qTokens.map(() => `LOWER(COALESCE(name, '')) LIKE ?`).join(' AND ');
+      orParts.push(`(${tokenAnds})`);
+      for (const tok of qTokens) {
+        queryParams.push(`%${tok}%`);
+      }
+    }
+
+    if (qDigits.length >= 3) {
+      const normalizedPhoneSql = `REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone, ''), '-', ''), ' ', ''), '+', ''), '(', '')`;
+      orParts.push(`${normalizedPhoneSql} LIKE ?`);
+      queryParams.push(`%${qDigits}%`);
+      if (qDigitsNoZero.length >= 3 && qDigitsNoZero !== qDigits) {
+        orParts.push(`${normalizedPhoneSql} LIKE ?`);
+        queryParams.push(`%${qDigitsNoZero}%`);
+      }
+    }
+
+    if (qSerialNoZero) {
+      orParts.push(`TRIM(LEADING '0' FROM REPLACE(LOWER(COALESCE(serialNo, '')), '#', '')) = ?`);
+      queryParams.push(qSerialNoZero);
+      orParts.push(`CAST(COALESCE(consultationSerial, '') AS CHAR) = ?`);
+      queryParams.push(qSerialNoZero);
+    }
+
+    conditions.push(`(${orParts.join(' OR ')})`);
+  }
+
+  return {
+    whereSql: conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '',
+    queryParams,
+    parsed: {
+      dateFilter,
+      dateFrom,
+      dateTo,
+      statusFilter,
+      stageFilter,
+      deptStatusFilter,
+      commentFilter,
+      qRaw
+    }
+  };
+}
+
+function filterPatientsLocalList(
+  list: any[],
+  query: any,
+  options: { includeStatusAndStage?: boolean } = { includeStatusAndStage: true }
+): any[] {
+  const dateFilter = query.date ? String(query.date).trim() : '';
+  const dateFrom = query.dateFrom ? String(query.dateFrom).trim() : '';
+  const dateTo = query.dateTo ? String(query.dateTo).trim() : '';
+  const statusFilter = query.status ? String(query.status).trim().toLowerCase() : 'all';
+  const stageFilter = query.consultationStage ? String(query.consultationStage).trim().toLowerCase() : '';
+  const deptStatusFilter = query.deptStatus ? String(query.deptStatus).trim().toLowerCase() : '';
+  const commentFilter = query.comment !== undefined ? String(query.comment).trim() : '';
+  const qRaw = query.q !== undefined ? String(query.q).trim() : '';
+
+  return list.filter(p => {
+    if (!p) return false;
+    if (dateFilter && dateFilter !== 'all') {
+      if (p.appointmentDate !== dateFilter) return false;
+    } else if (dateFrom || dateTo) {
+      const d = p.appointmentDate ? String(p.appointmentDate).trim() : '';
+      if (!d) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+    }
+
+    if (options.includeStatusAndStage !== false) {
+      if (statusFilter === 'confirmed' && !isRowConfirmedLocal(p)) return false;
+      if (statusFilter === 'pending' && !isRowPendingLocal(p)) return false;
+      if (stageFilter === 'pre' && !isRowPreStageLocal(p)) return false;
+      if (stageFilter === 'post' && !isRowPostStageLocal(p)) return false;
+
+      if (deptStatusFilter === 'pending') {
+        if (p.pathologyStatus === 'Yes' && p.organicStatus === 'Yes' && p.nutritionStatus === 'Yes') return false;
+      } else if (deptStatusFilter === 'cleared') {
+        if (p.pathologyStatus !== 'Yes' || p.organicStatus !== 'Yes' || p.nutritionStatus !== 'Yes') return false;
+      } else if (deptStatusFilter === 'pathology_pending') {
+        if (p.pathologyStatus === 'Yes') return false;
+      } else if (deptStatusFilter === 'organic_pending') {
+        if (p.organicStatus === 'Yes') return false;
+      } else if (deptStatusFilter === 'nutrition_pending') {
+        if (p.nutritionStatus === 'Yes') return false;
+      }
+    }
+
+    if (commentFilter && commentFilter !== 'all') {
+      if (String(p.consultationComment || '') !== commentFilter) return false;
+    }
+
+    if (qRaw && !matchPatientQueryLocal(p, qRaw)) return false;
+
+    return true;
+  });
+}
+
+app.get('/api/patients/counts', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD', 'Pathology', 'Organic', 'Nutrition'), async (req, res) => {
+  const { whereSql, queryParams } = buildPatientFilterSql(req.query, { includeStatusAndStage: false });
+  const todayStr = new Date().toISOString().split('T')[0];
 
   if (isMySqlActive && mysqlPool) {
     try {
-      const conditions: string[] = [];
-      const queryParams: any[] = [];
+      const [[row]]: any = await mysqlPool.execute(
+        `SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN ${SQL_PATIENT_CONFIRMED} THEN 1 ELSE 0 END), 0) AS confirmed,
+          COALESCE(SUM(CASE WHEN ${SQL_PATIENT_PENDING} THEN 1 ELSE 0 END), 0) AS pending,
+          COALESCE(SUM(CASE WHEN ${SQL_STAGE_PRE} THEN 1 ELSE 0 END), 0) AS pre,
+          COALESCE(SUM(CASE WHEN ${SQL_STAGE_POST} THEN 1 ELSE 0 END), 0) AS post,
+          COALESCE(SUM(CASE WHEN ${SQL_CONSULT_CONFIRMED} AND appointmentDate = ? THEN 1 ELSE 0 END), 0) AS todayConfirmed
+        FROM patients${whereSql}`,
+        [todayStr, ...queryParams]
+      );
+      return res.json({
+        total: Number(row?.total || 0),
+        confirmed: Number(row?.confirmed || 0),
+        pending: Number(row?.pending || 0),
+        pre: Number(row?.pre || 0),
+        post: Number(row?.post || 0),
+        todayConfirmed: Number(row?.todayConfirmed || 0)
+      });
+    } catch (err) {
+      console.error('Error computing patient counts from MySQL:', err);
+    }
+  }
 
-      if (dateFilter && dateFilter !== 'all') {
-        conditions.push('appointmentDate = ?');
-        queryParams.push(dateFilter);
-      } else if (dateFrom || dateTo) {
-        conditions.push("(appointmentDate IS NOT NULL AND appointmentDate != '')");
-        if (dateFrom) {
-          conditions.push('appointmentDate >= ?');
-          queryParams.push(dateFrom);
-        }
-        if (dateTo) {
-          conditions.push('appointmentDate <= ?');
-          queryParams.push(dateTo);
-        }
-      }
+  const matched = filterPatientsLocalList(localData.patients, req.query, { includeStatusAndStage: false });
+  let confirmed = 0;
+  let pending = 0;
+  let pre = 0;
+  let post = 0;
+  let todayConfirmed = 0;
+  for (const p of matched) {
+    if (isRowConfirmedLocal(p)) confirmed++;
+    else if (isRowPendingLocal(p)) pending++;
+    if (isRowPreStageLocal(p)) pre++;
+    if (isRowPostStageLocal(p)) post++;
+    if (isRowConsultConfirmedLocal(p) && p.appointmentDate === todayStr) todayConfirmed++;
+  }
 
-      const whereSql = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
-      const queryStr = `SELECT * FROM patients${whereSql} ORDER BY createdAt DESC, id DESC LIMIT ${effectiveLimit + 1} OFFSET ${offset}`;
+  res.json({
+    total: matched.length,
+    confirmed,
+    pending,
+    pre,
+    post,
+    todayConfirmed
+  });
+});
 
+app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin', 'Doctor', 'Call Center', 'Billing Counter', 'SSD', 'Pathology', 'Organic', 'Nutrition'), async (req, res) => {
+  const hasExplicitPaging = req.query.page !== undefined || req.query.pageSize !== undefined;
+  const hasExplicitLimit = req.query.limit !== undefined && !hasExplicitPaging;
+
+  const parsedPage = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+  const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+
+  const parsedPageSize = req.query.pageSize ? parseInt(String(req.query.pageSize), 10) : 100;
+  const pageSize = Number.isFinite(parsedPageSize) && parsedPageSize > 0 ? Math.min(parsedPageSize, 500) : 100;
+
+  const parsedLimit = req.query.limit ? parseInt(String(req.query.limit), 10) : pageSize;
+  const effectiveLimit = hasExplicitLimit
+    ? (Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 2000) : 2000)
+    : pageSize;
+
+  const parsedOffset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
+  const offset = hasExplicitPaging
+    ? (page - 1) * pageSize
+    : (Number.isFinite(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0);
+
+  const { whereSql, queryParams } = buildPatientFilterSql(req.query, { includeStatusAndStage: true });
+
+  if (isMySqlActive && mysqlPool) {
+    try {
+      const [[countRow]]: any = await mysqlPool.execute(
+        `SELECT COUNT(*) AS total FROM patients${whereSql}`,
+        queryParams
+      );
+      const total = Number(countRow?.total || 0);
+
+      const queryStr = `SELECT * FROM patients${whereSql} ORDER BY createdAt DESC, id DESC LIMIT ${effectiveLimit} OFFSET ${offset}`;
       const [rows]: any = await mysqlPool.execute(queryStr, queryParams);
       if (Array.isArray(rows)) {
-        const truncated = rows.length > effectiveLimit;
-        const capped = truncated ? rows.slice(0, effectiveLimit) : rows;
+        const formatted = rows.map(formatPatientRow);
+        const hasMore = offset + formatted.length < total;
         return res.json({
-          patients: capped.map(formatPatientRow),
-          truncated
+          patients: formatted,
+          total,
+          page,
+          pageSize: effectiveLimit,
+          hasMore,
+          truncated: hasMore
         });
       }
     } catch (err) {
@@ -2116,25 +2525,18 @@ app.get('/api/patients', authenticateToken, requireRole('System Admin', 'Admin',
     }
   }
 
-  let filteredPatients: any[] = [...localData.patients];
-  if (dateFilter && dateFilter !== 'all') {
-    filteredPatients = filteredPatients.filter(p => p && p.appointmentDate === dateFilter);
-  } else if (dateFrom || dateTo) {
-    filteredPatients = filteredPatients.filter(p => {
-      const d = p?.appointmentDate ? String(p.appointmentDate).trim() : '';
-      if (!d) return false;
-      if (dateFrom && d < dateFrom) return false;
-      if (dateTo && d > dateTo) return false;
-      return true;
-    });
-  }
-
+  const filteredPatients = filterPatientsLocalList(localData.patients, req.query, { includeStatusAndStage: true });
+  const total = filteredPatients.length;
   const sliced = filteredPatients.slice(offset, offset + effectiveLimit);
-  const truncated = filteredPatients.length > offset + effectiveLimit;
+  const hasMore = offset + sliced.length < total;
 
   res.json({
     patients: sliced,
-    truncated
+    total,
+    page,
+    pageSize: effectiveLimit,
+    hasMore,
+    truncated: hasMore
   });
 });
 
@@ -3493,9 +3895,6 @@ app.post('/api/patients/upload-excel', authenticateToken, requireRole('System Ad
           const match = rawSerial.match(/\b\d+\b/);
           if (match) cleanSerial = match[0];
         }
-        if (!cleanSerial) {
-          cleanSerial = String(extractedPatients.length + 1);
-        }
 
         extractedPatients.push({
           serialNo: cleanSerial,
@@ -3667,7 +4066,7 @@ async function batchUpsertPatientsToMySQL(patientsList: any[], conn?: mysql.Pool
 }
 
 app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 'Admin', 'Call Center', 'Doctor'), async (req, res) => {
-  const { patients } = req.body;
+  const { patients, dryRun = false } = req.body;
   if (!Array.isArray(patients)) {
     return res.status(400).json({ error: 'Invalid patient list' });
   }
@@ -3676,8 +4075,17 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
   let updated = 0;
   const todayStr = new Date().toISOString().split('T')[0];
   const newPatientsBatch: any[] = [];
-  const updatedEntries: Array<{ idx: number; data: any }> = [];
+  const updatedEntries: Array<{ id: string; data: any }> = [];
   const allFormattedForDb: any[] = [];
+  const rowOutcomes: Array<{
+    name: string;
+    phone: string;
+    action: 'added' | 'updated';
+    id: string;
+    serialNo: string;
+    existingName?: string;
+    existingPhone?: string;
+  }> = [];
 
   const bnToEnMap: Record<string, string> = {
     '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
@@ -3685,33 +4093,111 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
   };
   const convertBnToEn = (s: string) => String(s || '').replace(/[০-৯]/g, (char) => bnToEnMap[char] || char);
 
+  const existingById = new Map<string, any>();
+  const existingByDateSerial = new Map<string, any>();
+  const maxSerialByDate = new Map<string, number>();
+
+  const registerExisting = (x: any) => {
+    if (!x) return;
+    if (x.id) {
+      existingById.set(String(x.id).trim(), x);
+    }
+    const d = x.appointmentDate ? String(x.appointmentDate).trim() : '';
+    const rawS = x.serialNo !== undefined && x.serialNo !== null ? String(x.serialNo).trim() : '';
+    if (d && rawS) {
+      const m = convertBnToEn(rawS).match(/\b\d+\b/);
+      const sNorm = m ? m[0] : rawS;
+      const dsKey = `${d}__${sNorm}`;
+      if (!existingByDateSerial.has(dsKey)) {
+        existingByDateSerial.set(dsKey, x);
+      }
+      const num = m ? parseInt(m[0], 10) : 0;
+      if (Number.isFinite(num) && num > (maxSerialByDate.get(d) || 0)) {
+        maxSerialByDate.set(d, num);
+      }
+    }
+  };
+
+  for (const x of localData.patients) {
+    registerExisting(x);
+  }
+
+  if (isMySqlActive && mysqlPool && patients.length > 0) {
+    try {
+      const apptDates = Array.from(new Set(patients.map((p: any) => (p?.appointmentDate || todayStr)).filter(Boolean)));
+      if (apptDates.length > 0) {
+        const datePlaceholders = apptDates.map(() => '?').join(',');
+        const [dateRows]: any = await mysqlPool.execute(
+          `SELECT * FROM patients WHERE appointmentDate IN (${datePlaceholders})`,
+          apptDates
+        );
+        if (Array.isArray(dateRows)) {
+          for (const row of dateRows) {
+            registerExisting(formatPatientRow(row));
+          }
+        }
+      }
+      const payloadIds = Array.from(new Set(patients.map((p: any) => (p?.id ? String(p.id).trim() : '')).filter(Boolean)));
+      if (payloadIds.length > 0) {
+        const idPlaceholders = payloadIds.map(() => '?').join(',');
+        const [idRows]: any = await mysqlPool.execute(
+          `SELECT * FROM patients WHERE id IN (${idPlaceholders})`,
+          payloadIds
+        );
+        if (Array.isArray(idRows)) {
+          for (const row of idRows) {
+            registerExisting(formatPatientRow(row));
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error('MySQL pre-import lookup error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to inspect existing patients before import' });
+    }
+  }
+
   for (let idx = 0; idx < patients.length; idx++) {
     const p = patients[idx];
-    if (!p.name && !p.phone) continue;
+    if (!p || (!p.name && !p.phone)) continue;
 
     const rawPhone = p.phone ? String(p.phone).trim() : '';
     const cleanPhone = rawPhone || `01700${Math.floor(100000 + Math.random() * 900000)}`;
     const cleanName = p.name ? String(p.name).trim() : `Patient ${cleanPhone}`;
+    const apptDate = p.appointmentDate || todayStr;
 
-    let cleanSerial = '';
-    if (p.serialNo) {
+    let suppliedSerial = '';
+    if (p.serialNo !== undefined && p.serialNo !== null && String(p.serialNo).trim() !== '') {
       const enSerial = convertBnToEn(String(p.serialNo));
       const match = enSerial.match(/\b\d+\b/);
-      if (match) cleanSerial = match[0];
+      if (match) suppliedSerial = match[0];
     }
+
+    const payloadIdStr = p.id ? String(p.id).trim() : '';
+    let existingPatient: any = null;
+    if (payloadIdStr && existingById.has(payloadIdStr)) {
+      existingPatient = existingById.get(payloadIdStr);
+    } else if (suppliedSerial) {
+      const dsKey = `${apptDate}__${suppliedSerial}`;
+      if (existingByDateSerial.has(dsKey)) {
+        existingPatient = existingByDateSerial.get(dsKey);
+      }
+    }
+
+    let cleanSerial = suppliedSerial;
     if (!cleanSerial) {
-      cleanSerial = String(idx + 1);
+      const nextDisplayNum = (maxSerialByDate.get(apptDate) || 0) + 1;
+      maxSerialByDate.set(apptDate, nextDisplayNum);
+      cleanSerial = String(nextDisplayNum);
+    } else {
+      const num = parseInt(cleanSerial, 10);
+      if (Number.isFinite(num) && num > (maxSerialByDate.get(apptDate) || 0)) {
+        maxSerialByDate.set(apptDate, num);
+      }
     }
 
-    const apptDate = p.appointmentDate || todayStr;
-    const existingIdx = localData.patients.findIndex(x => {
-      if (p.id && String(x.id).trim() === String(p.id).trim()) return true;
-      if (cleanSerial && x.serialNo === cleanSerial && x.appointmentDate === apptDate) return true;
-      return false;
-    });
-
-    const existingPatient = existingIdx >= 0 ? localData.patients[existingIdx] : null;
-    const uniqueId = existingPatient ? existingPatient.id : (p.id || makeUniqueId());
+    const uniqueId = existingPatient
+      ? existingPatient.id
+      : (suppliedSerial && payloadIdStr ? payloadIdStr : makeUniqueId());
 
     const formattedPatient = {
       id: uniqueId,
@@ -3739,14 +4225,44 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     };
 
     allFormattedForDb.push(formattedPatient);
+    existingById.set(String(uniqueId).trim(), formattedPatient);
+    if (suppliedSerial) {
+      existingByDateSerial.set(`${apptDate}__${suppliedSerial}`, formattedPatient);
+    }
 
-    if (existingIdx >= 0) {
-      updatedEntries.push({ idx: existingIdx, data: formattedPatient });
+    if (existingPatient) {
+      updatedEntries.push({ id: String(uniqueId), data: formattedPatient });
       updated++;
+      rowOutcomes.push({
+        name: cleanName,
+        phone: cleanPhone,
+        action: 'updated',
+        id: String(uniqueId),
+        serialNo: cleanSerial,
+        existingName: existingPatient.name || '',
+        existingPhone: existingPatient.phone || ''
+      });
     } else {
       newPatientsBatch.push(formattedPatient);
       added++;
+      rowOutcomes.push({
+        name: cleanName,
+        phone: cleanPhone,
+        action: 'added',
+        id: String(uniqueId),
+        serialNo: cleanSerial
+      });
     }
+  }
+
+  if (dryRun) {
+    return res.json({
+      success: true,
+      dryRun: true,
+      added,
+      updated,
+      rows: rowOutcomes
+    });
   }
 
   if (isMySqlActive && mysqlPool) {
@@ -3785,7 +4301,12 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
   }
 
   for (const entry of updatedEntries) {
-    localData.patients[entry.idx] = { ...localData.patients[entry.idx], ...entry.data };
+    const localIdx = localData.patients.findIndex(x => x && String(x.id).trim() === entry.id.trim());
+    if (localIdx >= 0) {
+      localData.patients[localIdx] = { ...localData.patients[localIdx], ...entry.data };
+    } else {
+      localData.patients.unshift(entry.data);
+    }
   }
   localData.patients = [...newPatientsBatch, ...localData.patients];
   saveLocalDb();
@@ -3795,7 +4316,8 @@ app.post('/api/patients/import', authenticateToken, requireRole('System Admin', 
     message: `${added} new appointments imported, ${updated} updated.`,
     added,
     updated,
-    totalPatients: localData.patients.length
+    totalPatients: localData.patients.length,
+    rows: rowOutcomes
   });
 });
 

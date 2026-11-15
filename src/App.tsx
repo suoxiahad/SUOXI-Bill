@@ -21,7 +21,10 @@ import {
   fetchInitApi,
   fetchChangesApi,
   fetchPatientsWithMetaApi,
+  fetchPatientsCountsApi,
   fetchPatientsSummaryApi,
+  PatientCountsResponse,
+  PatientQueryFilterOptions,
   searchPatientsLiveApi,
   getPatientsLocal,
   updatePatientLocal,
@@ -84,46 +87,293 @@ export default function App() {
   const [selectedWorkingDate, setSelectedWorkingDate] = useState<string>(todayStr);
   const selectedWorkingDateRef = useRef<string>(todayStr);
   const workingDateRequestIdRef = useRef<number>(0);
-  const [patientsTruncated, setPatientsTruncated] = useState<boolean>(false);
+  const [patientsPage, setPatientsPage] = useState<number>(1);
+  const [patientsPageSize, setPatientsPageSize] = useState<number>(50);
+  const [patientsTotal, setPatientsTotal] = useState<number>(0);
+  const [serverPatientCounts, setServerPatientCounts] = useState<PatientCountsResponse | null>(null);
+  const patientsPageRef = useRef<number>(1);
+  const patientsPageSizeRef = useRef<number>(50);
   const [quotationsTruncated, setQuotationsTruncated] = useState<boolean>(false);
+
+  const [appointmentsFilter, setAppointmentsFilter] = useState<{
+    status: 'all' | 'confirmed' | 'pending';
+    q: string;
+  }>({ status: 'all', q: '' });
+  const [consultationFilter, setConsultationFilter] = useState<{
+    comment: string;
+    q: string;
+  }>({ comment: 'all', q: '' });
+  const [departmentsFilter, setDepartmentsFilter] = useState<{
+    deptStatus: 'all' | 'pending' | 'cleared' | 'pathology_pending' | 'organic_pending' | 'nutrition_pending';
+    q: string;
+  }>({ deptStatus: 'all', q: '' });
+
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const appointmentsFilterRef = useRef(appointmentsFilter);
+  appointmentsFilterRef.current = appointmentsFilter;
+  const consultationSubTabRef = useRef(consultationSubTab);
+  consultationSubTabRef.current = consultationSubTab;
+  const consultationFilterRef = useRef(consultationFilter);
+  consultationFilterRef.current = consultationFilter;
+  const departmentsFilterRef = useRef(departmentsFilter);
+  departmentsFilterRef.current = departmentsFilter;
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [dataVersion, setDataVersion] = useState<number>(() => getStoredDataVersion());
 
-  const loadWorkingDatePatients = useCallback(async (targetDate: string) => {
+  const getTabServerFilter = useCallback((
+    tab: typeof activeTab,
+    overrides?: {
+      appt?: { status: 'all' | 'confirmed' | 'pending'; q: string };
+      consultStage?: 'pre' | 'post';
+      consult?: { comment: string; q: string };
+      dept?: { deptStatus: string; q: string };
+    }
+  ): Partial<PatientQueryFilterOptions> => {
+    if (tab === 'consultation') {
+      const stage = overrides?.consultStage ?? consultationSubTabRef.current;
+      const cf = overrides?.consult ?? consultationFilterRef.current;
+      return {
+        status: 'confirmed',
+        consultationStage: stage,
+        comment: stage === 'post' ? cf.comment : undefined,
+        q: cf.q
+      };
+    }
+    if (tab === 'departments') {
+      const df = overrides?.dept ?? departmentsFilterRef.current;
+      return {
+        consultationStage: 'post',
+        deptStatus: df.deptStatus,
+        q: df.q
+      };
+    }
+    const af = overrides?.appt ?? appointmentsFilterRef.current;
+    return {
+      status: af.status,
+      q: af.q
+    };
+  }, []);
+
+  const loadServerPatientCounts = useCallback(async (targetDate?: string) => {
+    const activeDate = targetDate ?? selectedWorkingDateRef.current;
+    if (activeDate !== 'all') return null;
+    const counts = await fetchPatientsCountsApi({ date: 'all' });
+    if (selectedWorkingDateRef.current === 'all') {
+      setServerPatientCounts(counts);
+    }
+    return counts;
+  }, []);
+
+  const loadWorkingDatePatients = useCallback(async (
+    targetDate: string,
+    pageOverride?: number,
+    pageSizeOverride?: number,
+    filterOverride?: Partial<PatientQueryFilterOptions>
+  ) => {
     const normalized = targetDate || 'all';
+    const targetPage = Math.max(1, pageOverride ?? patientsPageRef.current);
+    const targetPageSize = Math.min(500, Math.max(1, pageSizeOverride ?? patientsPageSizeRef.current));
     const reqId = ++workingDateRequestIdRef.current;
-    const res = await fetchPatientsWithMetaApi({
-      date: normalized,
-      limit: 2000
-    });
+    const activeFilters = normalized === 'all'
+      ? (filterOverride ?? getTabServerFilter(activeTabRef.current))
+      : undefined;
+    const res = await fetchPatientsWithMetaApi(
+      normalized === 'all'
+        ? {
+            date: 'all',
+            page: targetPage,
+            pageSize: targetPageSize,
+            saveLocal: false,
+            ...activeFilters
+          }
+        : { date: normalized, limit: 2000 }
+    );
     if (reqId !== workingDateRequestIdRef.current) return null;
     if (res.fromServer) {
       setPatients(res.patients);
-      setPatientsTruncated(res.truncated);
+      setPatientsTotal(res.total);
+      setPatientsPage(res.page);
+      patientsPageRef.current = res.page;
     }
     return res;
-  }, []);
+  }, [getTabServerFilter]);
 
   const handleWorkingDateChange = useCallback(async (newDate: string) => {
     const normalized = newDate || 'all';
     setSelectedWorkingDate(normalized);
     selectedWorkingDateRef.current = normalized;
+    setPatientsPage(1);
+    patientsPageRef.current = 1;
 
     const user = getActiveUser();
     if (!user || !user.token) return;
 
     setIsSyncing(true);
     try {
-      const res = await loadWorkingDatePatients(normalized);
+      const [res] = await Promise.all([
+        loadWorkingDatePatients(normalized, 1, patientsPageSizeRef.current),
+        normalized === 'all' ? loadServerPatientCounts('all') : Promise.resolve(null)
+      ]);
       if (res && !res.fromServer) {
         setPatients(res.patients);
-        setPatientsTruncated(false);
+        setPatientsTotal(res.total);
+      }
+      if (normalized !== 'all') {
+        setServerPatientCounts(null);
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [loadWorkingDatePatients, loadServerPatientCounts]);
+
+  const handlePatientsPageChange = useCallback(async (nextPage: number) => {
+    const safeNext = Math.max(1, nextPage);
+    setPatientsPage(safeNext);
+    patientsPageRef.current = safeNext;
+    if (selectedWorkingDateRef.current !== 'all') return;
+
+    const user = getActiveUser();
+    if (!user || !user.token) return;
+
+    setIsSyncing(true);
+    try {
+      const res = await loadWorkingDatePatients('all', safeNext, patientsPageSizeRef.current);
+      if (res && !res.fromServer) {
+        setPatients(res.patients);
+        setPatientsTotal(res.total);
       }
     } finally {
       setIsSyncing(false);
     }
   }, [loadWorkingDatePatients]);
+
+  const handlePatientsPageSizeChange = useCallback(async (nextPageSize: number) => {
+    const safeSize = Math.min(500, Math.max(1, nextPageSize));
+    setPatientsPageSize(safeSize);
+    patientsPageSizeRef.current = safeSize;
+    setPatientsPage(1);
+    patientsPageRef.current = 1;
+    if (selectedWorkingDateRef.current !== 'all') return;
+
+    const user = getActiveUser();
+    if (!user || !user.token) return;
+
+    setIsSyncing(true);
+    try {
+      const res = await loadWorkingDatePatients('all', 1, safeSize);
+      if (res && !res.fromServer) {
+        setPatients(res.patients);
+        setPatientsTotal(res.total);
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [loadWorkingDatePatients]);
+
+  const refreshServerPageForFilter = useCallback(async (
+    filterOverride: Partial<PatientQueryFilterOptions>
+  ) => {
+    setPatientsPage(1);
+    patientsPageRef.current = 1;
+    if (selectedWorkingDateRef.current !== 'all') return;
+
+    const user = getActiveUser();
+    if (!user || !user.token) return;
+
+    setIsSyncing(true);
+    try {
+      const res = await loadWorkingDatePatients('all', 1, patientsPageSizeRef.current, filterOverride);
+      if (res && !res.fromServer) {
+        setPatients(res.patients);
+        setPatientsTotal(res.total);
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [loadWorkingDatePatients]);
+
+  const handleAppointmentsFilterChange = useCallback((next: { status: 'all' | 'confirmed' | 'pending'; q: string }) => {
+    const prev = appointmentsFilterRef.current;
+    if (prev.status === next.status && prev.q === next.q) return;
+    appointmentsFilterRef.current = next;
+    setAppointmentsFilter(next);
+    if (selectedWorkingDateRef.current === 'all' && activeTabRef.current === 'appointments') {
+      refreshServerPageForFilter({ status: next.status, q: next.q });
+    }
+  }, [refreshServerPageForFilter]);
+
+  const handleConsultationFilterChange = useCallback((next: { comment: string; q: string }) => {
+    const prev = consultationFilterRef.current;
+    if (prev.comment === next.comment && prev.q === next.q) return;
+    consultationFilterRef.current = next;
+    setConsultationFilter(next);
+    if (selectedWorkingDateRef.current === 'all' && activeTabRef.current === 'consultation') {
+      const stage = consultationSubTabRef.current;
+      refreshServerPageForFilter({
+        status: 'confirmed',
+        consultationStage: stage,
+        comment: stage === 'post' ? next.comment : undefined,
+        q: next.q
+      });
+    }
+  }, [refreshServerPageForFilter]);
+
+  const handleConsultationSubTabChange = useCallback((nextStage: 'pre' | 'post') => {
+    if (consultationSubTabRef.current === nextStage) return;
+    consultationSubTabRef.current = nextStage;
+    setConsultationSubTab(nextStage);
+    if (selectedWorkingDateRef.current === 'all' && activeTabRef.current === 'consultation') {
+      const cf = consultationFilterRef.current;
+      refreshServerPageForFilter({
+        status: 'confirmed',
+        consultationStage: nextStage,
+        comment: nextStage === 'post' ? cf.comment : undefined,
+        q: cf.q
+      });
+    }
+  }, [refreshServerPageForFilter]);
+
+  const handleDepartmentsFilterChange = useCallback((next: {
+    deptStatus: 'all' | 'pending' | 'cleared' | 'pathology_pending' | 'organic_pending' | 'nutrition_pending';
+    q: string;
+  }) => {
+    const prev = departmentsFilterRef.current;
+    if (prev.deptStatus === next.deptStatus && prev.q === next.q) return;
+    departmentsFilterRef.current = next;
+    setDepartmentsFilter(next);
+    if (selectedWorkingDateRef.current === 'all' && activeTabRef.current === 'departments') {
+      refreshServerPageForFilter({
+        consultationStage: 'post',
+        deptStatus: next.deptStatus,
+        q: next.q
+      });
+    }
+  }, [refreshServerPageForFilter]);
+
+  const prevServerTabRef = useRef<string>(activeTab);
+  useEffect(() => {
+    const prevTab = prevServerTabRef.current;
+    prevServerTabRef.current = activeTab;
+    if (prevTab === activeTab) return;
+    if (selectedWorkingDateRef.current !== 'all') return;
+    if (activeTab !== 'appointments' && activeTab !== 'consultation' && activeTab !== 'departments') return;
+
+    const user = getActiveUser();
+    if (!user || !user.token) return;
+
+    setPatients([]);
+    setPatientsPage(1);
+    patientsPageRef.current = 1;
+    setIsSyncing(true);
+    Promise.all([
+      loadWorkingDatePatients('all', 1, patientsPageSizeRef.current, getTabServerFilter(activeTab)),
+      loadServerPatientCounts('all')
+    ]).finally(() => {
+      setIsSyncing(false);
+    });
+  }, [activeTab, loadWorkingDatePatients, loadServerPatientCounts, getTabServerFilter]);
 
   // Instant 1ms optimistic update handler for single patient:
   const handleUpdatePatient = useCallback((updatedPatient: Patient) => {
@@ -138,7 +388,10 @@ export default function App() {
     });
     // Silently sync into local memory & disk cache without freezing UI
     updatePatientLocal(updatedPatient);
-  }, []);
+    if (selectedWorkingDateRef.current === 'all') {
+      loadServerPatientCounts('all');
+    }
+  }, [loadServerPatientCounts]);
 
   const handleUpdatePatients = useCallback((updatedRows: Patient[]) => {
     if (!Array.isArray(updatedRows) || updatedRows.length === 0) return;
@@ -155,13 +408,20 @@ export default function App() {
       }
       return copy;
     });
-  }, []);
+    if (selectedWorkingDateRef.current === 'all') {
+      loadServerPatientCounts('all');
+    }
+  }, [loadServerPatientCounts]);
 
   const handleRemovePatients = useCallback((ids: string[]) => {
     if (!Array.isArray(ids) || ids.length === 0) return;
     const idSet = new Set(ids);
     setPatients(prev => prev.filter(p => !idSet.has(p.id)));
-  }, []);
+    if (selectedWorkingDateRef.current === 'all') {
+      setPatientsTotal(prev => Math.max(0, prev - ids.length));
+      loadServerPatientCounts('all');
+    }
+  }, [loadServerPatientCounts]);
 
   const initializeAppData = useCallback(async (forceBypass = false) => {
     const savedUser = getActiveUser();
@@ -182,9 +442,11 @@ export default function App() {
       }
 
       // 2. Fetch quotations/catalog/settings AND working-date patients from server
+      const activeDate = selectedWorkingDateRef.current;
       const [initData, workingDateRes] = await Promise.all([
         fetchInitApi(forceBypass, { skipSavePatients: true }),
-        loadWorkingDatePatients(selectedWorkingDateRef.current)
+        loadWorkingDatePatients(activeDate),
+        activeDate === 'all' ? loadServerPatientCounts('all') : Promise.resolve(null)
       ]);
       if (initData) {
         setDataVersion(initData.dataVersion !== undefined ? Number(initData.dataVersion) : getStoredDataVersion());
@@ -194,12 +456,11 @@ export default function App() {
         if (initData.professions) setProfessions(initData.professions);
         if (initData.comments) setComments(initData.comments);
         if (!workingDateRes || !workingDateRes.fromServer) {
-          const activeDate = selectedWorkingDateRef.current;
           const fallbackPatients = activeDate && activeDate !== 'all'
             ? initData.patients.filter(p => p.appointmentDate === activeDate)
             : initData.patients;
           setPatients(fallbackPatients);
-          setPatientsTruncated(Boolean(initData.patientsTruncated));
+          setPatientsTotal(fallbackPatients.length);
         }
       }
     } else {
@@ -208,7 +469,7 @@ export default function App() {
     }
     setIsLoading(false);
     setIsSyncing(false);
-  }, [loadWorkingDatePatients]);
+  }, [loadWorkingDatePatients, loadServerPatientCounts]);
 
   useEffect(() => {
     initializeAppData();
@@ -238,21 +499,31 @@ export default function App() {
                   const nextVersion = changes.fullInit.dataVersion ?? summary.dataVersion;
                   setStoredDataVersion(nextVersion);
                   setDataVersion(nextVersion);
-                  await loadWorkingDatePatients(selectedWorkingDateRef.current);
+                  await Promise.all([
+                    loadWorkingDatePatients(selectedWorkingDateRef.current),
+                    selectedWorkingDateRef.current === 'all' ? loadServerPatientCounts('all') : Promise.resolve(null)
+                  ]);
                 } else if (!changes.truncated) {
                   if (changes.patients.length > 0) {
                     const activeDate = selectedWorkingDateRef.current;
-                    setPatients(prev => {
-                      const patchMap = new Map(changes.patients.filter(p => p && p.id).map(p => [p.id, p]));
-                      const existingIds = new Set(prev.map(p => p.id));
-                      const newItems = changes.patients.filter(p =>
-                        p && p.id && !existingIds.has(p.id) && (activeDate === 'all' || p.appointmentDate === activeDate)
-                      );
-                      const updatedPrev = prev
-                        .map(p => patchMap.get(p.id) ?? p)
-                        .filter(p => activeDate === 'all' || p.appointmentDate === activeDate);
-                      return [...newItems, ...updatedPrev];
-                    });
+                    if (activeDate === 'all') {
+                      await Promise.all([
+                        loadWorkingDatePatients('all', patientsPageRef.current, patientsPageSizeRef.current),
+                        loadServerPatientCounts('all')
+                      ]);
+                    } else {
+                      setPatients(prev => {
+                        const patchMap = new Map(changes.patients.filter(p => p && p.id).map(p => [p.id, p]));
+                        const existingIds = new Set(prev.map(p => p.id));
+                        const newItems = changes.patients.filter(p =>
+                          p && p.id && !existingIds.has(p.id) && p.appointmentDate === activeDate
+                        );
+                        const updatedPrev = prev
+                          .map(p => patchMap.get(p.id) ?? p)
+                          .filter(p => p.appointmentDate === activeDate);
+                        return [...newItems, ...updatedPrev];
+                      });
+                    }
                   }
                   if (changes.quotations.length > 0) {
                     setQuotations(prev => {
@@ -290,7 +561,7 @@ export default function App() {
       clearInterval(interval);
       window.removeEventListener('focus', checkAndSyncData);
     };
-  }, [currentUser, loadWorkingDatePatients]);
+  }, [currentUser, loadWorkingDatePatients, loadServerPatientCounts]);
 
   // Guard tabs based on role
   useEffect(() => {
@@ -593,7 +864,13 @@ export default function App() {
                 quotations={quotations}
                 selectedDateFilter={selectedWorkingDate}
                 onDateFilterChange={handleWorkingDateChange}
-                isPatientsTruncated={patientsTruncated}
+                serverTotalPatients={selectedWorkingDate === 'all' ? patientsTotal : undefined}
+                serverPage={patientsPage}
+                serverPageSize={patientsPageSize}
+                serverCounts={selectedWorkingDate === 'all' ? serverPatientCounts : undefined}
+                onServerPageChange={handlePatientsPageChange}
+                onServerPageSizeChange={handlePatientsPageSizeChange}
+                onServerFilterChange={handleAppointmentsFilterChange}
                 onRefreshPatients={() => initializeAppData(true)}
                 onUpdatePatient={handleUpdatePatient}
                 onUpdatePatients={handleUpdatePatients}
@@ -614,14 +891,20 @@ export default function App() {
                   comments={comments}
                   selectedDateFilter={selectedWorkingDate}
                   onDateFilterChange={handleWorkingDateChange}
-                  isPatientsTruncated={patientsTruncated}
+                  serverTotalPatients={selectedWorkingDate === 'all' ? patientsTotal : undefined}
+                  serverPage={patientsPage}
+                  serverPageSize={patientsPageSize}
+                  serverCounts={selectedWorkingDate === 'all' ? serverPatientCounts : undefined}
+                  onServerPageChange={handlePatientsPageChange}
+                  onServerPageSizeChange={handlePatientsPageSizeChange}
+                  onServerFilterChange={handleConsultationFilterChange}
                   onRefreshPatients={() => initializeAppData(true)}
                   onUpdatePatient={handleUpdatePatient}
                   onSelectPatientForQuotation={handleSelectPatientForQuotation}
                   onViewQuotation={handlePreviewPrint}
                   currentUser={currentUser}
                   initialSubTab={consultationSubTab}
-                  onSubTabChange={setConsultationSubTab}
+                  onSubTabChange={handleConsultationSubTabChange}
                 />
               ) : (
                 <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 max-w-md mx-auto my-12 space-y-4 shadow-sm">
@@ -690,7 +973,13 @@ export default function App() {
                   currentUser={currentUser}
                   selectedDateFilter={selectedWorkingDate}
                   onDateFilterChange={handleWorkingDateChange}
-                  isPatientsTruncated={patientsTruncated}
+                  serverTotalPatients={selectedWorkingDate === 'all' ? patientsTotal : undefined}
+                  serverPage={patientsPage}
+                  serverPageSize={patientsPageSize}
+                  serverCounts={selectedWorkingDate === 'all' ? serverPatientCounts : undefined}
+                  onServerPageChange={handlePatientsPageChange}
+                  onServerPageSizeChange={handlePatientsPageSizeChange}
+                  onServerFilterChange={handleDepartmentsFilterChange}
                   onRefreshPatients={() => initializeAppData(true)}
                   onUpdatePatient={handleUpdatePatient}
                 />
