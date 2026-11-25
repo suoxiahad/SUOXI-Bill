@@ -1,62 +1,53 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { 
-  Plus, 
-  Trash2, 
-  Calculator, 
-  Printer, 
-  Save, 
-  UserSearch, 
-  Stethoscope, 
+import {
+  Plus,
+  Trash2,
+  Calculator,
+  Printer,
+  Save,
+  UserSearch,
+  Stethoscope,
   FileCheck,
   Sparkles,
   Search,
-  CheckSquare,
   Activity,
-  Scale,
-  Eye,
-  EyeOff,
-  Calendar,
-  CreditCard,
-  Clock,
-  ChevronDown,
-  ChevronUp,
   Lock,
   Users,
-  PhoneCall,
   X,
-  Check,
-  ArrowLeft
+  ArrowLeft,
+  Calendar
 } from 'lucide-react';
-import { PackageComparisonModal } from './PackageComparisonModal';
-import { 
-  Patient, 
-  IndividualTreatment, 
+import {
+  Patient,
+  IndividualTreatment,
   AdditionalTreatment,
-  OutdoorPackage, 
-  IndoorService, 
-  InvoiceQuotation, 
-  PaymentPhase,
+  IndoorService,
+  InvoiceQuotation,
   CatalogItem,
-  User 
+  User
 } from '../types';
 import { DEFAULT_CATALOG } from '../data/defaultCatalog';
-import { searchPatientsLiveApi, fetchPatientsApi, addOrUpdatePatientApi } from '../utils/storage';
+import { searchPatientsLiveApi, addOrUpdatePatientApi } from '../utils/storage';
 import { idbGet, idbSet, idbDel } from '../utils/indexedDb';
 import { matchPatient, matchSearchQuery, normalizePhoneDigits, normalizeSearchText } from '../utils/searchHelper';
 import { makeUniqueId } from '../utils/id';
 
-interface TreatmentListItem {
+interface TreatmentRowState {
   id: string;
   catalogId?: string;
   selected: boolean;
   treatmentName: string;
   unitCost: number;
-  sessions: number | '';
+  outdoorQty: number | '';
+  indoorQty: number | '';
+  outdoorDiscountPct: number | '';
+  indoorDiscountPct: number | '';
+  outdoorDiscountType?: 'percent' | 'fixed';
+  indoorDiscountType?: 'percent' | 'fixed';
+  outdoorDiscountFixed?: number | '';
+  indoorDiscountFixed?: number | '';
   outdoorSessions?: number;
   indoorSessions?: number;
-  discountPercent: number | '';
-  discountAmount: number;
-  totalCost: number;
   description?: string;
   rateNote?: string;
   isCustom?: boolean;
@@ -67,53 +58,38 @@ interface TreatmentListItem {
   defaultDiscountPercent?: number;
 }
 
-interface AdditionalTreatmentListItem {
+interface WeeklyTreatmentRowState {
   id: string;
   catalogId?: string;
   selected: boolean;
   treatmentName: string;
   unitCost: number;
-  sessions: number | '';
+  outdoorQty: number | '';
+  indoorQty: number | '';
+  outdoorDiscountPct: number | '';
+  indoorDiscountPct: number | '';
+  outdoorDiscountType?: 'percent' | 'fixed';
+  indoorDiscountType?: 'percent' | 'fixed';
+  outdoorDiscountFixed?: number | '';
+  indoorDiscountFixed?: number | '';
   outdoorSessions?: number;
   indoorSessions?: number;
-  discountPercent: number | '';
-  discountAmount: number;
-  totalCost: number;
   description?: string;
   rateNote?: string;
   isCustom?: boolean;
   isIndoorFree?: boolean;
-  isRatioBased?: boolean;
-  sessionsPer10Days?: number;
   fixedDiscountAmount?: number;
   outdoorDiscountPercent?: number;
   outdoorDiscountAmount?: number;
   defaultDiscountPercent?: number;
 }
 
-interface OutdoorPackageListItem {
-  id: string;
-  catalogId?: string;
-  selected: boolean;
-  packageName: string;
-  packageType: string;
-  totalBaseCost: number | '';
-  discountPercent: number | '';
-  discountAmount: number;
-  netCost: number;
-  description?: string;
-  rateNote?: string;
-  isCustom?: boolean;
-}
-
-interface IndoorServiceListItem {
+interface IndoorServiceRowState {
   id: string;
   catalogId?: string;
   selected: boolean;
   roomType: string;
   dailyRate: number;
-  days: number | '';
-  totalAmount: number;
   remarks?: string;
   rateNote?: string;
   isCustom?: boolean;
@@ -129,12 +105,130 @@ interface QuotationBuilderProps {
   onCancelEdit?: () => void;
   onSaveQuotation: (quotation: InvoiceQuotation) => Promise<InvoiceQuotation | void> | InvoiceQuotation | void;
   onPreviewPrint: (quotation: InvoiceQuotation) => void;
-  showFullTreatmentCalculation?: boolean;
-  setShowFullTreatmentCalculation?: React.Dispatch<React.SetStateAction<boolean>>;
-  showFullIndoorCalculation?: boolean;
-  setShowFullIndoorCalculation?: React.Dispatch<React.SetStateAction<boolean>>;
   onBackToPostConsultation?: () => void;
   onUpdatePatient?: (patient: Patient) => void;
+}
+
+function isItemIndoorFreeByDefault(item: { catalogId?: string; id?: string; treatmentName?: string; isIndoorFree?: boolean }): boolean {
+  if (item.catalogId === 'add-ed' || item.id === 'add-ed') return false;
+  return Boolean(item.isIndoorFree);
+}
+
+function computeRowPricing(
+  item: {
+    selected: boolean;
+    unitCost: number;
+    catalogId?: string;
+    fixedDiscountAmount?: number;
+    outdoorDiscountPercent?: number;
+    outdoorDiscountAmount?: number;
+    defaultDiscountPercent?: number;
+    isIndoorFree?: boolean;
+  },
+  qtyVal: number | '',
+  manualDiscPct: number | '',
+  mode: 'outdoor' | 'indoor',
+  bulkPct: number | '',
+  discountType?: 'percent' | 'fixed',
+  manualFixedAmt?: number | ''
+): { qty: number; discountPercent: number; discountAmount: number; netCost: number; discountType: 'percent' | 'fixed'; isLockedDiscount: boolean; lockReason?: string } {
+  if (!item.selected) {
+    return { qty: 0, discountPercent: 0, discountAmount: 0, netCost: 0, discountType: 'percent', isLockedDiscount: false };
+  }
+  const unitCost = Math.max(0, Number(item.unitCost) || 0);
+  const qty = qtyVal === '' ? 1 : Math.max(0, Number(qtyVal) || 0);
+  const gross = unitCost * qty;
+
+  const effectiveType: 'percent' | 'fixed' =
+    discountType ||
+    (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (manualDiscPct === '' || manualDiscPct === undefined)
+      ? 'fixed'
+      : 'percent');
+
+  if (effectiveType === 'fixed') {
+    const rawFixed =
+      manualFixedAmt !== undefined && manualFixedAmt !== ''
+        ? Math.max(0, Number(manualFixedAmt) || 0)
+        : item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0
+        ? Number(item.fixedDiscountAmount)
+        : 0;
+    const discAmt = Math.min(gross, Math.round(rawFixed));
+    const pct = gross > 0 ? Math.round((discAmt / gross) * 100) : 0;
+    return {
+      qty,
+      discountPercent: pct,
+      discountAmount: discAmt,
+      netCost: Math.max(0, gross - discAmt),
+      discountType: 'fixed',
+      isLockedDiscount: false
+    };
+  }
+
+  if (manualDiscPct !== '' && manualDiscPct !== undefined) {
+    const pct = Math.min(100, Math.max(0, Number(manualDiscPct) || 0));
+    const discAmt = Math.round((gross * pct) / 100);
+    return {
+      qty,
+      discountPercent: pct,
+      discountAmount: discAmt,
+      netCost: Math.max(0, gross - discAmt),
+      discountType: 'percent',
+      isLockedDiscount: false
+    };
+  }
+
+  if (mode === 'indoor' && isItemIndoorFreeByDefault(item)) {
+    return {
+      qty,
+      discountPercent: 100,
+      discountAmount: gross,
+      netCost: 0,
+      discountType: 'percent',
+      isLockedDiscount: false
+    };
+  }
+
+  if (mode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
+    const pct = Number(item.outdoorDiscountPercent);
+    const discAmt = Math.round((gross * pct) / 100);
+    return {
+      qty,
+      discountPercent: pct,
+      discountAmount: discAmt,
+      netCost: Math.max(0, gross - discAmt),
+      discountType: 'percent',
+      isLockedDiscount: false
+    };
+  }
+
+  if (mode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
+    const discAmt = Math.min(gross, Number(item.outdoorDiscountAmount) * qty);
+    const pct = gross > 0 ? Math.round((discAmt / gross) * 100) : 0;
+    return {
+      qty,
+      discountPercent: pct,
+      discountAmount: discAmt,
+      netCost: Math.max(0, gross - discAmt),
+      discountType: 'fixed',
+      isLockedDiscount: false
+    };
+  }
+
+  const fallbackBulk = bulkPct === '' ? 0 : Math.min(100, Math.max(0, Number(bulkPct) || 0));
+  const pct =
+    item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+      ? Number(item.defaultDiscountPercent)
+      : fallbackBulk;
+
+  const discAmt = Math.round((gross * pct) / 100);
+  return {
+    qty,
+    discountPercent: pct,
+    discountAmount: discAmt,
+    netCost: Math.max(0, gross - discAmt),
+    discountType: 'percent',
+    isLockedDiscount: false
+  };
 }
 
 export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
@@ -147,29 +241,23 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   onCancelEdit,
   onSaveQuotation,
   onPreviewPrint,
-  showFullTreatmentCalculation: externalShowFullTreatmentCalculation,
-  setShowFullTreatmentCalculation: externalSetShowFullTreatmentCalculation,
-  showFullIndoorCalculation: externalShowFullIndoorCalculation,
-  setShowFullIndoorCalculation: externalSetShowFullIndoorCalculation,
   onBackToPostConsultation,
-  onUpdatePatient,
+  onUpdatePatient
 }) => {
-  // Search patient by phone inside builder
   const [phoneSearch, setPhoneSearch] = useState('');
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(initialPatient || null);
-  const [activeComparisonQuotationId, setActiveComparisonQuotationId] = useState<string | null>(null);
+  const [patientAddress, setPatientAddress] = useState<string>(initialPatient?.address || '');
   const draftInvoiceIdRef = useRef<string>(makeUniqueId());
 
-  // Consulting / Billing Doctor Name
   const [billingDoctor, setBillingDoctor] = useState(
     currentUser?.name || initialPatient?.doctorName || 'Dr. S.M. Shahidul Islam PhD'
   );
 
-  // Sync if initialPatient or currentUser changes
   useEffect(() => {
     if (initialPatient && !editingQuotation) {
       setSelectedPatient(initialPatient);
       setPhoneSearch(initialPatient.phone);
+      setPatientAddress(initialPatient.address || '');
     }
   }, [initialPatient, editingQuotation]);
 
@@ -181,207 +269,39 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }
   }, [currentUser, selectedPatient, editingQuotation]);
 
-  // Load editing quotation when passed
-  useEffect(() => {
-    if (!editingQuotation) return;
+  // Independent Outdoor / Indoor Mode Checkboxes + Separate Discounts + Configurable Advance Days
+  const [includeOutdoor, setIncludeOutdoor] = useState<boolean>(true);
+  const [includeIndoor, setIncludeIndoor] = useState<boolean>(false);
+  const [outdoorDiscountPercent, setOutdoorDiscountPercent] = useState<number | ''>(30);
+  const [indoorDiscountPercent, setIndoorDiscountPercent] = useState<number | ''>(30);
+  const [advanceCourseDays, setAdvanceCourseDays] = useState<number | ''>(10);
 
-    // Find or reconstruct patient
-    const foundPatient = (editingQuotation.patientId && editingQuotation.patientId !== 'walkin'
-      ? patients.find(p => p.id === editingQuotation.patientId)
-      : undefined) || {
-      id: editingQuotation.patientId || makeUniqueId(),
-      name: editingQuotation.patientName || 'Walk-in Patient',
-      phone: editingQuotation.patientPhone || '01700000000',
-      age: editingQuotation.patientAge || 0,
-      gender: editingQuotation.patientGender || 'Male',
-      doctorName: editingQuotation.doctorName || 'Dr. S.M. Shahidul Islam PhD',
-      status: 'Consulted',
-      serialNumber: 1,
-      appointmentTime: '',
-      department: 'Acupuncture'
-    };
+  // Section Lists
+  const [treatmentSearch, setTreatmentSearch] = useState('');
+  const [treatmentList, setTreatmentList] = useState<TreatmentRowState[]>([]);
 
-    setSelectedPatient(foundPatient);
-    setPhoneSearch(foundPatient.phone || '');
-    if (editingQuotation.doctorName) {
-      setBillingDoctor(editingQuotation.doctorName);
-    }
+  const [indoorSearch, setIndoorSearch] = useState('');
+  const [indoorServiceList, setIndoorServiceList] = useState<IndoorServiceRowState[]>([]);
 
-    const mode = editingQuotation.patientTreatmentMode || (editingQuotation.indoorServices && editingQuotation.indoorServices.length > 0 ? 'indoor' : (editingQuotation.outdoorPackages && editingQuotation.outdoorPackages.length > 0 ? 'outdoor' : ''));
-    setPatientTreatmentMode(mode);
-    if (mode === 'indoor') {
-      setIsIndoorSectionOpen(true);
-      setIsOutdoorSectionOpen(false);
-    } else if (mode === 'outdoor') {
-      setIsIndoorSectionOpen(false);
-      setIsOutdoorSectionOpen(true);
-    }
+  const [additionalTreatmentSearch, setAdditionalTreatmentSearch] = useState('');
+  const [additionalTreatmentList, setAdditionalTreatmentList] = useState<WeeklyTreatmentRowState[]>([]);
 
-    // Set fees & discounts
-    setIncludeAdmissionFee((editingQuotation.admissionFee || 0) > 0);
-    setAdmissionFee(editingQuotation.admissionFee || 1000);
-    setOverallDiscountPercent(editingQuotation.overallDiscountPercent || '');
-    setAdvancePaid(editingQuotation.advancePaid || '');
-    setNotes(editingQuotation.notes || '');
-    if (editingQuotation.paymentPlanMode) {
-      setPaymentPlanMode(editingQuotation.paymentPlanMode);
-    }
-    if (editingQuotation.paymentPhases && editingQuotation.paymentPhases.length > 0) {
-      setPaymentPhases(editingQuotation.paymentPhases);
-    }
-    if (editingQuotation.packageComparison) {
-      setSavedComparisonSnapshot(editingQuotation.packageComparison);
-    }
+  // Indoor Food & Admission Fee (1 Day / One-time)
+  const [foodChargeSelected, setFoodChargeSelected] = useState<boolean>(false);
+  const [foodChargePerDay, setFoodChargePerDay] = useState<number | ''>(500);
+  const [includeAdmissionFee, setIncludeAdmissionFee] = useState<boolean>(false);
+  const [admissionFee, setAdmissionFee] = useState<number | ''>(1000);
 
-    // Populate Section 1: Treatments
-    const invoiceTreatmentsMap = new Map((editingQuotation.treatments || []).map(t => [t.treatmentName.toLowerCase().trim(), t]));
-    setTreatmentList(prev => prev.map(item => {
-      const match = invoiceTreatmentsMap.get(item.treatmentName.toLowerCase().trim()) ||
-                    (item.catalogId ? (editingQuotation.treatments || []).find(t => t.id === item.id || t.id === item.catalogId) : undefined);
-      if (match) {
-        return {
-          ...item,
-          selected: true,
-          unitCost: match.unitCost || item.unitCost,
-          sessions: match.sessions,
-          discountPercent: match.discountPercent,
-          discountAmount: match.discountAmount,
-          totalCost: match.totalCost
-        };
-      }
-      return {
-        ...item,
-        selected: false,
-        sessions: '',
-        discountPercent: '',
-        discountAmount: 0,
-        totalCost: 0
-      };
-    }));
+  // Overall discount & billing status
+  const [overallDiscountPercent, setOverallDiscountPercent] = useState<number | ''>('');
+  const [advancePaid, setAdvancePaid] = useState<number | ''>(0);
+  const [paymentStatus, setPaymentStatus] = useState<'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid'>('Quotation');
+  const [notes, setNotes] = useState<string>('Quotation validity is 7 days from the date of issue.');
+  const [isSaved, setIsSaved] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isDraftRestored, setIsDraftRestored] = useState<boolean>(false);
 
-    // Populate Section 3: Outdoor Packages
-    const invoiceOutdoorMap = new Map((editingQuotation.outdoorPackages || []).map(p => [p.packageName.toLowerCase().trim(), p]));
-    setOutdoorPackageList(prev => prev.map(item => {
-      const match = invoiceOutdoorMap.get(item.packageName.toLowerCase().trim()) ||
-                    (item.catalogId ? (editingQuotation.outdoorPackages || []).find(p => p.id === item.id || p.id === item.catalogId) : undefined);
-      if (match) {
-        return {
-          ...item,
-          selected: true,
-          totalBaseCost: match.totalBaseCost,
-          discountPercent: match.discountPercent,
-          discountAmount: match.discountAmount,
-          netCost: match.netCost
-        };
-      }
-      return {
-        ...item,
-        selected: false,
-        discountPercent: '',
-        discountAmount: 0,
-        netCost: 0
-      };
-    }));
-
-    // Populate Section 4: Indoor Services & Food Charge
-    const invoiceIndoor = editingQuotation.indoorServices || [];
-    const foodItem = invoiceIndoor.find(i => i.id === 'food-charge-3x' || i.roomType.toLowerCase().includes('food charge'));
-    if (foodItem) {
-      setFoodChargeSelected(true);
-      setFoodChargePerDay(foodItem.dailyRate || 500);
-      setFoodChargeDays(foodItem.days || 30);
-    } else {
-      setFoodChargeSelected(false);
-      setFoodChargeDays('');
-    }
-
-    const nonFoodIndoor = invoiceIndoor.filter(i => i.id !== 'food-charge-3x' && !i.roomType.toLowerCase().includes('food charge'));
-    const indoorMap = new Map(nonFoodIndoor.map(i => [i.roomType.toLowerCase().trim(), i]));
-    setIndoorServiceList(prev => prev.map(item => {
-      const match = indoorMap.get(item.roomType.toLowerCase().trim()) ||
-                    (item.catalogId ? nonFoodIndoor.find(i => i.id === item.id || i.id === item.catalogId) : undefined);
-      if (match) {
-        return {
-          ...item,
-          selected: true,
-          dailyRate: match.dailyRate || item.dailyRate,
-          days: match.days,
-          totalAmount: match.totalAmount
-        };
-      }
-      return {
-        ...item,
-        selected: false,
-        days: '',
-        totalAmount: 0
-      };
-    }));
-
-    // Populate Section 5: Weekly Treatments
-    const invoiceAddlMap = new Map((editingQuotation.additionalTreatments || []).map(a => [a.treatmentName.toLowerCase().trim(), a]));
-    setAdditionalTreatmentList(prev => prev.map(item => {
-      const match = invoiceAddlMap.get(item.treatmentName.toLowerCase().trim()) ||
-                    (item.catalogId ? (editingQuotation.additionalTreatments || []).find(a => a.id === item.id || a.id === item.catalogId) : undefined);
-      if (match) {
-        return {
-          ...item,
-          selected: true,
-          unitCost: match.unitCost || item.unitCost,
-          sessions: match.sessions,
-          discountPercent: match.discountPercent,
-          discountAmount: match.discountAmount,
-          totalCost: match.totalCost
-        };
-      }
-      return {
-        ...item,
-        selected: false,
-        sessions: '',
-        discountPercent: '',
-        discountAmount: 0,
-        totalCost: 0
-      };
-    }));
-  }, [editingQuotation]);
-
-  // Unified list of all known patients (combining Intake Appointments + Quotation History)
-  const allKnownPatients = useMemo<Patient[]>(() => {
-    const map = new Map<string, Patient>();
-
-    (patients || []).forEach(p => {
-      if (p) {
-        const phoneNorm = normalizePhoneDigits(p.phone);
-        const nameNorm = normalizeSearchText(p.name);
-        const key = p.id || `${nameNorm}__${phoneNorm}`;
-        map.set(key, p);
-      }
-    });
-
-    (quotations || []).forEach(q => {
-      if (q && (q.patientName || q.patientPhone)) {
-        const phoneNorm = normalizePhoneDigits(q.patientPhone);
-        const nameNorm = normalizeSearchText(q.patientName);
-        const key = `${nameNorm}__${phoneNorm}`;
-        if (!map.has(key)) {
-          map.set(key, {
-            id: q.patientId || makeUniqueId(),
-            name: q.patientName,
-            phone: q.patientPhone || '',
-            age: q.patientAge,
-            gender: q.patientGender,
-            doctorName: q.doctorName,
-            status: 'Quotation Created',
-            createdAt: q.createdDate || new Date().toISOString(),
-            notes: q.notes || ''
-          });
-        }
-      }
-    });
-
-    return Array.from(map.values());
-  }, [patients, quotations]);
-
-  // Effective catalog using dynamic catalog from admin or falling back to default
   const effectiveCatalog = useMemo<CatalogItem[]>(() => {
     if (Array.isArray(catalog) && catalog.length > 0) {
       return catalog;
@@ -389,7 +309,473 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     return DEFAULT_CATALOG;
   }, [catalog]);
 
-  // Handle Patient Phone/Name Search & Dropdown State with Today / All Dates Scope
+  // Initialize Section 1 Treatments from catalog
+  useEffect(() => {
+    const treatmentCatalog = effectiveCatalog.filter(c => c.category === 'treatment' || c.category === 'consultation');
+    const catalogOrderMap = new Map<string, number>(treatmentCatalog.map((c, i) => [c.id, i]));
+
+    setTreatmentList(prev => {
+      const catalogMap = new Map<string, CatalogItem>(treatmentCatalog.map(c => [c.id, c]));
+
+      if (prev.length > 0) {
+        const filteredPrev = prev.filter(item => item.isCustom || (item.catalogId && catalogMap.has(item.catalogId)));
+        const updatedPrev = filteredPrev.map(item => {
+          if (!item.isCustom && item.catalogId && catalogMap.has(item.catalogId)) {
+            const catItem = catalogMap.get(item.catalogId)!;
+            return {
+              ...item,
+              treatmentName: catItem.name,
+              unitCost: catItem.defaultPrice || 1000,
+              outdoorSessions: catItem.outdoorSessions,
+              indoorSessions: catItem.indoorSessions,
+              description: catItem.description || '',
+              rateNote: catItem.rateNote || '',
+              isIndoorFree: catItem.isIndoorFree,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent
+            };
+          }
+          return item;
+        });
+
+        const existingIds = new Set(filteredPrev.map(p => p.catalogId).filter(Boolean));
+        const newItems: TreatmentRowState[] = [];
+        treatmentCatalog.forEach(catItem => {
+          if (!existingIds.has(catItem.id)) {
+            newItems.push({
+              id: `tr-list-${catItem.id}`,
+              catalogId: catItem.id,
+              selected: false,
+              treatmentName: catItem.name,
+              unitCost: catItem.defaultPrice || 1000,
+              outdoorQty: '',
+              indoorQty: '',
+              outdoorDiscountPct: '',
+              indoorDiscountPct: '',
+              outdoorSessions: catItem.outdoorSessions,
+              indoorSessions: catItem.indoorSessions,
+              description: catItem.description || '',
+              rateNote: catItem.rateNote || '',
+              isIndoorFree: catItem.isIndoorFree,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent
+            });
+          }
+        });
+
+        return [...updatedPrev, ...newItems].sort((a, b) => {
+          const iA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
+          const iB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
+          return iA - iB;
+        });
+      }
+
+      return treatmentCatalog.map(catItem => ({
+        id: `tr-list-${catItem.id}`,
+        catalogId: catItem.id,
+        selected: false,
+        treatmentName: catItem.name,
+        unitCost: catItem.defaultPrice || 1000,
+        outdoorQty: '',
+        indoorQty: '',
+        outdoorDiscountPct: '',
+        indoorDiscountPct: '',
+        outdoorSessions: catItem.outdoorSessions,
+        indoorSessions: catItem.indoorSessions,
+        description: catItem.description || '',
+        rateNote: catItem.rateNote || '',
+        isIndoorFree: catItem.isIndoorFree,
+        fixedDiscountAmount: catItem.fixedDiscountAmount,
+        outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+        outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+        defaultDiscountPercent: catItem.defaultDiscountPercent
+      }));
+    });
+  }, [effectiveCatalog]);
+
+  // Initialize Indoor Rooms from catalog
+  useEffect(() => {
+    const roomCatalog = effectiveCatalog.filter(c => c.category === 'indoor_room');
+    const catalogOrderMap = new Map<string, number>(roomCatalog.map((c, i) => [c.id, i]));
+
+    setIndoorServiceList(prev => {
+      const catalogMap = new Map<string, CatalogItem>(roomCatalog.map(c => [c.id, c]));
+
+      if (prev.length > 0) {
+        const filteredPrev = prev.filter(item => item.isCustom || (item.catalogId && catalogMap.has(item.catalogId)));
+        const updatedPrev = filteredPrev.map(item => {
+          if (!item.isCustom && item.catalogId && catalogMap.has(item.catalogId)) {
+            const catItem = catalogMap.get(item.catalogId)!;
+            return {
+              ...item,
+              roomType: catItem.name,
+              dailyRate: catItem.defaultPrice || 1000,
+              remarks: catItem.description || '',
+              rateNote: catItem.rateNote || ''
+            };
+          }
+          return item;
+        });
+
+        const existingIds = new Set(filteredPrev.map(p => p.catalogId).filter(Boolean));
+        const newItems: IndoorServiceRowState[] = [];
+        roomCatalog.forEach(catItem => {
+          if (!existingIds.has(catItem.id)) {
+            newItems.push({
+              id: `ind-list-${catItem.id}`,
+              catalogId: catItem.id,
+              selected: false,
+              roomType: catItem.name,
+              dailyRate: catItem.defaultPrice || 1000,
+              remarks: catItem.description || '',
+              rateNote: catItem.rateNote || ''
+            });
+          }
+        });
+
+        return [...updatedPrev, ...newItems].sort((a, b) => {
+          const iA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
+          const iB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
+          return iA - iB;
+        });
+      }
+
+      return roomCatalog.map(catItem => ({
+        id: `ind-list-${catItem.id}`,
+        catalogId: catItem.id,
+        selected: false,
+        roomType: catItem.name,
+        dailyRate: catItem.defaultPrice || 1000,
+        remarks: catItem.description || '',
+        rateNote: catItem.rateNote || ''
+      }));
+    });
+  }, [effectiveCatalog]);
+
+  // Initialize Weekly Treatments from catalog
+  useEffect(() => {
+    const addCatalog = effectiveCatalog.filter(c => c.category === 'additional_treatment');
+    const catalogOrderMap = new Map<string, number>(addCatalog.map((c, i) => [c.id, i]));
+
+    setAdditionalTreatmentList(prev => {
+      const catalogMap = new Map<string, CatalogItem>(addCatalog.map(c => [c.id, c]));
+
+      if (prev.length > 0) {
+        const filteredPrev = prev.filter(item => item.isCustom || (item.catalogId && catalogMap.has(item.catalogId)));
+        const updatedPrev = filteredPrev.map(item => {
+          if (!item.isCustom && item.catalogId && catalogMap.has(item.catalogId)) {
+            const catItem = catalogMap.get(item.catalogId)!;
+            return {
+              ...item,
+              treatmentName: catItem.name,
+              unitCost: catItem.defaultPrice || 1000,
+              outdoorSessions: catItem.outdoorSessions,
+              indoorSessions: catItem.indoorSessions,
+              description: catItem.description || '',
+              rateNote: catItem.rateNote || '',
+              isIndoorFree: catItem.isIndoorFree,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent
+            };
+          }
+          return item;
+        });
+
+        const existingIds = new Set(filteredPrev.map(p => p.catalogId).filter(Boolean));
+        const newItems: WeeklyTreatmentRowState[] = [];
+        addCatalog.forEach(catItem => {
+          if (!existingIds.has(catItem.id)) {
+            newItems.push({
+              id: `add-tr-${catItem.id}`,
+              catalogId: catItem.id,
+              selected: false,
+              treatmentName: catItem.name,
+              unitCost: catItem.defaultPrice || 1000,
+              outdoorQty: '',
+              indoorQty: '',
+              outdoorDiscountPct: '',
+              indoorDiscountPct: '',
+              outdoorSessions: catItem.outdoorSessions,
+              indoorSessions: catItem.indoorSessions,
+              description: catItem.description || '',
+              rateNote: catItem.rateNote || '',
+              isIndoorFree: catItem.isIndoorFree,
+              fixedDiscountAmount: catItem.fixedDiscountAmount,
+              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+              defaultDiscountPercent: catItem.defaultDiscountPercent
+            });
+          }
+        });
+
+        return [...updatedPrev, ...newItems].sort((a, b) => {
+          const iA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
+          const iB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
+          return iA - iB;
+        });
+      }
+
+      return addCatalog.map(catItem => ({
+        id: `add-tr-${catItem.id}`,
+        catalogId: catItem.id,
+        selected: false,
+        treatmentName: catItem.name,
+        unitCost: catItem.defaultPrice || 1000,
+        outdoorQty: '',
+        indoorQty: '',
+        outdoorDiscountPct: '',
+        indoorDiscountPct: '',
+        outdoorSessions: catItem.outdoorSessions,
+        indoorSessions: catItem.indoorSessions,
+        description: catItem.description || '',
+        rateNote: catItem.rateNote || '',
+        isIndoorFree: catItem.isIndoorFree,
+        fixedDiscountAmount: catItem.fixedDiscountAmount,
+        outdoorDiscountPercent: catItem.outdoorDiscountPercent,
+        outdoorDiscountAmount: catItem.outdoorDiscountAmount,
+        defaultDiscountPercent: catItem.defaultDiscountPercent
+      }));
+    });
+  }, [effectiveCatalog]);
+
+  // Load editingQuotation when passed
+  useEffect(() => {
+    if (!editingQuotation) return;
+
+    const foundPatient = (editingQuotation.patientId && editingQuotation.patientId !== 'walkin'
+      ? patients.find(p => p.id === editingQuotation.patientId)
+      : undefined) || {
+      id: editingQuotation.patientId || makeUniqueId(),
+      name: editingQuotation.patientName || 'Walk-in Patient',
+      phone: editingQuotation.patientPhone || '01700000000',
+      age: editingQuotation.patientAge || '',
+      gender: editingQuotation.patientGender || 'Male',
+      address: editingQuotation.patientAddress || editingQuotation.packageComparison?.patientAddress || '',
+      doctorName: editingQuotation.doctorName || 'Dr. S.M. Shahidul Islam PhD',
+      status: 'Consulted',
+      createdAt: editingQuotation.createdAt || new Date().toISOString()
+    };
+
+    setSelectedPatient(foundPatient);
+    setPhoneSearch(foundPatient.phone || '');
+    setPatientAddress(editingQuotation.patientAddress || editingQuotation.packageComparison?.patientAddress || foundPatient.address || '');
+    if (editingQuotation.doctorName) {
+      setBillingDoctor(editingQuotation.doctorName);
+    }
+
+    const snap = editingQuotation.packageComparison;
+    const mode = editingQuotation.patientTreatmentMode;
+    let nextOutdoor = true;
+    let nextIndoor = false;
+    if (mode === 'both') {
+      nextOutdoor = true;
+      nextIndoor = true;
+    } else if (mode === 'indoor') {
+      nextOutdoor = false;
+      nextIndoor = true;
+    } else if (mode === 'outdoor') {
+      nextOutdoor = true;
+      nextIndoor = false;
+    } else if (snap && (snap.showOutdoor !== undefined || snap.showIndoor !== undefined)) {
+      nextOutdoor = Boolean(snap.showOutdoor);
+      nextIndoor = Boolean(snap.showIndoor);
+    } else {
+      const hasIndoorRooms = (editingQuotation.indoorServices || []).some(
+        s => s.id !== 'food-charge-3x' && !s.roomType.toLowerCase().includes('food charge')
+      );
+      nextIndoor = hasIndoorRooms;
+      nextOutdoor = !hasIndoorRooms;
+    }
+
+    setIncludeOutdoor(nextOutdoor);
+    setIncludeIndoor(nextIndoor);
+
+    const outDisc = editingQuotation.outdoorDiscountPercent ?? snap?.outdoorDiscountPercent ?? 30;
+    const inDisc = editingQuotation.indoorDiscountPercent ?? snap?.indoorDiscountPercent ?? 30;
+    setOutdoorDiscountPercent(outDisc);
+    setIndoorDiscountPercent(inDisc);
+
+    const advDays = editingQuotation.advanceCourseDays ?? snap?.advanceCourseDays ?? 10;
+    setAdvanceCourseDays(advDays);
+
+    setIncludeAdmissionFee((editingQuotation.admissionFee || 0) > 0 || Boolean(snap?.includeAdmissionFee));
+    setAdmissionFee(snap?.admissionFee ?? editingQuotation.admissionFee ?? 1000);
+    setOverallDiscountPercent(editingQuotation.overallDiscountPercent || '');
+    setAdvancePaid(editingQuotation.advancePaid || 0);
+    setPaymentStatus(editingQuotation.paymentStatus || 'Quotation');
+    setNotes(editingQuotation.notes || '');
+
+    // Treatments hydration
+    const outTrMap = new Map<string, IndividualTreatment>(
+      (snap?.outdoorTreatments || editingQuotation.treatments || []).map((t): [string, IndividualTreatment] => [t.treatmentName.toLowerCase().trim(), t])
+    );
+    const inTrMap = new Map<string, IndividualTreatment>(
+      (snap?.indoorTreatments || editingQuotation.treatments || []).map((t): [string, IndividualTreatment] => [t.treatmentName.toLowerCase().trim(), t])
+    );
+    const baseTrMap = new Map<string, IndividualTreatment>(
+      (editingQuotation.treatments || []).map((t): [string, IndividualTreatment] => [t.treatmentName.toLowerCase().trim(), t])
+    );
+
+    setTreatmentList(prev => prev.map(item => {
+      const key = item.treatmentName.toLowerCase().trim();
+      const baseMatch = baseTrMap.get(key);
+      const outMatch = outTrMap.get(key);
+      const inMatch = inTrMap.get(key);
+      if (baseMatch || outMatch || inMatch) {
+        return {
+          ...item,
+          selected: true,
+          unitCost: baseMatch?.unitCost || outMatch?.unitCost || inMatch?.unitCost || item.unitCost,
+          outdoorQty: outMatch?.sessions || baseMatch?.sessions || 1,
+          indoorQty: inMatch?.sessions || baseMatch?.sessions || 1,
+          outdoorDiscountPct: outMatch?.discountPercent ?? outDisc,
+          indoorDiscountPct: isItemIndoorFreeByDefault(item) ? 100 : (inMatch?.discountPercent ?? inDisc),
+          outdoorDiscountType: outMatch?.discountType || 'percent',
+          indoorDiscountType: inMatch?.discountType || 'percent',
+          outdoorDiscountFixed: outMatch?.discountType === 'fixed' ? (outMatch?.discountAmount ?? '') : '',
+          indoorDiscountFixed: inMatch?.discountType === 'fixed' ? (inMatch?.discountAmount ?? '') : ''
+        };
+      }
+      return {
+        ...item,
+        selected: false,
+        outdoorQty: '',
+        indoorQty: '',
+        outdoorDiscountPct: '',
+        indoorDiscountPct: '',
+        outdoorDiscountType: 'percent',
+        indoorDiscountType: 'percent',
+        outdoorDiscountFixed: '',
+        indoorDiscountFixed: ''
+      };
+    }));
+
+    // Indoor rooms & food hydration
+    const invoiceIndoor = editingQuotation.indoorServices || [];
+    const foodItem = invoiceIndoor.find(i => i.id === 'food-charge-3x' || i.roomType.toLowerCase().includes('food charge'));
+    if (foodItem || snap?.foodChargeSelected) {
+      setFoodChargeSelected(true);
+      setFoodChargePerDay(foodItem?.dailyRate || snap?.foodChargePerDay || 500);
+    } else {
+      setFoodChargeSelected(false);
+    }
+
+    const nonFoodIndoor = invoiceIndoor.filter(i => i.id !== 'food-charge-3x' && !i.roomType.toLowerCase().includes('food charge'));
+    const indoorMap = new Map<string, IndoorService>(
+      nonFoodIndoor.map((i): [string, IndoorService] => [i.roomType.toLowerCase().trim(), i])
+    );
+    setIndoorServiceList(prev => prev.map(item => {
+      const match = indoorMap.get(item.roomType.toLowerCase().trim());
+      if (match) {
+        return {
+          ...item,
+          selected: true,
+          dailyRate: match.dailyRate || item.dailyRate,
+          remarks: match.remarks || item.remarks
+        };
+      }
+      return { ...item, selected: false };
+    }));
+
+    // Weekly treatments hydration
+    const outAddMap = new Map<string, AdditionalTreatment>(
+      (snap?.outdoorAdditionalTreatments || editingQuotation.additionalTreatments || []).map((a): [string, AdditionalTreatment] => [a.treatmentName.toLowerCase().trim(), a])
+    );
+    const inAddMap = new Map<string, AdditionalTreatment>(
+      (snap?.indoorAdditionalTreatments || editingQuotation.additionalTreatments || []).map((a): [string, AdditionalTreatment] => [a.treatmentName.toLowerCase().trim(), a])
+    );
+    const baseAddMap = new Map<string, AdditionalTreatment>(
+      (editingQuotation.additionalTreatments || []).map((a): [string, AdditionalTreatment] => [a.treatmentName.toLowerCase().trim(), a])
+    );
+
+    setAdditionalTreatmentList(prev => prev.map(item => {
+      const key = item.treatmentName.toLowerCase().trim();
+      const baseMatch = baseAddMap.get(key);
+      const outMatch = outAddMap.get(key);
+      const inMatch = inAddMap.get(key);
+      if (baseMatch || outMatch || inMatch) {
+        const outIsFixed = outMatch?.discountType === 'fixed' || (!outMatch && baseMatch?.discountType === 'fixed');
+        const inIsFixed = inMatch?.discountType === 'fixed' || (!inMatch && baseMatch?.discountType === 'fixed');
+        return {
+          ...item,
+          selected: true,
+          unitCost: baseMatch?.unitCost || outMatch?.unitCost || inMatch?.unitCost || item.unitCost,
+          outdoorQty: outMatch?.sessions || baseMatch?.sessions || 1,
+          indoorQty: inMatch?.sessions || baseMatch?.sessions || 1,
+          outdoorDiscountType: outIsFixed ? 'fixed' : 'percent',
+          indoorDiscountType: inIsFixed ? 'fixed' : 'percent',
+          outdoorDiscountFixed: outIsFixed ? (outMatch?.discountAmount ?? baseMatch?.discountAmount ?? '') : '',
+          indoorDiscountFixed: inIsFixed ? (inMatch?.discountAmount ?? baseMatch?.discountAmount ?? '') : '',
+          outdoorDiscountPct: outIsFixed ? '' : (outMatch?.discountPercent ?? (item.outdoorDiscountPercent ?? 0)),
+          indoorDiscountPct: inIsFixed ? '' : (isItemIndoorFreeByDefault(item) ? 100 : (inMatch?.discountPercent ?? 0))
+        };
+      }
+      return {
+        ...item,
+        selected: false,
+        outdoorQty: '',
+        indoorQty: '',
+        outdoorDiscountPct: '',
+        indoorDiscountPct: '',
+        outdoorDiscountType: 'percent',
+        indoorDiscountType: 'percent',
+        outdoorDiscountFixed: '',
+        indoorDiscountFixed: ''
+      };
+    }));
+  }, [editingQuotation]);
+
+  // Unified list of known patients for search
+  const allKnownPatients = useMemo<Patient[]>(() => {
+    const result: Patient[] = [];
+    const seenIds = new Set<string>();
+    const seenNamePhones = new Set<string>();
+
+    (patients || []).forEach(p => {
+      if (!p) return;
+      const pid = p.id ? String(p.id).trim() : '';
+      const npKey = `${normalizeSearchText(p.name)}__${normalizePhoneDigits(p.phone)}`;
+      if (pid && seenIds.has(pid)) return;
+      if (!pid && seenNamePhones.has(npKey)) return;
+      if (pid) seenIds.add(pid);
+      if (npKey !== '__') seenNamePhones.add(npKey);
+      result.push(p);
+    });
+
+    (quotations || []).forEach(q => {
+      if (!q || (!q.patientName && !q.patientPhone)) return;
+      const qPatId = q.patientId && q.patientId !== 'walkin' ? String(q.patientId).trim() : '';
+      const npKey = `${normalizeSearchText(q.patientName)}__${normalizePhoneDigits(q.patientPhone)}`;
+      if ((qPatId && seenIds.has(qPatId)) || (npKey !== '__' && seenNamePhones.has(npKey))) {
+        return;
+      }
+      const syntheticId = qPatId || makeUniqueId();
+      seenIds.add(syntheticId);
+      if (npKey !== '__') seenNamePhones.add(npKey);
+      result.push({
+        id: syntheticId,
+        name: q.patientName,
+        phone: q.patientPhone || '',
+        age: q.patientAge,
+        gender: q.patientGender,
+        address: q.patientAddress || q.packageComparison?.patientAddress || '',
+        doctorName: q.doctorName,
+        status: 'Quotation Created',
+        createdAt: q.createdDate || new Date().toISOString(),
+        notes: q.notes || ''
+      });
+    });
+
+    return result;
+  }, [patients, quotations]);
+
+  // Patient Search state
   const [matchingPatients, setMatchingPatients] = useState<Patient[]>([]);
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState<boolean>(false);
   const [isSearchingLive, setIsSearchingLive] = useState<boolean>(false);
@@ -399,21 +785,14 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
   useEffect(() => {
     return () => {
-      if (searchDebounceTimer.current) {
-        clearTimeout(searchDebounceTimer.current);
-      }
-      if (searchAbortControllerRef.current) {
-        searchAbortControllerRef.current.abort();
-      }
+      if (searchDebounceTimer.current) clearTimeout(searchDebounceTimer.current);
+      if (searchAbortControllerRef.current) searchAbortControllerRef.current.abort();
     };
   }, []);
 
   const getTodayDateStr = () => {
     const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
 
   const handlePatientSearchChange = (val: string, scopeOverride?: 'today' | 'all') => {
@@ -421,9 +800,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setPhoneSearch(val);
     const trimmedVal = val ? val.trim() : '';
     if (!trimmedVal) {
-      if (searchDebounceTimer.current) {
-        clearTimeout(searchDebounceTimer.current);
-      }
+      if (searchDebounceTimer.current) clearTimeout(searchDebounceTimer.current);
       if (searchAbortControllerRef.current) {
         searchAbortControllerRef.current.abort();
         searchAbortControllerRef.current = null;
@@ -434,11 +811,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }
 
     const todayStr = getTodayDateStr();
-
-    // 1. Instant local/in-memory search
     const localMatches = allKnownPatients.filter(p => {
-      const matchesText = matchPatient(val, p);
-      if (!matchesText) return false;
+      if (!matchPatient(val, p)) return false;
       if (currentScope === 'today') {
         const pDate = p.appointmentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
         return pDate === todayStr;
@@ -449,10 +823,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setMatchingPatients(localMatches);
     setIsPatientDropdownOpen(localMatches.length > 0 || trimmedVal.length >= 1);
 
-    // 2. Debounced background live server search (>= 3 chars, or 1-2 digit serial numbers)
-    if (searchDebounceTimer.current) {
-      clearTimeout(searchDebounceTimer.current);
-    }
+    if (searchDebounceTimer.current) clearTimeout(searchDebounceTimer.current);
     if (searchAbortControllerRef.current) {
       searchAbortControllerRef.current.abort();
       searchAbortControllerRef.current = null;
@@ -461,9 +832,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     const isShortDigitSerial = /^[0-9০-৯]{1,2}$/.test(trimmedVal);
     if (trimmedVal.length >= 3 || isShortDigitSerial) {
       searchDebounceTimer.current = setTimeout(async () => {
-        if (searchAbortControllerRef.current) {
-          searchAbortControllerRef.current.abort();
-        }
+        if (searchAbortControllerRef.current) searchAbortControllerRef.current.abort();
         const controller = new AbortController();
         searchAbortControllerRef.current = controller;
         try {
@@ -476,8 +845,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               prev.forEach(p => map.set(p.id || `${p.name}__${p.phone}`, p));
               liveResults.forEach(p => map.set(p.id || `${p.name}__${p.phone}`, p));
               const combined = Array.from(map.values()).filter(p => {
-                const matchesText = matchPatient(val, p);
-                if (!matchesText) return false;
+                if (!matchPatient(val, p)) return false;
                 if (currentScope === 'today') {
                   const pDate = p.appointmentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
                   return pDate === todayStr;
@@ -502,9 +870,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const handleSelectPatient = (pat: Patient) => {
     setSelectedPatient(pat);
     setPhoneSearch(pat.phone);
-    if (pat.doctorName) {
-      setBillingDoctor(pat.doctorName);
-    }
+    setPatientAddress(pat.address || '');
+    if (pat.doctorName) setBillingDoctor(pat.doctorName);
     setIsPatientDropdownOpen(false);
   };
 
@@ -518,10 +885,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setIsSearchingLive(true);
     const todayStr = getTodayDateStr();
 
-    // 1. Check local known list
     let matched = allKnownPatients.filter(p => {
-      const matchesText = matchPatient(phoneSearch, p);
-      if (!matchesText) return false;
+      if (!matchPatient(phoneSearch, p)) return false;
       if (searchDateScope === 'today') {
         const pDate = p.appointmentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
         return pDate === todayStr;
@@ -529,30 +894,24 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       return true;
     });
 
-    // 2. Query live backend with date param if in today mode
     if (matched.length === 0) {
       try {
         const dateParam = searchDateScope === 'today' ? todayStr : undefined;
         const liveResults = await searchPatientsLiveApi(phoneSearch, 50, dateParam);
-        if (Array.isArray(liveResults) && liveResults.length > 0) {
-          matched = liveResults;
-        }
+        if (Array.isArray(liveResults) && liveResults.length > 0) matched = liveResults;
       } catch (err) {
         console.warn('Live search error:', err);
       }
     }
 
-    // 3. Fallback: If searched in 'today' mode and not found, auto-check all dates
     if (matched.length === 0 && searchDateScope === 'today') {
       try {
         const allDatesLive = await searchPatientsLiveApi(phoneSearch, 50);
         if (Array.isArray(allDatesLive) && allDatesLive.length > 0) {
           matched = allDatesLive;
-          setSearchDateScope('all'); // Auto-switch to all dates mode so doctor sees the matches
+          setSearchDateScope('all');
         }
-      } catch (err) {
-        // ignore
-      }
+      } catch {}
     }
 
     setIsSearchingLive(false);
@@ -563,739 +922,129 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     } else if (matched.length > 1) {
       setIsPatientDropdownOpen(true);
     } else {
-      // Do NOT auto-create patient when search has no matching entry
       alert(`No registered patient found matching "${phoneSearch.trim()}". Please verify that the patient is registered in the Daily Appointment List.`);
       setIsPatientDropdownOpen(false);
     }
   };
 
-  // Section 1: Treatment List with Checkboxes
-  const [treatmentSearch, setTreatmentSearch] = useState('');
-  const [treatmentList, setTreatmentList] = useState<TreatmentListItem[]>([]);
-  const [patientTreatmentMode, setPatientTreatmentMode] = useState<'outdoor' | 'indoor' | ''>('');
-  const [treatmentPackage, setTreatmentPackage] = useState<'30 Days' | '15 Days' | '7 Days' | '5 Days' | 'Per Day' | string>('');
-  const [treatmentDays, setTreatmentDays] = useState<number | ''>('');
-  const [bulkDiscountPercent, setBulkDiscountPercent] = useState<number | ''>('');
-  const [internalShowFullTreatmentCalculation, internalSetShowFullTreatmentCalculation] = useState<boolean>(false);
-  const [internalShowFullIndoorCalculation, internalSetShowFullIndoorCalculation] = useState<boolean>(false);
-
-  const showFullTreatmentCalculation = externalShowFullTreatmentCalculation !== undefined ? externalShowFullTreatmentCalculation : internalShowFullTreatmentCalculation;
-  const setShowFullTreatmentCalculation = externalSetShowFullTreatmentCalculation || internalSetShowFullTreatmentCalculation;
-
-  const showFullIndoorCalculation = externalShowFullIndoorCalculation !== undefined ? externalShowFullIndoorCalculation : internalShowFullIndoorCalculation;
-  const setShowFullIndoorCalculation = externalSetShowFullIndoorCalculation || internalSetShowFullIndoorCalculation;
-
-  const [isIndoorSectionOpen, setIsIndoorSectionOpen] = useState<boolean>(true);
-  const [isOutdoorSectionOpen, setIsOutdoorSectionOpen] = useState<boolean>(true);
-  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
-  const [savedComparisonSnapshot, setSavedComparisonSnapshot] = useState<{
-    showOutdoor?: boolean;
-    showIndoor?: boolean;
-    customDays?: Record<string, number>;
-    customDiscounts?: Record<string, number>;
-    foodChargeSelected?: boolean;
-    foodChargePerDay?: number;
-    includeAdmissionFee?: boolean;
-    admissionFee?: number;
-    comparedAt?: string;
-  } | null>(null);
-
-  const toggleIndoorCalculationMode = () => {
-    setShowFullIndoorCalculation(prev => !prev);
+  // Mode toggle handlers (independent checkboxes)
+  const handleToggleOutdoorMode = (checked: boolean) => {
+    setIncludeOutdoor(checked);
   };
 
-  const recalculateTreatmentList = (
-    fullCourseMode: boolean,
-    daysVal: number | '' = treatmentDays,
-    discVal: number | '' = bulkDiscountPercent,
-    modeVal: 'outdoor' | 'indoor' | '' = patientTreatmentMode
-  ) => {
-    const numDays = (daysVal !== '' && Number(daysVal) > 0) ? Number(daysVal) : 0;
-    const discPct = (discVal !== '' && !isNaN(Number(discVal))) ? Number(discVal) : 0;
-    const calcDays = fullCourseMode ? (numDays > 0 ? numDays : 1) : 1;
-
-    setTreatmentList(prev => prev.map(item => {
-      if (!item.selected || modeVal === '') {
-        return {
-          ...item,
-          sessions: '',
-          discountPercent: '',
-          discountAmount: 0,
-          totalCost: 0
-        };
-      }
-
-      const dailySessions = modeVal === 'outdoor'
-        ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
-        : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-
-      const computedSessions = dailySessions * calcDays;
-      const unitCost = Number(item.unitCost) || 0;
-      const sessionsNum = Number(computedSessions) || 0;
-      const gross = unitCost * sessionsNum;
-
-      let effectiveDiscPct: number | '' = discVal !== '' ? discVal : item.discountPercent;
-      let discountAmount = 0;
-
-      if (modeVal === 'indoor' && item.isIndoorFree) {
-        effectiveDiscPct = 100;
-        discountAmount = gross;
-      } else if (modeVal === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-        effectiveDiscPct = Number(item.outdoorDiscountPercent);
-        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
-      } else if (modeVal === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
-        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
-        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
-        const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal * sessionsNum);
-        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-        effectiveDiscPct = Number(item.defaultDiscountPercent);
-        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
-      } else {
-        const pctNum = effectiveDiscPct !== '' ? Number(effectiveDiscPct) : 0;
-        discountAmount = Math.round((gross * pctNum) / 100);
-      }
-
-      const totalCost = Math.max(0, gross - discountAmount);
-
-      return {
-        ...item,
-        sessions: computedSessions,
-        discountPercent: effectiveDiscPct,
-        discountAmount,
-        totalCost
-      };
-    }));
-  };
-
-  const toggleTreatmentCalculationMode = () => {
-    setShowFullTreatmentCalculation(prev => !prev);
-  };
-
-  useEffect(() => {
-    recalculateTreatmentList(showFullTreatmentCalculation);
-  }, [showFullTreatmentCalculation]);
-
-  const handleApplyPackageFromComparison = (
-    patientType: 'outdoor' | 'indoor',
-    packageType: '30 Days' | '15 Days' | '7 Days' | '5 Days' | 'Per Day' | string,
-    days: number | '',
-    discount: number,
-    indoorOptions?: {
-      selectedRoomId?: string;
-      foodSelected?: boolean;
-      foodPerDay?: number;
-      admissionSelected?: boolean;
-      admissionFee?: number;
-    }
-  ) => {
-    setPatientTreatmentMode(patientType);
-    updateDaysAndDiscount(days, discount, packageType, patientType);
-
-    if (patientType === 'indoor' && indoorOptions) {
-      if (indoorOptions.selectedRoomId !== undefined) {
-        setIndoorServiceList(prev => prev.map(item => {
-          if (item.id === indoorOptions.selectedRoomId) {
-            const dailyRate = Number(item.dailyRate) || 0;
-            const numDays = (days !== '' && Number(days) > 0) ? Number(days) : 0;
-            return {
-              ...item,
-              selected: true,
-              days: numDays > 0 ? numDays : '',
-              totalAmount: numDays * dailyRate
-            };
-          } else {
-            return {
-              ...item,
-              selected: false,
-              days: '',
-              totalAmount: 0
-            };
-          }
-        }));
-      }
-
-      if (indoorOptions.foodSelected !== undefined) {
-        setFoodChargeSelected(indoorOptions.foodSelected);
-        if (indoorOptions.foodSelected) {
-          setFoodChargePerDay(indoorOptions.foodPerDay || 500);
-          setFoodChargeDays(days);
-        } else {
-          setFoodChargeDays('');
-        }
-      }
-
-      if (indoorOptions.admissionSelected !== undefined) {
-        setIncludeAdmissionFee(indoorOptions.admissionSelected);
-        if (indoorOptions.admissionFee !== undefined) {
-          setAdmissionFee(indoorOptions.admissionFee);
-        }
-      }
-    }
-  };
-
-  const updateDaysAndDiscount = (
-    newDays: number | '',
-    newDiscount: number | '',
-    newPackage?: '30 Days' | '15 Days' | '7 Days' | '5 Days' | 'Per Day' | '' | string,
-    targetMode: 'outdoor' | 'indoor' | '' = patientTreatmentMode
-  ) => {
-    setTreatmentDays(newDays);
-    setBulkDiscountPercent(newDiscount);
-    if (newPackage !== undefined) {
-      setTreatmentPackage(newPackage);
-    }
-
-    const numDays = (newDays !== '' && Number(newDays) > 0) ? Number(newDays) : 0;
-    const discPct = (newDiscount !== '' && !isNaN(Number(newDiscount))) ? Number(newDiscount) : 0;
-
-    if (foodChargeSelected) {
-      setFoodChargeDays(numDays > 0 ? numDays : '');
-    }
-
-    const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
-
-    setTreatmentList(prev => prev.map(item => {
-      if (!item.selected || targetMode === '') {
-        return {
-          ...item,
-          sessions: '',
-          discountPercent: '',
-          discountAmount: 0,
-          totalCost: 0
-        };
-      }
-
-      const dailySessions = targetMode === 'outdoor'
-        ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
-        : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-      
-      const computedSessions = dailySessions * calcDays;
-      const unitCost = Number(item.unitCost) || 0;
-      const sessionsNum = Number(computedSessions) || 0;
-      const gross = unitCost * sessionsNum;
-
-      let effectiveDiscPct = discPct;
-      let discountAmount = 0;
-
-      if (targetMode === 'indoor' && item.isIndoorFree) {
-        effectiveDiscPct = 100;
-        discountAmount = gross;
-      } else if (targetMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-        effectiveDiscPct = Number(item.outdoorDiscountPercent);
-        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
-      } else if (targetMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
-        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
-        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
-        const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal * sessionsNum);
-        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-        effectiveDiscPct = Number(item.defaultDiscountPercent);
-        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
-      } else {
-        const pctNum = Number(effectiveDiscPct) || 0;
-        discountAmount = Math.round((gross * pctNum) / 100);
-      }
-
-      const totalCost = Math.max(0, gross - discountAmount);
-
-      return {
-        ...item,
-        sessions: computedSessions,
-        discountPercent: effectiveDiscPct,
-        discountAmount,
-        totalCost
-      };
-    }));
-
-    setIndoorServiceList(prev => prev.map(item => {
-      if (!item.selected) {
-        return {
-          ...item,
-          days: '',
-          totalAmount: 0
-        };
-      }
-      const dailyRate = Number(item.dailyRate) || 0;
-      return {
-        ...item,
-        days: numDays > 0 ? numDays : '',
-        totalAmount: numDays > 0 ? dailyRate * numDays : 0
-      };
-    }));
-
-    setOutdoorPackageList(prev => prev.map(item => {
-      if (item.catalogId === 'outdoor_package_single') {
-        if (targetMode === 'outdoor' && numDays > 0) {
-          return {
-            ...item,
-            packageName: `${numDays} Day Package`
-          };
-        } else {
-          return {
-            ...item,
-            packageName: '...-Day Package',
-            selected: false,
-            totalBaseCost: '',
-            discountPercent: '',
-            discountAmount: 0,
-            netCost: 0
-          };
-        }
-      }
-      return item;
-    }));
-  };
-
-  const handlePackageSelect = (pkg: '30 Days' | '7 Days' | '15 Days' | '5 Days' | 'Per Day' | string) => {
-    let daysVal: number | '' = '';
-    let discountVal: number | '' = bulkDiscountPercent;
-
-    if (pkg === '30 Days') {
-      daysVal = 30;
-      if (patientTreatmentMode === 'outdoor') {
-        discountVal = 35;
-      } else if (patientTreatmentMode === 'indoor') {
-        discountVal = 30;
-      }
-    } else if (pkg === '7 Days') {
-      daysVal = 7;
-      if (patientTreatmentMode === 'outdoor') {
-        discountVal = 15;
-      } else if (patientTreatmentMode === 'indoor') {
-        discountVal = 30;
-      }
-    } else if (pkg === '15 Days') {
-      daysVal = 15;
-      if (patientTreatmentMode === 'outdoor') {
-        discountVal = 25;
-      } else if (patientTreatmentMode === 'indoor') {
-        discountVal = 30;
-      }
-    } else if (pkg === '5 Days') {
-      daysVal = 5;
-      if (patientTreatmentMode === 'outdoor') {
-        discountVal = 0;
-      } else if (patientTreatmentMode === 'indoor') {
-        discountVal = 30;
-      }
-    } else if (pkg === 'Per Day') {
-      daysVal = ''; // Default empty for Per Day package
-      if (patientTreatmentMode === 'outdoor') {
-        discountVal = 0;
-      } else if (patientTreatmentMode === 'indoor') {
-        discountVal = 30;
-      }
-    }
-
-    updateDaysAndDiscount(daysVal, discountVal, pkg);
-  };
-
-  const handlePerDayDaysInputChange = (newDays: number | '') => {
-    let discountVal: number | '' = bulkDiscountPercent;
-    if (patientTreatmentMode === 'outdoor') {
-      discountVal = 0;
-    } else if (patientTreatmentMode === 'indoor') {
-      discountVal = 30;
-    }
-    updateDaysAndDiscount(newDays, discountVal, 'Per Day');
-  };
-
-  const handleBulkDiscountChange = (newVal: number | '') => {
-    setBulkDiscountPercent(newVal);
-    setTreatmentList(prev => prev.map(item => {
-      if (!item.selected) {
-        return {
-          ...item,
-          discountPercent: '',
-          discountAmount: 0,
-          totalCost: 0
-        };
-      }
-
-      const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
-      const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
-      const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
-      const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
-      const isFixedPct = item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0;
-
-      const unitCost = Number(item.unitCost) || 0;
-      const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
-      const gross = unitCost * sessions;
-
-      let effectiveDiscPct = newVal;
-      let discountAmount = 0;
-
-      if (isIndoorFree) {
-        effectiveDiscPct = 100;
-        discountAmount = gross;
-      } else if (isOutdoorDisc) {
-        effectiveDiscPct = Number(item.outdoorDiscountPercent);
-        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
-      } else if (isOutdoorAmt) {
-        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessions);
-        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else if (isFixedAmt) {
-        const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal * sessions);
-        effectiveDiscPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else if (isFixedPct) {
-        effectiveDiscPct = Number(item.defaultDiscountPercent);
-        discountAmount = Math.round((gross * effectiveDiscPct) / 100);
-      } else {
-        const discPct = newVal === '' ? 0 : Number(newVal);
-        discountAmount = Math.round((gross * discPct) / 100);
-      }
-
-      const totalCost = Math.max(0, gross - discountAmount);
-      return {
-        ...item,
-        discountPercent: effectiveDiscPct,
-        discountAmount,
-        totalCost
-      };
-    }));
-  };
-
-  const handlePatientModeChange = (newMode: 'outdoor' | 'indoor' | '') => {
-    setPatientTreatmentMode(newMode);
-
-    if (newMode === 'outdoor') {
-      setIsIndoorSectionOpen(false);
-      setIsOutdoorSectionOpen(true);
+  const handleToggleIndoorMode = (checked: boolean) => {
+    setIncludeIndoor(checked);
+    if (!checked) {
       setIncludeAdmissionFee(false);
       setFoodChargeSelected(false);
-      setFoodChargeDays('');
-      setIndoorServiceList(prev => prev.map(item => ({
-        ...item,
-        selected: false,
-        days: '',
-        totalAmount: 0
-      })));
-    } else if (newMode === 'indoor') {
-      setIsIndoorSectionOpen(true);
-      setIsOutdoorSectionOpen(false);
-      setOutdoorPackageList(prev => prev.map(item => ({
-        ...item,
-        selected: false
-      })));
-    } else {
-      setIsOutdoorSectionOpen(true);
-      setIsIndoorSectionOpen(true);
+      setIndoorServiceList(prev => prev.map(item => ({ ...item, selected: false })));
     }
+  };
 
-    if (newMode === '') {
-      setTreatmentPackage('');
-      setTreatmentDays('');
-      setBulkDiscountPercent('');
-      setOverallDiscountPercent('');
-      updateDaysAndDiscount('', '', '', '');
-      return;
-    }
-
-    let newDiscountVal: number | '' = bulkDiscountPercent;
-    if (treatmentPackage === '30 Days') {
-      if (newMode === 'outdoor') newDiscountVal = 35;
-      else if (newMode === 'indoor') newDiscountVal = 30;
-    } else if (treatmentPackage === '7 Days') {
-      if (newMode === 'outdoor') newDiscountVal = 15;
-      else if (newMode === 'indoor') newDiscountVal = 30;
-    } else if (treatmentPackage === '15 Days') {
-      if (newMode === 'outdoor') newDiscountVal = 25;
-      else if (newMode === 'indoor') newDiscountVal = 30;
-    } else if (treatmentPackage === '5 Days') {
-      if (newMode === 'outdoor') newDiscountVal = 0;
-      else if (newMode === 'indoor') newDiscountVal = 30;
-    } else if (treatmentPackage === 'Per Day') {
-      if (newMode === 'outdoor') newDiscountVal = 0;
-      else if (newMode === 'indoor') newDiscountVal = 30;
-    }
-
-    updateDaysAndDiscount(treatmentDays, newDiscountVal, treatmentPackage, newMode);
-
-    if (newMode === 'indoor') {
-      const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
-      setIndoorServiceList(prev => prev.map(item => {
+  // Bulk Discount handlers (update global discount % and sync active rows that don't have fixed catalog discount)
+  const handleOutdoorDiscountChange = (val: number | '') => {
+    setOutdoorDiscountPercent(val);
+    setTreatmentList(prev =>
+      prev.map(item => {
         if (!item.selected) return item;
-        return {
-          ...item,
-          days: numDays > 0 ? numDays : '',
-          totalAmount: numDays > 0 ? (Number(item.dailyRate) || 0) * numDays : 0
-        };
-      }));
-    }
+        if (item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) return item;
+        if (item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) return item;
+        if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) return item;
+        if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) return item;
+        return { ...item, outdoorDiscountPct: val };
+      })
+    );
   };
 
-  // Initialize treatment list from catalog setup (Admin entry)
-  useEffect(() => {
-    const treatmentCatalog = effectiveCatalog.filter(c => c.category === 'treatment' || c.category === 'consultation');
-    const catalogOrderMap = new Map<string, number>(treatmentCatalog.map((c, i) => [c.id, i]));
-    
-    setTreatmentList(prev => {
-      const catalogMap = new Map<string, CatalogItem>(treatmentCatalog.map(c => [c.id, c]));
+  const handleIndoorDiscountChange = (val: number | '') => {
+    setIndoorDiscountPercent(val);
+    setTreatmentList(prev =>
+      prev.map(item => {
+        if (!item.selected) return item;
+        if (item.isIndoorFree) return { ...item, indoorDiscountPct: 100 };
+        if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) return item;
+        if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) return item;
+        return { ...item, indoorDiscountPct: val };
+      })
+    );
+  };
 
-      if (prev.length > 0) {
-        // Filter out non-custom items that no longer exist in current catalog
-        const filteredPrev = prev.filter(item => item.isCustom || (item.catalogId && catalogMap.has(item.catalogId)));
-
-        const updatedPrev = filteredPrev.map(item => {
-          if (!item.isCustom && item.catalogId && catalogMap.has(item.catalogId)) {
-            const catItem = catalogMap.get(item.catalogId)!;
-            const unitCost = catItem.defaultPrice || 1000;
-            const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
-            const discountPercent = item.discountPercent === '' ? 0 : (Number(item.discountPercent) || 0);
-            const gross = unitCost * sessions;
-            const discountAmount = Math.round((gross * discountPercent) / 100);
-            const totalCost = Math.max(0, gross - discountAmount);
-            return {
-              ...item,
-              treatmentName: catItem.name,
-              unitCost,
-              description: catItem.description || '',
-              rateNote: catItem.rateNote || '',
-              outdoorSessions: catItem.outdoorSessions,
-              indoorSessions: catItem.indoorSessions,
-              isIndoorFree: catItem.isIndoorFree,
-              fixedDiscountAmount: catItem.fixedDiscountAmount,
-              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
-              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
-              defaultDiscountPercent: catItem.defaultDiscountPercent,
-              discountAmount,
-              totalCost
-            };
-          }
-          return item;
-        });
-
-        const existingCatalogIds = new Set(filteredPrev.map(p => p.catalogId).filter(Boolean));
-        const newItems: TreatmentListItem[] = [];
-        treatmentCatalog.forEach(catItem => {
-          if (!existingCatalogIds.has(catItem.id)) {
-            const unitCost = catItem.defaultPrice || 1000;
-            newItems.push({
-              id: `tr-list-${catItem.id}`,
-              catalogId: catItem.id,
-              selected: false,
-              treatmentName: catItem.name,
-              unitCost,
-              description: catItem.description || '',
-              rateNote: catItem.rateNote || '',
-              outdoorSessions: catItem.outdoorSessions,
-              indoorSessions: catItem.indoorSessions,
-              isIndoorFree: catItem.isIndoorFree,
-              fixedDiscountAmount: catItem.fixedDiscountAmount,
-              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
-              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
-              defaultDiscountPercent: catItem.defaultDiscountPercent,
-              sessions: '',
-              discountPercent: '',
-              discountAmount: 0,
-              totalCost: 0
-            });
-          }
-        });
-
-        const combined = [...updatedPrev, ...newItems];
-
-        // Sort standard items based on catalog order
-        return combined.sort((a, b) => {
-          const indexA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
-          const indexB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
-          return indexA - indexB;
-        });
-      }
-
-      // First time initialization: list all items with empty sessions & discount for manual entry
-      return treatmentCatalog.map((catItem) => {
-        const unitCost = catItem.defaultPrice || 1000;
-        return {
-          id: `tr-list-${catItem.id}`,
-          catalogId: catItem.id,
-          selected: false,
-          treatmentName: catItem.name,
-          unitCost,
-          description: catItem.description || '',
-          rateNote: catItem.rateNote || '',
-          outdoorSessions: catItem.outdoorSessions,
-          indoorSessions: catItem.indoorSessions,
-          isIndoorFree: catItem.isIndoorFree,
-          fixedDiscountAmount: catItem.fixedDiscountAmount,
-          outdoorDiscountPercent: catItem.outdoorDiscountPercent,
-          outdoorDiscountAmount: catItem.outdoorDiscountAmount,
-          defaultDiscountPercent: catItem.defaultDiscountPercent,
-          sessions: '',
-          discountPercent: '',
-          discountAmount: 0,
-          totalCost: 0
-        };
-      });
-    });
-  }, [effectiveCatalog]);
-
+  // Daily Treatment Selection & Update
   const toggleTreatmentSelection = (id: string) => {
-    setTreatmentList(prev => prev.map(item => {
-      if (item.id === id) {
-        const newSelected = !item.selected;
-        let newSessions = item.sessions;
-        let newDiscountPercent = item.discountPercent;
-
-        if (newSelected) {
-          if (item.sessions === '' || item.sessions === 0) {
-            const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
-            const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
-            const dailySessions = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
-              ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
-              : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-            newSessions = dailySessions * calcDays;
-          }
-
-          if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-            newDiscountPercent = Number(item.outdoorDiscountPercent);
-          } else if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
-            newDiscountPercent = 100;
-          } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
-            // Handled via fixed calculation
-          } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-            newDiscountPercent = Number(item.defaultDiscountPercent);
-          } else if (item.discountPercent === '' && bulkDiscountPercent !== '') {
-            newDiscountPercent = bulkDiscountPercent;
-          }
-        } else {
-          newSessions = '';
-          newDiscountPercent = '';
+    setTreatmentList(prev =>
+      prev.map(item => {
+        if (item.id !== id) return item;
+        const nextSelected = !item.selected;
+        if (!nextSelected) {
+          return {
+            ...item,
+            selected: false,
+            outdoorQty: '',
+            indoorQty: '',
+            outdoorDiscountPct: '',
+            indoorDiscountPct: ''
+          };
         }
+        const catMatch = item.catalogId ? effectiveCatalog.find(c => c.id === item.catalogId) : undefined;
+        const resolvedOutSessions = catMatch?.outdoorSessions ?? item.outdoorSessions;
+        const resolvedInSessions = catMatch?.indoorSessions ?? item.indoorSessions;
+        const defaultOutQty = resolvedOutSessions !== undefined && Number(resolvedOutSessions) > 0 ? Number(resolvedOutSessions) : 1;
+        const defaultInQty = resolvedInSessions !== undefined && Number(resolvedInSessions) > 0 ? Number(resolvedInSessions) : 1;
 
-        const unitCost = Number(item.unitCost) || 0;
-        const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-        const gross = unitCost * sessionsNum;
-
-        let discountAmount = 0;
-        let discountPctNum: number | '' = newDiscountPercent;
-
-        if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
-          discountPctNum = 100;
-          discountAmount = gross;
-        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-          discountPctNum = Number(item.outdoorDiscountPercent);
-          discountAmount = Math.round((gross * discountPctNum) / 100);
-        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
-          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
-          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (newDiscountPercent === '' || newDiscountPercent === 0)) {
-          const fixedVal = Number(item.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal * sessionsNum);
-          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && (newDiscountPercent === '' || newDiscountPercent === 0)) {
-          discountPctNum = Number(item.defaultDiscountPercent);
-          discountAmount = Math.round((gross * discountPctNum) / 100);
-        } else {
-          const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
-          discountAmount = Math.round((gross * pctNum) / 100);
-        }
-
-        const totalCost = Math.max(0, gross - discountAmount);
+        const defaultOutDisc =
+          item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0
+            ? Number(item.outdoorDiscountPercent)
+            : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+            ? Number(item.defaultDiscountPercent)
+            : outdoorDiscountPercent;
+        const defaultInDisc = item.isIndoorFree
+          ? 100
+          : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+          ? Number(item.defaultDiscountPercent)
+          : indoorDiscountPercent;
 
         return {
           ...item,
-          selected: newSelected,
-          sessions: newSessions,
-          discountPercent: discountPctNum,
-          discountAmount,
-          totalCost
+          selected: true,
+          outdoorSessions: resolvedOutSessions,
+          indoorSessions: resolvedInSessions,
+          outdoorQty: item.outdoorQty === '' ? defaultOutQty : item.outdoorQty,
+          indoorQty: item.indoorQty === '' ? defaultInQty : item.indoorQty,
+          outdoorDiscountPct: defaultOutDisc,
+          indoorDiscountPct: defaultInDisc
         };
-      }
-      return item;
-    }));
+      })
+    );
   };
 
-  const updateTreatmentItem = (id: string, fields: Partial<TreatmentListItem>) => {
-    setTreatmentList(prev => prev.map(item => {
-      if (item.id === id) {
+  const updateTreatmentItem = (id: string, fields: Partial<TreatmentRowState>) => {
+    setTreatmentList(prev =>
+      prev.map(item => {
+        if (item.id !== id) return item;
         const updated = { ...item, ...fields };
-
-        // If the user manually changed sessions, update the corresponding per-day session count
-        if (fields.sessions !== undefined) {
-          const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
-          const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
-          const enteredSessions = fields.sessions === '' ? 0 : Number(fields.sessions);
-          const dailySession = calcDays > 0 ? (enteredSessions / calcDays) : enteredSessions;
-
-          if (patientTreatmentMode === 'outdoor') {
-            updated.outdoorSessions = dailySession;
-          } else if (patientTreatmentMode === 'indoor') {
-            updated.indoorSessions = dailySession;
-          } else {
-            updated.outdoorSessions = dailySession;
-            updated.indoorSessions = dailySession;
-          }
+        if (
+          (fields.outdoorQty !== undefined && Number(fields.outdoorQty) > 0) ||
+          (fields.indoorQty !== undefined && Number(fields.indoorQty) > 0)
+        ) {
+          updated.selected = true;
         }
-
-        const unitCost = Number(updated.unitCost) || 0;
-        const sessions = updated.sessions === '' ? 0 : (Number(updated.sessions) || 0);
-        const gross = unitCost * sessions;
-
-        let discountPercent = updated.discountPercent;
-        let discountAmount = 0;
-
-        const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(updated.isIndoorFree);
-        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountPercent !== undefined && Number(updated.outdoorDiscountPercent) > 0;
-        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountAmount !== undefined && Number(updated.outdoorDiscountAmount) > 0;
-        const isFixedAmt = updated.fixedDiscountAmount !== undefined && Number(updated.fixedDiscountAmount) > 0;
-
-        if (isIndoorFree) {
-          discountPercent = 100;
-          discountAmount = gross;
-        } else if (isOutdoorDisc && fields.discountPercent === undefined) {
-          discountPercent = Number(updated.outdoorDiscountPercent);
-          discountAmount = Math.round((gross * discountPercent) / 100);
-        } else if (isOutdoorAmt && fields.discountPercent === undefined) {
-          discountAmount = Math.min(gross, Number(updated.outdoorDiscountAmount) * sessions);
-          discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else if (isFixedAmt && fields.discountPercent === undefined) {
-          const fixedVal = Number(updated.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal * sessions);
-          discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else if (updated.defaultDiscountPercent !== undefined && Number(updated.defaultDiscountPercent) > 0 && fields.discountPercent === undefined) {
-          discountPercent = Number(updated.defaultDiscountPercent);
-          discountAmount = Math.round((gross * discountPercent) / 100);
-        } else {
-          const discPctNum = discountPercent === '' ? 0 : Number(discountPercent);
-          discountAmount = Math.round((gross * discPctNum) / 100);
-        }
-
-        const totalCost = Math.max(0, gross - discountAmount);
-        const selected = fields.sessions !== undefined && Number(fields.sessions) > 0 ? true : updated.selected;
-        return {
-          ...updated,
-          selected,
-          discountPercent,
-          discountAmount,
-          totalCost
-        };
-      }
-      return item;
-    }));
+        return updated;
+      })
+    );
   };
 
   const addCustomTreatmentItem = () => {
-    const newId = `tr-custom-${Date.now()}`;
-    const unitCost = 1000;
-    
     setTreatmentList(prev => [
       ...prev,
       {
-        id: newId,
+        id: `tr-custom-${Date.now()}`,
         selected: true,
         treatmentName: 'Custom Therapy / Acupuncture',
-        unitCost,
-        sessions: '',
-        discountPercent: '',
-        discountAmount: 0,
-        totalCost: 0,
+        unitCost: 1000,
+        outdoorQty: 1,
+        indoorQty: 1,
+        outdoorDiscountPct: outdoorDiscountPercent,
+        indoorDiscountPct: indoorDiscountPercent,
         isCustom: true
       }
     ]);
@@ -1305,224 +1054,81 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setTreatmentList(prev => prev.filter(item => item.id !== id));
   };
 
-  // Section 2: Outdoor Packages List with Checkboxes (Single Package)
-  const [outdoorSearch, setOutdoorSearch] = useState('');
-  const [outdoorPackageList, setOutdoorPackageList] = useState<OutdoorPackageListItem[]>([]);
+  const filteredTreatmentList = treatmentList.filter(item =>
+    item.treatmentName.toLowerCase().includes(treatmentSearch.toLowerCase().trim())
+  );
+  const isAllTreatmentsSelected = filteredTreatmentList.length > 0 && filteredTreatmentList.every(t => t.selected);
 
-  useEffect(() => {
-    setOutdoorPackageList(prev => {
-      if (prev.length > 0) return prev;
-      const daysText = patientTreatmentMode === 'outdoor' && treatmentDays !== '' && Number(treatmentDays) > 0 ? `${treatmentDays}-Day Package` : '...-Day Package';
-      return [
-        {
-          id: 'pkg-list-single',
-          catalogId: 'outdoor_package_single',
-          selected: patientTreatmentMode === 'outdoor',
-          packageName: daysText,
-          packageType: 'outdoor_package',
-          totalBaseCost: '',
-          discountPercent: '',
-          discountAmount: 0,
-          netCost: 0,
-          description: 'Outdoor Acupuncture & Therapy Package',
-          rateNote: ''
-        }
-      ];
-    });
-  }, [catalog]);
-
-  const toggleOutdoorPackageSelection = (id: string) => {
-    if (patientTreatmentMode === 'indoor') return;
-    setOutdoorPackageList(prev => prev.map(item => {
-      if (item.id === id) {
-        return { ...item, selected: !item.selected };
-      }
-      return item;
-    }));
-  };
-
-  const updateOutdoorPackageItem = (id: string, fields: Partial<OutdoorPackageListItem>) => {
-    if (patientTreatmentMode === 'indoor') return;
-    setOutdoorPackageList(prev => prev.map(item => {
-      if (item.id === id) {
-        const updated = { ...item, ...fields };
-        const totalBaseCost = Number(updated.totalBaseCost) || 0;
-        const discountPercent = updated.discountPercent === '' ? 0 : (Number(updated.discountPercent) || 0);
-        const discountAmount = Math.round((totalBaseCost * discountPercent) / 100);
-        const netCost = Math.max(0, totalBaseCost - discountAmount);
-        return {
-          ...updated,
-          discountAmount,
-          netCost
-        };
-      }
-      return item;
-    }));
-  };
-
-  const addCustomOutdoorPackage = () => {
-    const newId = `pkg-custom-${Date.now()}`;
-    setOutdoorPackageList(prev => [
-      ...prev,
-      {
-        id: newId,
-        selected: true,
-        packageName: 'Custom Outdoor Package',
-        packageType: 'custom',
-        totalBaseCost: '',
-        discountPercent: '',
-        discountAmount: 0,
-        netCost: 0,
-        description: 'Custom package details',
-        isCustom: true
-      }
-    ]);
-  };
-
-  const removeOutdoorPackageItem = (id: string) => {
-    setOutdoorPackageList(prev => prev.filter(item => item.id !== id));
-  };
-
-  // Section 3: Indoor Services List with Checkboxes
-  const [indoorSearch, setIndoorSearch] = useState('');
-  const [indoorServiceList, setIndoorServiceList] = useState<IndoorServiceListItem[]>([]);
-
-  useEffect(() => {
-    const roomCatalog = effectiveCatalog.filter(c => c.category === 'indoor_room');
-    const catalogOrderMap = new Map<string, number>(roomCatalog.map((c, i) => [c.id, i]));
-
-    setIndoorServiceList(prev => {
-      const catalogMap = new Map<string, CatalogItem>(roomCatalog.map(c => [c.id, c]));
-
-      if (prev.length > 0) {
-        // Filter out non-custom items that no longer exist in current roomCatalog
-        const filteredPrev = prev.filter(item => item.isCustom || (item.catalogId && catalogMap.has(item.catalogId)));
-
-        const updatedPrev = filteredPrev.map(item => {
-          if (!item.isCustom && item.catalogId && catalogMap.has(item.catalogId)) {
-            const catItem = catalogMap.get(item.catalogId)!;
-            const dailyRate = catItem.defaultPrice || 1000;
-            const days = item.days === '' ? 0 : Number(item.days);
-            return {
-              ...item,
-              roomType: catItem.name,
-              dailyRate,
-              remarks: catItem.description || '',
-              rateNote: catItem.rateNote || '',
-              totalAmount: dailyRate * days
-            };
-          }
-          return item;
-        });
-
-        const existingCatalogIds = new Set(filteredPrev.map(p => p.catalogId).filter(Boolean));
-        const newItems: IndoorServiceListItem[] = [];
-        roomCatalog.forEach(catItem => {
-          if (!existingCatalogIds.has(catItem.id)) {
-            const dailyRate = catItem.defaultPrice || 1000;
-            newItems.push({
-              id: `ind-list-${catItem.id}`,
-              catalogId: catItem.id,
-              selected: false,
-              roomType: catItem.name,
-              dailyRate,
-              days: '',
-              totalAmount: 0,
-              remarks: catItem.description || '',
-              rateNote: catItem.rateNote || ''
-            });
-          }
-        });
-
-        const combined = [...updatedPrev, ...newItems];
-
-        // Sort standard items based on catalog order
-        return combined.sort((a, b) => {
-          const indexA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
-          const indexB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
-          return indexA - indexB;
-        });
-      }
-
-      return roomCatalog.map(catItem => {
-        const dailyRate = catItem.defaultPrice || 1000;
-        return {
-          id: `ind-list-${catItem.id}`,
-          catalogId: catItem.id,
-          selected: false,
-          roomType: catItem.name,
-          dailyRate,
-          days: '',
-          totalAmount: 0,
-          remarks: catItem.description || '',
-          rateNote: catItem.rateNote || ''
-        };
-      });
-    });
-  }, [effectiveCatalog]);
-
-  const toggleIndoorServiceSelection = (id: string) => {
-    setIndoorServiceList(prev => prev.map(item => {
-      if (item.id === id) {
-        const newSelected = !item.selected;
-        if (newSelected) {
-          const autoDays = treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 1;
-          const dailyRate = Number(item.dailyRate) || 0;
-          return {
-            ...item,
-            selected: true,
-            days: autoDays,
-            totalAmount: dailyRate * autoDays
-          };
-        } else {
+  const toggleSelectAllTreatments = () => {
+    const targetIds = new Set(filteredTreatmentList.map(t => t.id));
+    const shouldSelect = !isAllTreatmentsSelected;
+    setTreatmentList(prev =>
+      prev.map(item => {
+        if (!targetIds.has(item.id)) return item;
+        if (!shouldSelect) {
           return {
             ...item,
             selected: false,
-            days: '',
-            totalAmount: 0
+            outdoorQty: '',
+            indoorQty: '',
+            outdoorDiscountPct: '',
+            indoorDiscountPct: ''
           };
         }
-      }
-      return item;
-    }));
-  };
+        const catMatch = item.catalogId ? effectiveCatalog.find(c => c.id === item.catalogId) : undefined;
+        const resolvedOutSessions = catMatch?.outdoorSessions ?? item.outdoorSessions;
+        const resolvedInSessions = catMatch?.indoorSessions ?? item.indoorSessions;
+        const defaultOutQty = resolvedOutSessions !== undefined && Number(resolvedOutSessions) > 0 ? Number(resolvedOutSessions) : 1;
+        const defaultInQty = resolvedInSessions !== undefined && Number(resolvedInSessions) > 0 ? Number(resolvedInSessions) : 1;
 
-  const updateIndoorServiceItem = (id: string, fields: Partial<IndoorServiceListItem>) => {
-    setIndoorServiceList(prev => prev.map(item => {
-      if (item.id === id) {
-        const updated = { ...item, ...fields };
-        const isSelectedNow = updated.days !== '' && Number(updated.days) > 0;
-        const dailyRate = Number(updated.dailyRate) || 0;
-        const daysNum = updated.days === '' ? 0 : (Number(updated.days) || 0);
-        const totalAmount = dailyRate * daysNum;
-        return {
-          ...updated,
-          selected: isSelectedNow ? true : (fields.days === '' ? false : updated.selected),
-          totalAmount
-        };
-      } else if (fields.days !== undefined && fields.days !== '' && Number(fields.days) > 0) {
+        const defaultOutDisc =
+          item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0
+            ? Number(item.outdoorDiscountPercent)
+            : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+            ? Number(item.defaultDiscountPercent)
+            : outdoorDiscountPercent;
+        const defaultInDisc = item.isIndoorFree
+          ? 100
+          : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+          ? Number(item.defaultDiscountPercent)
+          : indoorDiscountPercent;
         return {
           ...item,
-          selected: false,
-          days: '',
-          totalAmount: 0
+          selected: true,
+          outdoorSessions: resolvedOutSessions,
+          indoorSessions: resolvedInSessions,
+          outdoorQty: item.outdoorQty === '' ? defaultOutQty : item.outdoorQty,
+          indoorQty: item.indoorQty === '' ? defaultInQty : item.indoorQty,
+          outdoorDiscountPct: defaultOutDisc,
+          indoorDiscountPct: defaultInDisc
         };
-      }
-      return item;
-    }));
+      })
+    );
+  };
+
+  // Indoor Service Selection & Update (1 Day fixed)
+  const toggleIndoorServiceSelection = (id: string) => {
+    if (!includeIndoor) return;
+    setIndoorServiceList(prev =>
+      prev.map(item => (item.id === id ? { ...item, selected: !item.selected } : item))
+    );
+  };
+
+  const updateIndoorServiceItem = (id: string, fields: Partial<IndoorServiceRowState>) => {
+    setIndoorServiceList(prev =>
+      prev.map(item => (item.id === id ? { ...item, ...fields } : item))
+    );
   };
 
   const addCustomIndoorService = () => {
-    const newId = `ind-custom-${Date.now()}`;
+    if (!includeIndoor) return;
     setIndoorServiceList(prev => [
       ...prev,
       {
-        id: newId,
+        id: `ind-custom-${Date.now()}`,
         selected: true,
         roomType: 'Custom Room / Cabin',
         dailyRate: 2000,
-        days: treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 1,
-        totalAmount: 2000 * (treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 1),
         remarks: 'Custom room details',
         isCustom: true
       }
@@ -1533,400 +1139,106 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setIndoorServiceList(prev => prev.filter(item => item.id !== id));
   };
 
-  // Section 4: Additional Treatments & Therapies State
-  const [additionalTreatmentSearch, setAdditionalTreatmentSearch] = useState('');
-  const [additionalTreatmentList, setAdditionalTreatmentList] = useState<AdditionalTreatmentListItem[]>([]);
+  const filteredIndoorServiceList = indoorServiceList.filter(item =>
+    item.roomType.toLowerCase().includes(indoorSearch.toLowerCase().trim())
+  );
+  const isAllIndoorServicesSelected = filteredIndoorServiceList.length > 0 && filteredIndoorServiceList.every(i => i.selected);
 
-  // Initialize and Sync Additional Treatments from Catalog (Admin Catalog & Rates)
-  useEffect(() => {
-    const addCatalog = effectiveCatalog.filter(c => c.category === 'additional_treatment');
-    const catalogOrderMap = new Map<string, number>(addCatalog.map((c, i) => [c.id, i]));
-
-    setAdditionalTreatmentList(prev => {
-      const catalogMap = new Map<string, CatalogItem>(addCatalog.map(c => [c.id, c]));
-
-      if (prev.length > 0) {
-        // Filter out non-custom items that no longer exist in catalog
-        const filteredPrev = prev.filter(item => item.isCustom || (item.catalogId && catalogMap.has(item.catalogId)));
-
-        const updatedPrev = filteredPrev.map(item => {
-          if (!item.isCustom && item.catalogId && catalogMap.has(item.catalogId)) {
-            const catItem = catalogMap.get(item.catalogId)!;
-            const unitCost = catItem.defaultPrice || 1000;
-            const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
-            const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(catItem.isIndoorFree);
-            let discountPercent = item.discountPercent;
-            if (!item.selected) {
-              discountPercent = '';
-            } else if (isIndoorFree) {
-              discountPercent = 100;
-            }
-            const gross = unitCost * sessions;
-            const discPctNum = discountPercent === '' ? 0 : Number(discountPercent);
-            const discountAmount = Math.round((gross * discPctNum) / 100);
-            const totalCost = Math.max(0, gross - discountAmount);
-            return {
-              ...item,
-              treatmentName: catItem.name,
-              unitCost,
-              description: catItem.description || '',
-              rateNote: catItem.rateNote || '',
-              outdoorSessions: catItem.outdoorSessions,
-              indoorSessions: catItem.indoorSessions,
-              isIndoorFree: catItem.isIndoorFree,
-              isRatioBased: catItem.isRatioBased ?? false,
-              sessionsPer10Days: catItem.sessionsPer10Days ?? 3,
-              fixedDiscountAmount: catItem.fixedDiscountAmount,
-              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
-              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
-              defaultDiscountPercent: catItem.defaultDiscountPercent,
-              discountAmount,
-              totalCost
-            };
-          }
-          return item;
-        });
-
-        const existingCatalogIds = new Set(filteredPrev.map(p => p.catalogId).filter(Boolean));
-        const newItems: AdditionalTreatmentListItem[] = [];
-        addCatalog.forEach(catItem => {
-          if (!existingCatalogIds.has(catItem.id)) {
-            const unitCost = catItem.defaultPrice || 1000;
-            newItems.push({
-              id: `add-tr-${catItem.id}`,
-              catalogId: catItem.id,
-              selected: false,
-              treatmentName: catItem.name,
-              unitCost,
-              description: catItem.description || '',
-              rateNote: catItem.rateNote || '',
-              outdoorSessions: catItem.outdoorSessions,
-              indoorSessions: catItem.indoorSessions,
-              isIndoorFree: catItem.isIndoorFree,
-              isRatioBased: catItem.isRatioBased ?? false,
-              sessionsPer10Days: catItem.sessionsPer10Days ?? 3,
-              fixedDiscountAmount: catItem.fixedDiscountAmount,
-              outdoorDiscountPercent: catItem.outdoorDiscountPercent,
-              outdoorDiscountAmount: catItem.outdoorDiscountAmount,
-              defaultDiscountPercent: catItem.defaultDiscountPercent,
-              sessions: '',
-              discountPercent: '',
-              discountAmount: 0,
-              totalCost: 0
-            });
-          }
-        });
-
-        const combined = [...updatedPrev, ...newItems];
-
-        return combined.sort((a, b) => {
-          const indexA = a.catalogId ? (catalogOrderMap.get(a.catalogId) ?? 9999) : 9999;
-          const indexB = b.catalogId ? (catalogOrderMap.get(b.catalogId) ?? 9999) : 9999;
-          return indexA - indexB;
-        });
-      }
-
-      // First time initialization from catalog
-      return addCatalog.map(catItem => {
-        const unitCost = catItem.defaultPrice || 1000;
-        return {
-          id: `add-tr-${catItem.id}`,
-          catalogId: catItem.id,
-          selected: false,
-          treatmentName: catItem.name,
-          unitCost,
-          description: catItem.description || '',
-          rateNote: catItem.rateNote || '',
-          outdoorSessions: catItem.outdoorSessions,
-          indoorSessions: catItem.indoorSessions,
-          isIndoorFree: catItem.isIndoorFree,
-          isRatioBased: catItem.isRatioBased ?? false,
-          sessionsPer10Days: catItem.sessionsPer10Days ?? 3,
-          fixedDiscountAmount: catItem.fixedDiscountAmount,
-          outdoorDiscountPercent: catItem.outdoorDiscountPercent,
-          outdoorDiscountAmount: catItem.outdoorDiscountAmount,
-          defaultDiscountPercent: catItem.defaultDiscountPercent,
-          sessions: '',
-          discountPercent: '',
-          discountAmount: 0,
-          totalCost: 0
-        };
-      });
-    });
-  }, [effectiveCatalog, patientTreatmentMode]);
-
-  // Recalculate indoor free and outdoor discount for additional treatments when patientTreatmentMode changes
-  useEffect(() => {
-    setAdditionalTreatmentList(prev => prev.map(item => {
-      const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
-      const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
-      const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
-      const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
-
-      const unitCost = Number(item.unitCost) || 0;
-      const sessions = item.sessions === '' ? 0 : (Number(item.sessions) || 0);
-      const gross = unitCost * sessions;
-
-      let discPct: number | '' = item.discountPercent;
-
-      if (isIndoorFree) {
-        discPct = 100;
-      } else if (isOutdoorDisc) {
-        discPct = Number(item.outdoorDiscountPercent);
-      } else if (isFixedAmt && (discPct === '' || discPct === 0)) {
-        const fixedVal = Number(item.fixedDiscountAmount);
-        const tempAmt = Math.min(gross, fixedVal * sessions);
-        discPct = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
-      } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-        if (discPct === '' || discPct === 0) {
-          discPct = Number(item.defaultDiscountPercent);
-        }
-      }
-
-      let discountAmount = 0;
-      if (isIndoorFree) {
-        discountAmount = gross;
-      } else if (isOutdoorAmt) {
-        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessions);
-        if (gross > 0) discPct = Math.round((discountAmount / gross) * 100);
-      } else if (isOutdoorDisc) {
-        discPct = Number(item.outdoorDiscountPercent);
-        discountAmount = Math.round((gross * discPct) / 100);
-      } else if (isFixedAmt && (item.discountPercent === '' || item.discountPercent === 0 || discPct !== '')) {
-        const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal * sessions);
-        discPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else {
-        const pctNum = discPct === '' ? 0 : Number(discPct);
-        discountAmount = Math.round((gross * pctNum) / 100);
-      }
-
-      const totalCost = Math.max(0, gross - discountAmount);
-
-      return {
-        ...item,
-        discountPercent: discPct,
-        discountAmount,
-        totalCost
-      };
-    }));
-  }, [patientTreatmentMode]);
-
-  // Auto-update sessions for ratio-based additional treatments when package treatmentDays changes
-  useEffect(() => {
-    const daysNum = treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 0;
-    
-    setAdditionalTreatmentList(prev => prev.map(item => {
-      if (item.selected && item.isRatioBased) {
-        const per10 = item.sessionsPer10Days || 3;
-        // Only calculate ratio if a package with valid days > 0 is selected. Otherwise default to 1 session.
-        const calcSessions = daysNum > 0 ? Math.round((daysNum / 10) * per10) : 1;
-        const unitCost = Number(item.unitCost) || 0;
-
-        const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
-        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
-        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
-        const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
-
-        const gross = unitCost * calcSessions;
-
-        let discountPct: number | '' = item.discountPercent;
-        if (isIndoorFree) {
-          discountPct = 100;
-        } else if (isOutdoorDisc) {
-          discountPct = Number(item.outdoorDiscountPercent);
-        } else if (isFixedAmt && (discountPct === '' || discountPct === 0)) {
-          const fixedVal = Number(item.fixedDiscountAmount);
-          const tempAmt = Math.min(gross, fixedVal);
-          discountPct = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
-        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-          if (discountPct === '' || discountPct === 0) discountPct = Number(item.defaultDiscountPercent);
-        }
-
-        let discountAmount = 0;
-        if (isIndoorFree) {
-          discountAmount = gross;
-        } else if (isOutdoorAmt) {
-          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * calcSessions);
-          if (gross > 0) discountPct = Math.round((discountAmount / gross) * 100);
-        } else if (isFixedAmt && (item.discountPercent === '' || item.discountPercent === 0 || discountPct !== '')) {
-          const fixedVal = Number(item.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal);
-          discountPct = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else {
-          const discPctNum = discountPct === '' ? 0 : Number(discountPct);
-          discountAmount = Math.round((gross * discPctNum) / 100);
-        }
-
-        const totalCost = Math.max(0, gross - discountAmount);
-
-        return {
-          ...item,
-          sessions: calcSessions,
-          discountPercent: discountPct,
-          discountAmount,
-          totalCost
-        };
-      }
-      return item;
-    }));
-  }, [treatmentDays, patientTreatmentMode]);
-
-  const toggleAdditionalTreatmentSelection = (id: string) => {
-    setAdditionalTreatmentList(prev => prev.map(item => {
-      if (item.id === id) {
-        const newSelected = !item.selected;
-        let newSessions = item.sessions;
-        let newDiscountPercent = item.discountPercent;
-
-        if (newSelected) {
-          const hasPackageDays = treatmentDays !== '' && Number(treatmentDays) > 0;
-          if (item.isRatioBased && hasPackageDays) {
-            const daysNum = Number(treatmentDays);
-            const per10 = item.sessionsPer10Days || 3;
-            newSessions = Math.round((daysNum / 10) * per10);
-          } else if (item.sessions === '' || item.sessions === 0) {
-            newSessions = 1;
-          }
-
-          if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
-            newDiscountPercent = 100;
-          } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-            newDiscountPercent = Number(item.outdoorDiscountPercent);
-          } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
-            // Handled in calculation
-          } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-            newDiscountPercent = Number(item.defaultDiscountPercent);
-          }
-        } else {
-          newSessions = '';
-          newDiscountPercent = '';
-        }
-
-        const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
-        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
-        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
-        const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
-
-        const unitCost = Number(item.unitCost) || 0;
-        const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-        const gross = unitCost * sessionsNum;
-
-        let discountPctNum: number | '' = newDiscountPercent;
-        let discountAmount = 0;
-
-        if (!newSelected) {
-          discountPctNum = '';
-          discountAmount = 0;
-        } else if (isIndoorFree) {
-          discountPctNum = 100;
-          discountAmount = gross;
-        } else if (isOutdoorAmt) {
-          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
-          if (gross > 0) discountPctNum = Math.round((discountAmount / gross) * 100);
-        } else if (isOutdoorDisc) {
-          discountPctNum = Number(item.outdoorDiscountPercent);
-          discountAmount = Math.round((gross * discountPctNum) / 100);
-        } else if (isFixedAmt && (newDiscountPercent === '' || newDiscountPercent === 0)) {
-          const fixedVal = Number(item.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal * sessionsNum);
-          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else {
-          const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
-          discountAmount = Math.round((gross * pctNum) / 100);
-        }
-
-        const totalCost = Math.max(0, gross - discountAmount);
-
-        return {
-          ...item,
-          selected: newSelected,
-          sessions: newSessions,
-          discountPercent: discountPctNum,
-          discountAmount,
-          totalCost
-        };
-      }
-      return item;
-    }));
+  const toggleSelectAllIndoorServices = () => {
+    if (!includeIndoor) return;
+    const targetIds = new Set(filteredIndoorServiceList.map(i => i.id));
+    const shouldSelect = !isAllIndoorServicesSelected;
+    setIndoorServiceList(prev =>
+      prev.map(item => (targetIds.has(item.id) ? { ...item, selected: shouldSelect } : item))
+    );
   };
 
-  const updateAdditionalTreatmentItem = (id: string, fields: Partial<AdditionalTreatmentListItem>) => {
-    setAdditionalTreatmentList(prev => prev.map(item => {
-      if (item.id === id) {
-        const updated = { ...item, ...fields };
-        const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(updated.isIndoorFree);
-        const isOutdoorDisc = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountPercent !== undefined && Number(updated.outdoorDiscountPercent) > 0;
-        const isOutdoorAmt = patientTreatmentMode === 'outdoor' && updated.outdoorDiscountAmount !== undefined && Number(updated.outdoorDiscountAmount) > 0;
-        const isFixedAmt = updated.fixedDiscountAmount !== undefined && Number(updated.fixedDiscountAmount) > 0;
-
-        const unitCost = Number(updated.unitCost) || 0;
-        const sessions = updated.sessions === '' ? 0 : (Number(updated.sessions) || 0);
-        const gross = unitCost * sessions;
-
-        let discountPercent = updated.discountPercent;
-        if (fields.discountPercent === undefined) {
-          if (isIndoorFree) {
-            discountPercent = 100;
-          } else if (isOutdoorDisc) {
-            discountPercent = Number(updated.outdoorDiscountPercent);
-          } else if (isFixedAmt) {
-            const fixedVal = Number(updated.fixedDiscountAmount);
-            const tempAmt = Math.min(gross, fixedVal * sessions);
-            discountPercent = gross > 0 ? Math.round((tempAmt / gross) * 100) : 0;
-          } else if (updated.defaultDiscountPercent !== undefined && Number(updated.defaultDiscountPercent) > 0 && (discountPercent === '' || discountPercent === 0)) {
-            discountPercent = Number(updated.defaultDiscountPercent);
-          }
+  // Weekly Treatments Selection & Update
+  const toggleAdditionalTreatmentSelection = (id: string) => {
+    setAdditionalTreatmentList(prev =>
+      prev.map(item => {
+        if (item.id !== id) return item;
+        const nextSelected = !item.selected;
+        if (!nextSelected) {
+          return {
+            ...item,
+            selected: false,
+            outdoorQty: '',
+            indoorQty: '',
+            outdoorDiscountPct: '',
+            indoorDiscountPct: '',
+            outdoorDiscountFixed: '',
+            indoorDiscountFixed: ''
+          };
         }
+        const catMatch = item.catalogId ? effectiveCatalog.find(c => c.id === item.catalogId) : undefined;
+        const resolvedOutSessions = catMatch?.outdoorSessions ?? item.outdoorSessions;
+        const resolvedInSessions = catMatch?.indoorSessions ?? item.indoorSessions;
+        const defaultOutQty = resolvedOutSessions !== undefined && Number(resolvedOutSessions) > 0 ? Number(resolvedOutSessions) : 1;
+        const defaultInQty = resolvedInSessions !== undefined && Number(resolvedInSessions) > 0 ? Number(resolvedInSessions) : 1;
 
-        let discountAmount = 0;
-        if (!updated.selected) {
-          discountPercent = '';
-          discountAmount = 0;
-        } else if (isIndoorFree) {
-          discountAmount = gross;
-        } else if (isOutdoorAmt && fields.discountPercent === undefined) {
-          discountAmount = Math.min(gross, Number(updated.outdoorDiscountAmount) * sessions);
-          if (gross > 0) discountPercent = Math.round((discountAmount / gross) * 100);
-        } else if (isFixedAmt && fields.discountPercent === undefined) {
-          const fixedVal = Number(updated.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal * sessions);
-          discountPercent = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else {
-          const discPctNum = discountPercent === '' ? 0 : Number(discountPercent);
-          discountAmount = Math.round((gross * discPctNum) / 100);
-        }
-
-        const totalCost = Math.max(0, gross - discountAmount);
-        const selected = fields.sessions !== undefined && Number(fields.sessions) > 0 ? true : updated.selected;
-
+        const hasFixed = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
+        const indoorFree = isItemIndoorFreeByDefault(item);
+        const defaultOutDisc =
+          item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0
+            ? Number(item.outdoorDiscountPercent)
+            : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+            ? Number(item.defaultDiscountPercent)
+            : 0;
+        const defaultInDisc = indoorFree
+          ? 100
+          : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+          ? Number(item.defaultDiscountPercent)
+          : 0;
         return {
-          ...updated,
-          selected,
-          discountPercent,
-          discountAmount,
-          totalCost
+          ...item,
+          selected: true,
+          outdoorSessions: resolvedOutSessions,
+          indoorSessions: resolvedInSessions,
+          outdoorQty: item.outdoorQty === '' ? defaultOutQty : item.outdoorQty,
+          indoorQty: item.indoorQty === '' ? defaultInQty : item.indoorQty,
+          outdoorDiscountType: hasFixed ? 'fixed' : 'percent',
+          indoorDiscountType: indoorFree ? 'percent' : (hasFixed ? 'fixed' : 'percent'),
+          outdoorDiscountFixed: hasFixed ? Number(item.fixedDiscountAmount) : '',
+          indoorDiscountFixed: !indoorFree && hasFixed ? Number(item.fixedDiscountAmount) : '',
+          outdoorDiscountPct: hasFixed ? '' : defaultOutDisc,
+          indoorDiscountPct: indoorFree ? 100 : (hasFixed ? '' : defaultInDisc)
         };
-      }
-      return item;
-    }));
+      })
+    );
+  };
+
+  const updateAdditionalTreatmentItem = (id: string, fields: Partial<WeeklyTreatmentRowState>) => {
+    setAdditionalTreatmentList(prev =>
+      prev.map(item => {
+        if (item.id !== id) return item;
+        const updated = { ...item, ...fields };
+        if (
+          (fields.outdoorQty !== undefined && Number(fields.outdoorQty) > 0) ||
+          (fields.indoorQty !== undefined && Number(fields.indoorQty) > 0)
+        ) {
+          updated.selected = true;
+        }
+        return updated;
+      })
+    );
   };
 
   const addCustomAdditionalTreatment = () => {
-    const newId = `add-tr-custom-${Date.now()}`;
     setAdditionalTreatmentList(prev => [
       ...prev,
       {
-        id: newId,
+        id: `add-tr-custom-${Date.now()}`,
         selected: true,
-        treatmentName: 'Custom Additional Therapy',
+        treatmentName: 'Custom Weekly Therapy',
         unitCost: 1000,
-        sessions: 1,
-        discountPercent: '',
-        discountAmount: 0,
-        totalCost: 1000,
-        isCustom: true,
-        isRatioBased: false
+        outdoorQty: 1,
+        indoorQty: 1,
+        outdoorDiscountType: 'percent',
+        indoorDiscountType: 'percent',
+        outdoorDiscountPct: 0,
+        indoorDiscountPct: 0,
+        isCustom: true
       }
     ]);
   };
@@ -1935,295 +1247,212 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     setAdditionalTreatmentList(prev => prev.filter(item => item.id !== id));
   };
 
-  // Food Charge 3 Times State
-  const [foodChargeSelected, setFoodChargeSelected] = useState<boolean>(false);
-  const [foodChargePerDay, setFoodChargePerDay] = useState<number | ''>(500);
-  const [foodChargeDays, setFoodChargeDays] = useState<number | ''>('');
+  const filteredAdditionalTreatmentList = additionalTreatmentList.filter(item =>
+    item.treatmentName.toLowerCase().includes(additionalTreatmentSearch.toLowerCase().trim())
+  );
+  const isAllAdditionalTreatmentsSelected =
+    filteredAdditionalTreatmentList.length > 0 && filteredAdditionalTreatmentList.every(i => i.selected);
 
-  const toggleFoodChargeSelection = () => {
-    setFoodChargeSelected(prev => {
-      const next = !prev;
-      if (next) {
-        const autoDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 1;
-        setFoodChargeDays(autoDays);
-        if (foodChargePerDay === '') {
-          setFoodChargePerDay(500);
+  const toggleSelectAllAdditionalTreatments = () => {
+    const targetIds = new Set(filteredAdditionalTreatmentList.map(i => i.id));
+    const shouldSelect = !isAllAdditionalTreatmentsSelected;
+    setAdditionalTreatmentList(prev =>
+      prev.map(item => {
+        if (!targetIds.has(item.id)) return item;
+        if (!shouldSelect) {
+          return {
+            ...item,
+            selected: false,
+            outdoorQty: '',
+            indoorQty: '',
+            outdoorDiscountPct: '',
+            indoorDiscountPct: '',
+            outdoorDiscountFixed: '',
+            indoorDiscountFixed: ''
+          };
         }
-      } else {
-        setFoodChargeDays('');
-      }
-      return next;
-    });
+        const catMatch = item.catalogId ? effectiveCatalog.find(c => c.id === item.catalogId) : undefined;
+        const resolvedOutSessions = catMatch?.outdoorSessions ?? item.outdoorSessions;
+        const resolvedInSessions = catMatch?.indoorSessions ?? item.indoorSessions;
+        const defaultOutQty = resolvedOutSessions !== undefined && Number(resolvedOutSessions) > 0 ? Number(resolvedOutSessions) : 1;
+        const defaultInQty = resolvedInSessions !== undefined && Number(resolvedInSessions) > 0 ? Number(resolvedInSessions) : 1;
+
+        const hasFixed = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
+        const indoorFree = isItemIndoorFreeByDefault(item);
+        const defaultOutDisc =
+          item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0
+            ? Number(item.outdoorDiscountPercent)
+            : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+            ? Number(item.defaultDiscountPercent)
+            : 0;
+        const defaultInDisc = indoorFree
+          ? 100
+          : item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0
+          ? Number(item.defaultDiscountPercent)
+          : 0;
+        return {
+          ...item,
+          selected: true,
+          outdoorSessions: resolvedOutSessions,
+          indoorSessions: resolvedInSessions,
+          outdoorQty: item.outdoorQty === '' ? defaultOutQty : item.outdoorQty,
+          indoorQty: item.indoorQty === '' ? defaultInQty : item.indoorQty,
+          outdoorDiscountType: hasFixed ? 'fixed' : 'percent',
+          indoorDiscountType: indoorFree ? 'percent' : (hasFixed ? 'fixed' : 'percent'),
+          outdoorDiscountFixed: hasFixed ? Number(item.fixedDiscountAmount) : '',
+          indoorDiscountFixed: !indoorFree && hasFixed ? Number(item.fixedDiscountAmount) : '',
+          outdoorDiscountPct: hasFixed ? '' : defaultOutDisc,
+          indoorDiscountPct: indoorFree ? 100 : (hasFixed ? '' : defaultInDisc)
+        };
+      })
+    );
   };
 
-  // Additional Fees & Discounts
-  const [includeAdmissionFee, setIncludeAdmissionFee] = useState<boolean>(false);
-  const [admissionFee, setAdmissionFee] = useState<number | ''>(1000);
-  const [overallDiscountPercent, setOverallDiscountPercent] = useState<number | ''>('');
-  const [advancePaid, setAdvancePaid] = useState<number>(0);
-  const [paymentStatus, setPaymentStatus] = useState<'Quotation' | 'Estimate' | 'Partial Paid' | 'Fully Paid'>('Quotation');
-  const [notes, setNotes] = useState<string>('Quotation validity is 7 days from the date of issue.');
-  const [isSaved, setIsSaved] = useState<boolean>(false);
-  const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  // Payment Cycle / Installment Schedule State
-  const [paymentPlanMode, setPaymentPlanMode] = useState<'full' | '4_cycles' | '10_day_cycles' | '15_day_cycles' | 'custom_phases'>('4_cycles');
-  const [paymentPhases, setPaymentPhases] = useState<PaymentPhase[]>([]);
-  const [isDraftRestored, setIsDraftRestored] = useState<boolean>(false);
-
+  // Draft Persistence (v4 - 1-Day Model)
   const userId = currentUser?.id || currentUser?.username || 'guest';
-  const DRAFT_STORAGE_KEY = `suo_xi_quotation_builder_draft_${userId}_v3`;
+  const DRAFT_STORAGE_KEY = `suo_xi_quotation_builder_draft_${userId}_v4`;
   const isClearingDraftRef = useRef<boolean>(false);
 
-  // Restore draft from IndexedDB (or fallback to localStorage) on initial component mount or when user changes
   useEffect(() => {
+    if (editingQuotation) return;
     let isCancelled = false;
-
     const restoreDraft = async () => {
       try {
-        localStorage.removeItem('suo_xi_quotation_builder_draft_v2');
-
-        let parsed: any = await idbGet(DRAFT_STORAGE_KEY);
-        if (!parsed) {
-          const savedLocal = localStorage.getItem(DRAFT_STORAGE_KEY);
-          if (savedLocal) {
-            parsed = JSON.parse(savedLocal);
-            // Migrate to IndexedDB and remove from localStorage to free 5MB quota
-            await idbSet(DRAFT_STORAGE_KEY, parsed);
-            localStorage.removeItem(DRAFT_STORAGE_KEY);
-          }
-        }
-
-        if (isCancelled) return;
-
-        if (parsed) {
-          if (parsed.selectedPatient && !initialPatient) {
-            setSelectedPatient(parsed.selectedPatient);
-          }
-          if (parsed.phoneSearch) setPhoneSearch(parsed.phoneSearch);
-          if (parsed.billingDoctor) setBillingDoctor(parsed.billingDoctor);
-          if (parsed.treatmentList && Array.isArray(parsed.treatmentList) && parsed.treatmentList.length > 0) {
-            setTreatmentList(parsed.treatmentList);
-          }
-          if (parsed.additionalTreatmentList && Array.isArray(parsed.additionalTreatmentList) && parsed.additionalTreatmentList.length > 0) {
-            setAdditionalTreatmentList(parsed.additionalTreatmentList);
-          }
-          if (parsed.patientTreatmentMode !== undefined) setPatientTreatmentMode(parsed.patientTreatmentMode);
-          if (parsed.treatmentPackage !== undefined) setTreatmentPackage(parsed.treatmentPackage);
-          if (parsed.treatmentDays !== undefined) setTreatmentDays(parsed.treatmentDays);
-          if (parsed.bulkDiscountPercent !== undefined) setBulkDiscountPercent(parsed.bulkDiscountPercent);
-          if (parsed.showFullTreatmentCalculation !== undefined) setShowFullTreatmentCalculation(parsed.showFullTreatmentCalculation);
-          if (parsed.showFullIndoorCalculation !== undefined) setShowFullIndoorCalculation(parsed.showFullIndoorCalculation);
-          if (parsed.outdoorPackageList && Array.isArray(parsed.outdoorPackageList) && parsed.outdoorPackageList.length > 0) {
-            setOutdoorPackageList(parsed.outdoorPackageList);
-          }
-          if (parsed.indoorServiceList && Array.isArray(parsed.indoorServiceList) && parsed.indoorServiceList.length > 0) {
-            setIndoorServiceList(parsed.indoorServiceList);
-          }
-          if (parsed.foodChargeSelected !== undefined) setFoodChargeSelected(parsed.foodChargeSelected);
-          if (parsed.foodChargePerDay !== undefined) setFoodChargePerDay(parsed.foodChargePerDay);
-          if (parsed.foodChargeDays !== undefined) setFoodChargeDays(parsed.foodChargeDays);
-          if (parsed.includeAdmissionFee !== undefined) setIncludeAdmissionFee(parsed.includeAdmissionFee);
-          if (parsed.admissionFee !== undefined) setAdmissionFee(parsed.admissionFee);
-          if (parsed.overallDiscountPercent !== undefined) setOverallDiscountPercent(parsed.overallDiscountPercent);
-          if (parsed.advancePaid !== undefined) setAdvancePaid(parsed.advancePaid);
-          if (parsed.paymentStatus) setPaymentStatus(parsed.paymentStatus);
-          if (parsed.notes) setNotes(parsed.notes);
-          if (parsed.paymentPlanMode) setPaymentPlanMode(parsed.paymentPlanMode);
-          if (parsed.paymentPhases && Array.isArray(parsed.paymentPhases)) setPaymentPhases(parsed.paymentPhases);
-          if (parsed.savedComparisonSnapshot) setSavedComparisonSnapshot(parsed.savedComparisonSnapshot);
-
-          setIsDraftRestored(true);
-        } else {
-          clearFormAndDraftState();
-        }
+        const parsed: any = await idbGet(DRAFT_STORAGE_KEY);
+        if (isCancelled || !parsed) return;
+        if (parsed.selectedPatient && !initialPatient) setSelectedPatient(parsed.selectedPatient);
+        if (parsed.phoneSearch) setPhoneSearch(parsed.phoneSearch);
+        if (parsed.patientAddress !== undefined) setPatientAddress(parsed.patientAddress);
+        if (parsed.billingDoctor) setBillingDoctor(parsed.billingDoctor);
+        if (parsed.includeOutdoor !== undefined) setIncludeOutdoor(Boolean(parsed.includeOutdoor));
+        if (parsed.includeIndoor !== undefined) setIncludeIndoor(Boolean(parsed.includeIndoor));
+        if (parsed.outdoorDiscountPercent !== undefined) setOutdoorDiscountPercent(parsed.outdoorDiscountPercent);
+        if (parsed.indoorDiscountPercent !== undefined) setIndoorDiscountPercent(parsed.indoorDiscountPercent);
+        if (parsed.advanceCourseDays !== undefined) setAdvanceCourseDays(parsed.advanceCourseDays);
+        if (Array.isArray(parsed.treatmentList) && parsed.treatmentList.length > 0) setTreatmentList(parsed.treatmentList);
+        if (Array.isArray(parsed.indoorServiceList) && parsed.indoorServiceList.length > 0) setIndoorServiceList(parsed.indoorServiceList);
+        if (Array.isArray(parsed.additionalTreatmentList) && parsed.additionalTreatmentList.length > 0) setAdditionalTreatmentList(parsed.additionalTreatmentList);
+        if (parsed.foodChargeSelected !== undefined) setFoodChargeSelected(parsed.foodChargeSelected);
+        if (parsed.foodChargePerDay !== undefined) setFoodChargePerDay(parsed.foodChargePerDay);
+        if (parsed.includeAdmissionFee !== undefined) setIncludeAdmissionFee(parsed.includeAdmissionFee);
+        if (parsed.admissionFee !== undefined) setAdmissionFee(parsed.admissionFee);
+        if (parsed.overallDiscountPercent !== undefined) setOverallDiscountPercent(parsed.overallDiscountPercent);
+        if (parsed.advancePaid !== undefined) setAdvancePaid(parsed.advancePaid);
+        if (parsed.paymentStatus) setPaymentStatus(parsed.paymentStatus);
+        if (parsed.notes) setNotes(parsed.notes);
+        setIsDraftRestored(true);
       } catch (e) {
         console.error('Failed to load quotation draft:', e);
       }
     };
-
     restoreDraft();
+    return () => { isCancelled = true; };
+  }, [DRAFT_STORAGE_KEY, editingQuotation]);
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [DRAFT_STORAGE_KEY]);
-
-  // Auto-save draft to IndexedDB asynchronously on any state modification (non-blocking)
   useEffect(() => {
+    if (editingQuotation) return;
     if (isClearingDraftRef.current) {
       idbDel(DRAFT_STORAGE_KEY).catch(() => {});
-      try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
       return;
     }
-
     const timer = setTimeout(() => {
-      try {
-        if (isClearingDraftRef.current) {
-          idbDel(DRAFT_STORAGE_KEY).catch(() => {});
-          try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
-          return;
-        }
+      if (isClearingDraftRef.current) return;
+      const hasAnySelection =
+        treatmentList.some(t => t.selected) ||
+        additionalTreatmentList.some(a => a.selected) ||
+        indoorServiceList.some(i => i.selected) ||
+        Boolean(selectedPatient) ||
+        Boolean(phoneSearch.trim());
 
-        const hasSelectedTreatments = treatmentList.some(item => item.selected);
-        const hasSelectedAdditional = additionalTreatmentList.some(item => item.selected);
-        const hasSelectedIndoor = indoorServiceList.some(item => item.selected);
-        const hasSelectedOutdoor = outdoorPackageList.some(item => item.selected);
-
-        // If no patient selected and no items checked and no search query, do not store draft
-        if (!selectedPatient && !hasSelectedTreatments && !hasSelectedAdditional && !hasSelectedIndoor && !hasSelectedOutdoor && !phoneSearch.trim()) {
-          idbDel(DRAFT_STORAGE_KEY).catch(() => {});
-          try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
-          return;
-        }
-
-        const draftData = {
-          selectedPatient,
-          phoneSearch,
-          billingDoctor,
-          treatmentList,
-          additionalTreatmentList,
-          patientTreatmentMode,
-          treatmentPackage,
-          treatmentDays,
-          bulkDiscountPercent,
-          showFullTreatmentCalculation,
-          showFullIndoorCalculation,
-          outdoorPackageList,
-          indoorServiceList,
-          foodChargeSelected,
-          foodChargePerDay,
-          foodChargeDays,
-          includeAdmissionFee,
-          admissionFee,
-          overallDiscountPercent,
-          advancePaid,
-          paymentStatus,
-          notes,
-          paymentPlanMode,
-          paymentPhases,
-          savedComparisonSnapshot
-        };
-
-        // Save to IndexedDB non-blocking async
-        idbSet(DRAFT_STORAGE_KEY, draftData).catch(() => {});
-        // Clean localStorage so 0 quota is consumed
-        try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
-      } catch (err) {
-        console.error('Error saving quotation draft:', err);
+      if (!hasAnySelection) {
+        idbDel(DRAFT_STORAGE_KEY).catch(() => {});
+        return;
       }
-    }, 400);
 
+      const draftData = {
+        selectedPatient,
+        phoneSearch,
+        patientAddress,
+        billingDoctor,
+        includeOutdoor,
+        includeIndoor,
+        outdoorDiscountPercent,
+        indoorDiscountPercent,
+        advanceCourseDays,
+        treatmentList,
+        indoorServiceList,
+        additionalTreatmentList,
+        foodChargeSelected,
+        foodChargePerDay,
+        includeAdmissionFee,
+        admissionFee,
+        overallDiscountPercent,
+        advancePaid,
+        paymentStatus,
+        notes
+      };
+      idbSet(DRAFT_STORAGE_KEY, draftData).catch(() => {});
+    }, 400);
     return () => clearTimeout(timer);
   }, [
-    selectedPatient,
-    phoneSearch,
-    billingDoctor,
-    treatmentList,
-    additionalTreatmentList,
-    patientTreatmentMode,
-    treatmentPackage,
-    treatmentDays,
-    bulkDiscountPercent,
-    showFullTreatmentCalculation,
-    showFullIndoorCalculation,
-    outdoorPackageList,
-    indoorServiceList,
-    foodChargeSelected,
-    foodChargePerDay,
-    foodChargeDays,
-    includeAdmissionFee,
-    admissionFee,
-    overallDiscountPercent,
-    advancePaid,
-    paymentStatus,
-    notes,
-    paymentPlanMode,
-    paymentPhases,
-    savedComparisonSnapshot
+    selectedPatient, phoneSearch, patientAddress, billingDoctor,
+    includeOutdoor, includeIndoor, outdoorDiscountPercent, indoorDiscountPercent, advanceCourseDays,
+    treatmentList, indoorServiceList, additionalTreatmentList,
+    foodChargeSelected, foodChargePerDay, includeAdmissionFee, admissionFee,
+    overallDiscountPercent, advancePaid, paymentStatus, notes, DRAFT_STORAGE_KEY, editingQuotation
   ]);
 
   const clearFormAndDraftState = () => {
     isClearingDraftRef.current = true;
     idbDel(DRAFT_STORAGE_KEY).catch(() => {});
-    try {
-      localStorage.removeItem(DRAFT_STORAGE_KEY);
-    } catch (e) {
-      console.error('Error removing draft key', e);
-    }
     setSelectedPatient(null);
     setPhoneSearch('');
-    setBillingDoctor('');
+    setPatientAddress('');
+    setBillingDoctor(currentUser?.name || '');
     setTreatmentSearch('');
-    setOutdoorSearch('');
     setIndoorSearch('');
     setAdditionalTreatmentSearch('');
-    setPatientTreatmentMode('');
-    setTreatmentPackage('');
-    setTreatmentDays('');
-    setBulkDiscountPercent('');
-    setShowFullTreatmentCalculation(false);
-    setShowFullIndoorCalculation(false);
+    setIncludeOutdoor(true);
+    setIncludeIndoor(false);
+    setOutdoorDiscountPercent(30);
+    setIndoorDiscountPercent(30);
+    setAdvanceCourseDays(10);
     setFoodChargeSelected(false);
     setFoodChargePerDay(500);
-    setFoodChargeDays('');
     setIncludeAdmissionFee(false);
     setAdmissionFee(1000);
     setOverallDiscountPercent('');
     setAdvancePaid(0);
     setPaymentStatus('Quotation');
     setNotes('Quotation validity is 7 days from the date of issue.');
-    setPaymentPlanMode('10_day_cycles');
-    setPaymentPhases([]);
-    setSavedComparisonSnapshot(null);
-    setActiveComparisonQuotationId(null);
     draftInvoiceIdRef.current = makeUniqueId();
     setIsSaved(false);
     setSaveError(null);
     setIsDraftRestored(false);
 
-    setTreatmentList(prev => prev.filter(item => !item.isCustom).map(item => ({
-      ...item,
-      selected: false,
-      sessions: '',
-      discountPercent: '',
-      discountAmount: 0,
-      totalCost: 0
-    })));
+    setTreatmentList(prev =>
+      prev.filter(i => !i.isCustom).map(i => ({
+        ...i,
+        selected: false,
+        outdoorQty: '',
+        indoorQty: '',
+        outdoorDiscountPct: '',
+        indoorDiscountPct: ''
+      }))
+    );
+    setIndoorServiceList(prev => prev.filter(i => !i.isCustom).map(i => ({ ...i, selected: false })));
+    setAdditionalTreatmentList(prev =>
+      prev.filter(i => !i.isCustom).map(i => ({
+        ...i,
+        selected: false,
+        outdoorQty: '',
+        indoorQty: '',
+        outdoorDiscountPct: '',
+        indoorDiscountPct: ''
+      }))
+    );
 
-    setIndoorServiceList(prev => prev.filter(item => !item.isCustom).map(item => ({
-      ...item,
-      selected: false,
-      days: '',
-      totalAmount: 0
-    })));
-
-    setOutdoorPackageList(prev => prev.filter(item => !item.isCustom).map(item => ({
-      ...item,
-      selected: false,
-      totalBaseCost: '',
-      discountPercent: '',
-      discountAmount: 0,
-      netCost: 0
-    })));
-
-    setAdditionalTreatmentList(prev => prev.filter(item => !item.isCustom).map(item => ({
-      ...item,
-      selected: false,
-      sessions: '',
-      discountPercent: '',
-      discountAmount: 0,
-      totalCost: 0
-    })));
-
-    // Reset the ref after state batching completes and ensure draft is cleared
     setTimeout(() => {
-      try {
-        localStorage.removeItem(DRAFT_STORAGE_KEY);
-      } catch (e) {
-        console.error(e);
-      }
       isClearingDraftRef.current = false;
     }, 600);
   };
@@ -2234,786 +1463,163 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }
   };
 
-  // Filtered lists for search
-  const filteredTreatmentList = treatmentList.filter(item => 
-    item.treatmentName.toLowerCase().includes(treatmentSearch.toLowerCase().trim())
-  );
+  // Active calculations (strictly 1-day)
+  const activeTreatments = treatmentList.filter(i => i.selected);
+  const activeIndoorServices = includeIndoor ? indoorServiceList.filter(i => i.selected) : [];
+  const activeAdditionalTreatments = additionalTreatmentList.filter(i => i.selected);
 
-  const isAllTreatmentsSelected = filteredTreatmentList.length > 0 && filteredTreatmentList.every(t => t.selected);
+  const outdoorDailyRows: IndividualTreatment[] = activeTreatments.map(t => {
+    const p = computeRowPricing(t, t.outdoorQty, t.outdoorDiscountPct, 'outdoor', outdoorDiscountPercent, t.outdoorDiscountType, t.outdoorDiscountFixed);
+    return {
+      id: t.id,
+      treatmentName: t.treatmentName,
+      unitCost: t.unitCost,
+      sessions: p.qty,
+      discountPercent: p.discountPercent,
+      discountAmount: p.discountAmount,
+      totalCost: p.netCost,
+      discountType: p.discountType,
+      isIndoorFree: t.isIndoorFree,
+      fixedDiscountAmount: t.fixedDiscountAmount,
+      outdoorDiscountPercent: t.outdoorDiscountPercent
+    };
+  });
 
-  const toggleSelectAllTreatments = () => {
-    const targetIds = new Set(filteredTreatmentList.map(t => t.id));
-    const shouldSelectAll = !isAllTreatmentsSelected;
+  const indoorDailyRows: IndividualTreatment[] = activeTreatments.map(t => {
+    const p = computeRowPricing(t, t.indoorQty, t.indoorDiscountPct, 'indoor', indoorDiscountPercent, t.indoorDiscountType, t.indoorDiscountFixed);
+    return {
+      id: t.id,
+      treatmentName: t.treatmentName,
+      unitCost: t.unitCost,
+      sessions: p.qty,
+      discountPercent: p.discountPercent,
+      discountAmount: p.discountAmount,
+      totalCost: p.netCost,
+      discountType: p.discountType,
+      isIndoorFree: t.isIndoorFree,
+      fixedDiscountAmount: t.fixedDiscountAmount,
+      outdoorDiscountPercent: t.outdoorDiscountPercent
+    };
+  });
 
-    setTreatmentList(prev => prev.map(item => {
-      if (!targetIds.has(item.id)) return item;
+  const outdoorWeeklyRows: AdditionalTreatment[] = activeAdditionalTreatments.map(a => {
+    const p = computeRowPricing(a, a.outdoorQty, a.outdoorDiscountPct, 'outdoor', 0, a.outdoorDiscountType, a.outdoorDiscountFixed);
+    return {
+      id: a.id,
+      treatmentName: a.treatmentName,
+      unitCost: a.unitCost,
+      sessions: p.qty,
+      discountPercent: p.discountPercent,
+      discountAmount: p.discountAmount,
+      totalCost: p.netCost,
+      discountType: p.discountType,
+      description: a.description || '',
+      isIndoorFree: isItemIndoorFreeByDefault(a),
+      fixedDiscountAmount: p.discountType === 'fixed' ? p.discountAmount : a.fixedDiscountAmount,
+      outdoorDiscountPercent: a.outdoorDiscountPercent
+    };
+  });
 
-      if (shouldSelectAll) {
-        let newSessions = item.sessions;
-        let newDiscountPercent = item.discountPercent;
+  const indoorWeeklyRows: AdditionalTreatment[] = activeAdditionalTreatments.map(a => {
+    const p = computeRowPricing(a, a.indoorQty, a.indoorDiscountPct, 'indoor', 0, a.indoorDiscountType, a.indoorDiscountFixed);
+    return {
+      id: a.id,
+      treatmentName: a.treatmentName,
+      unitCost: a.unitCost,
+      sessions: p.qty,
+      discountPercent: p.discountPercent,
+      discountAmount: p.discountAmount,
+      totalCost: p.netCost,
+      discountType: p.discountType,
+      description: a.description || '',
+      isIndoorFree: isItemIndoorFreeByDefault(a),
+      fixedDiscountAmount: p.discountType === 'fixed' ? p.discountAmount : a.fixedDiscountAmount,
+      outdoorDiscountPercent: a.outdoorDiscountPercent
+    };
+  });
 
-        if (item.sessions === '' || item.sessions === 0) {
-          const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
-          const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
-          const dailySessions = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
-            ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
-            : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-          newSessions = dailySessions * calcDays;
-        }
+  const outdoorDailyGross = outdoorDailyRows.reduce((s, r) => s + r.unitCost * r.sessions, 0);
+  const outdoorDailyDiscount = outdoorDailyRows.reduce((s, r) => s + r.discountAmount, 0);
+  const outdoorDailyNet = outdoorDailyRows.reduce((s, r) => s + r.totalCost, 0);
+  const outdoorWeeklyNet = outdoorWeeklyRows.reduce((s, r) => s + r.totalCost, 0);
 
-        if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
-          newDiscountPercent = 100;
-        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-          newDiscountPercent = Number(item.outdoorDiscountPercent);
-        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-          newDiscountPercent = Number(item.defaultDiscountPercent);
-        } else if (item.discountPercent === '' && bulkDiscountPercent !== '') {
-          newDiscountPercent = bulkDiscountPercent;
-        }
+  const indoorDailyGross = indoorDailyRows.reduce((s, r) => s + r.unitCost * r.sessions, 0);
+  const indoorDailyDiscount = indoorDailyRows.reduce((s, r) => s + r.discountAmount, 0);
+  const indoorDailyNet = indoorDailyRows.reduce((s, r) => s + r.totalCost, 0);
+  const indoorWeeklyNet = indoorWeeklyRows.reduce((s, r) => s + r.totalCost, 0);
 
-        const unitCost = Number(item.unitCost) || 0;
-        const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-        const gross = unitCost * sessionsNum;
+  const indoorRoomDailySubtotal = activeIndoorServices.reduce((s, r) => s + (Number(r.dailyRate) || 0), 0);
+  const foodCharge1DayTotal = includeIndoor && foodChargeSelected ? Number(foodChargePerDay || 0) : 0;
+  const indoorAccommodationSubtotal = indoorRoomDailySubtotal + foodCharge1DayTotal;
+  const actualAdmissionFee = includeIndoor && includeAdmissionFee ? Number(admissionFee || 0) : 0;
 
-        let discountPctNum: number | '' = newDiscountPercent;
-        let discountAmount = 0;
+  // Primary billing numbers for InvoiceQuotation summary & reporting (avoid double counting when both selected)
+  const primaryIsIndoor = includeIndoor && !includeOutdoor;
+  const primaryTreatments = primaryIsIndoor ? indoorDailyRows : outdoorDailyRows;
+  const primaryTreatmentsSubtotal = primaryIsIndoor ? indoorDailyNet : outdoorDailyNet;
+  const primaryAdditional = primaryIsIndoor ? indoorWeeklyRows : outdoorWeeklyRows;
+  const primaryAdditionalSubtotal = primaryIsIndoor ? indoorWeeklyNet : outdoorWeeklyNet;
 
-        if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
-          discountPctNum = 100;
-          discountAmount = gross;
-        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-          discountPctNum = Number(item.outdoorDiscountPercent);
-          discountAmount = Math.round((gross * discountPctNum) / 100);
-        } else if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
-          discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
-          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
-          const fixedVal = Number(item.fixedDiscountAmount);
-          discountAmount = Math.min(gross, fixedVal * sessionsNum);
-          discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-        } else if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-          discountPctNum = Number(item.defaultDiscountPercent);
-          discountAmount = Math.round((gross * discountPctNum) / 100);
-        } else {
-          const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
-          discountAmount = Math.round((gross * pctNum) / 100);
-        }
-
-        const totalCost = Math.max(0, gross - discountAmount);
-
-        return {
-          ...item,
-          selected: true,
-          sessions: newSessions,
-          discountPercent: discountPctNum,
-          discountAmount,
-          totalCost
-        };
-      } else {
-        return {
-          ...item,
-          selected: false,
-          sessions: '',
-          discountPercent: '',
-          discountAmount: 0,
-          totalCost: 0
-        };
-      }
-    }));
-  };
-
-  const filteredOutdoorPackageList = outdoorPackageList.filter(item =>
-    item.packageName.toLowerCase().includes(outdoorSearch.toLowerCase().trim())
-  );
-
-  const filteredIndoorServiceList = indoorServiceList.filter(item =>
-    item.roomType.toLowerCase().includes(indoorSearch.toLowerCase().trim())
-  );
-
-  const isAllIndoorServicesSelected = filteredIndoorServiceList.length > 0 && filteredIndoorServiceList.every(i => i.selected);
-
-  const toggleSelectAllIndoorServices = () => {
-    const targetIds = new Set(filteredIndoorServiceList.map(i => i.id));
-    const shouldSelectAll = !isAllIndoorServicesSelected;
-
-    setIndoorServiceList(prev => prev.map(item => {
-      if (!targetIds.has(item.id)) return item;
-
-      if (shouldSelectAll) {
-        const autoDays = treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 1;
-        const dailyRate = Number(item.dailyRate) || 0;
-        return {
-          ...item,
-          selected: true,
-          days: autoDays,
-          totalAmount: dailyRate * autoDays
-        };
-      } else {
-        return {
-          ...item,
-          selected: false,
-          days: '',
-          totalAmount: 0
-        };
-      }
-    }));
-  };
-
-  // Active selected items with tick
-  const activeTreatments = treatmentList.filter(item => item.selected);
-  const activeOutdoorPackages = outdoorPackageList.filter(item => item.selected);
-  const activeIndoorServices = indoorServiceList.filter(item => item.selected);
-
-  // Calculations
-  const treatmentsGrossSubtotal = activeTreatments.reduce((sum, item) => {
-    const u = Number(item.unitCost) || 0;
-    const s = item.sessions === '' ? 0 : Number(item.sessions);
-    return sum + (u * s);
-  }, 0);
-  const treatmentsTotalDiscount = activeTreatments.reduce((sum, item) => sum + (item.discountAmount || 0), 0);
-  const treatmentsSubtotal = activeTreatments.reduce((sum, item) => sum + (item.totalCost || 0), 0);
-
-  // Per Day & Full Course Detailed Calculations for Treatments
-  const numTreatmentDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 1;
-
-  const treatmentsPerDayGross = activeTreatments.reduce((sum, item) => {
-    const u = Number(item.unitCost) || 0;
-    const dailyS = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
-      ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
-      : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-    return sum + (u * dailyS);
-  }, 0);
-
-  const treatmentsPerDayDiscountAmount = activeTreatments.reduce((sum, item) => {
-    const u = Number(item.unitCost) || 0;
-    const dailyS = (patientTreatmentMode === 'outdoor' || patientTreatmentMode === '')
-      ? (item.outdoorSessions !== undefined ? item.outdoorSessions : 1)
-      : (item.indoorSessions !== undefined ? item.indoorSessions : 1);
-    const perDayGross = u * dailyS;
-
-    if (patientTreatmentMode === 'indoor' && item.isIndoorFree) {
-      return sum + perDayGross;
-    }
-    if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0) {
-      return sum + Math.round((perDayGross * Number(item.outdoorDiscountPercent)) / 100);
-    }
-    if (patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0) {
-      return sum + Math.min(perDayGross, Number(item.outdoorDiscountAmount) * dailyS);
-    }
-    if (item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0) {
-      return sum + Math.min(perDayGross, Number(item.fixedDiscountAmount) * dailyS);
-    }
-    if (item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0) {
-      return sum + Math.round((perDayGross * Number(item.defaultDiscountPercent)) / 100);
-    }
-    const discPct = item.discountPercent !== '' ? Number(item.discountPercent) : (bulkDiscountPercent !== '' ? Number(bulkDiscountPercent) : 0);
-    return sum + Math.round((perDayGross * discPct) / 100);
-  }, 0);
-
-  const treatmentsPerDaySubtotal = Math.max(0, treatmentsPerDayGross - treatmentsPerDayDiscountAmount);
-
-  const treatmentsFullTotalDiscount = showFullTreatmentCalculation
-    ? treatmentsTotalDiscount
-    : (treatmentsPerDayDiscountAmount * numTreatmentDays);
-
-  const treatmentsFullSubtotal = showFullTreatmentCalculation
-    ? treatmentsSubtotal
-    : (treatmentsPerDaySubtotal * numTreatmentDays);
-
-  // Sync outdoor package dynamic row with Individual Treatments
-  useEffect(() => {
-    const isOutdoorActive = patientTreatmentMode === 'outdoor';
-    const daysText = isOutdoorActive && treatmentDays !== '' && Number(treatmentDays) > 0 ? `${treatmentDays}-Day Package` : '...-Day Package';
-    const discountPct = treatmentsGrossSubtotal > 0 
-      ? Math.round((treatmentsTotalDiscount / treatmentsGrossSubtotal) * 100) 
-      : (bulkDiscountPercent !== '' ? Number(bulkDiscountPercent) : 0);
-
-    setOutdoorPackageList(prev => {
-      if (prev.length === 0) {
-        return [{
-          id: 'pkg-list-single',
-          catalogId: 'outdoor_package_single',
-          selected: isOutdoorActive,
-          packageName: daysText,
-          packageType: 'outdoor_package',
-          totalBaseCost: isOutdoorActive ? (treatmentsGrossSubtotal > 0 ? treatmentsGrossSubtotal : '') : '',
-          discountPercent: isOutdoorActive ? (discountPct > 0 ? discountPct : (bulkDiscountPercent !== '' ? Number(bulkDiscountPercent) : '')) : '',
-          discountAmount: isOutdoorActive ? treatmentsTotalDiscount : 0,
-          netCost: isOutdoorActive ? treatmentsSubtotal : 0,
-          description: 'Outdoor Acupuncture & Therapy Package',
-          rateNote: ''
-        }];
-      }
-      return prev.map((item, idx) => {
-        if (idx === 0 && !item.isCustom) {
-          if (isOutdoorActive) {
-            return {
-              ...item,
-              packageName: daysText,
-              totalBaseCost: treatmentsGrossSubtotal > 0 ? treatmentsGrossSubtotal : '',
-              discountPercent: discountPct > 0 ? discountPct : (bulkDiscountPercent !== '' ? bulkDiscountPercent : ''),
-              discountAmount: treatmentsTotalDiscount,
-              netCost: treatmentsSubtotal,
-              selected: true
-            };
-          } else {
-            return {
-              ...item,
-              packageName: '...-Day Package',
-              totalBaseCost: '',
-              discountPercent: '',
-              discountAmount: 0,
-              netCost: 0,
-              selected: false
-            };
-          }
-        }
-        return item;
-      });
-    });
-  }, [patientTreatmentMode, treatmentDays, treatmentsGrossSubtotal, treatmentsTotalDiscount, treatmentsSubtotal, bulkDiscountPercent]);
-
-  const foodChargeTotal = foodChargeSelected
-    ? ((foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) * (foodChargeDays === '' ? 0 : Number(foodChargeDays)))
-    : 0;
-
-  const outdoorSubtotal = activeOutdoorPackages.reduce((sum, item) => sum + (item.netCost || 0), 0);
-  const indoorRoomOnlySubtotal = activeIndoorServices.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
-  const indoorSubtotal = indoorRoomOnlySubtotal + foodChargeTotal;
-
-  const activeAdditionalTreatments = additionalTreatmentList.filter(item => item.selected);
-  const additionalTreatmentsSubtotal = activeAdditionalTreatments.reduce((sum, item) => sum + (item.totalCost || 0), 0);
-  const isAllAdditionalTreatmentsSelected = additionalTreatmentList.length > 0 && additionalTreatmentList.every(i => i.selected);
-
-  const filteredAdditionalTreatmentList = additionalTreatmentList.filter(item =>
-    item.treatmentName.toLowerCase().includes(additionalTreatmentSearch.toLowerCase().trim())
-  );
-
-  const toggleSelectAllAdditionalTreatments = () => {
-    const shouldSelect = !isAllAdditionalTreatmentsSelected;
-    setAdditionalTreatmentList(prev => prev.map(item => {
-      let newSessions = item.sessions;
-      let newDiscountPercent = item.discountPercent;
-
-      if (shouldSelect) {
-        const hasPackageDays = treatmentDays !== '' && Number(treatmentDays) > 0;
-        if (item.isRatioBased && hasPackageDays) {
-          const daysNum = Number(treatmentDays);
-          const per10 = item.sessionsPer10Days || 3;
-          newSessions = Math.round((daysNum / 10) * per10);
-        } else if (item.sessions === '' || item.sessions === 0) {
-          newSessions = 1;
-        }
-      } else {
-        newSessions = '';
-        newDiscountPercent = '';
-      }
-
-      const isIndoorFree = patientTreatmentMode === 'indoor' && Boolean(item.isIndoorFree);
-      const isOutdoorDisc = patientTreatmentMode === 'outdoor' && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0;
-      const isOutdoorAmt = patientTreatmentMode === 'outdoor' && item.outdoorDiscountAmount !== undefined && Number(item.outdoorDiscountAmount) > 0;
-      const isFixedAmt = item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0;
-
-      const unitCost = Number(item.unitCost) || 0;
-      const sessionsNum = newSessions === '' ? 0 : (Number(newSessions) || 0);
-      const gross = unitCost * sessionsNum;
-
-      let discountPctNum: number | '' = newDiscountPercent;
-      let discountAmount = 0;
-
-      if (!shouldSelect) {
-        discountPctNum = '';
-        discountAmount = 0;
-      } else if (isIndoorFree) {
-        discountPctNum = 100;
-        discountAmount = gross;
-      } else if (isOutdoorAmt) {
-        discountAmount = Math.min(gross, Number(item.outdoorDiscountAmount) * sessionsNum);
-        if (gross > 0) discountPctNum = Math.round((discountAmount / gross) * 100);
-      } else if (isOutdoorDisc) {
-        discountPctNum = Number(item.outdoorDiscountPercent);
-        discountAmount = Math.round((gross * discountPctNum) / 100);
-      } else if (isFixedAmt) {
-        const fixedVal = Number(item.fixedDiscountAmount);
-        discountAmount = Math.min(gross, fixedVal * sessionsNum);
-        discountPctNum = gross > 0 ? Math.round((discountAmount / gross) * 100) : 0;
-      } else {
-        const pctNum = discountPctNum === '' ? 0 : Number(discountPctNum);
-        discountAmount = Math.round((gross * pctNum) / 100);
-      }
-
-      const totalCost = Math.max(0, gross - discountAmount);
-
-      return {
-        ...item,
-        selected: shouldSelect,
-        sessions: newSessions,
-        discountPercent: discountPctNum,
-        discountAmount,
-        totalCost
-      };
-    }));
-  };
-
-  const indoorRoomPerDaySubtotal = activeIndoorServices.reduce((sum, item) => sum + (item.dailyRate || 0), 0);
-  const foodChargePerDaySubtotal = foodChargeSelected ? (foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) : 0;
-  const indoorPerDaySubtotal = indoorRoomPerDaySubtotal + foodChargePerDaySubtotal;
-
-  const effectiveIndoorRoomSubtotal = showFullIndoorCalculation
-    ? indoorRoomOnlySubtotal
-    : indoorRoomPerDaySubtotal;
-
-  const effectiveFoodChargeTotal = showFullIndoorCalculation
-    ? foodChargeTotal
-    : foodChargePerDaySubtotal;
-
-  const effectiveIndoorSubtotal = showFullIndoorCalculation
-    ? indoorSubtotal
-    : indoorPerDaySubtotal;
-
-  const effectiveOutdoorSubtotal = patientTreatmentMode === 'outdoor' ? 0 : outdoorSubtotal;
-  const actualAdmissionFee = (patientTreatmentMode !== 'outdoor' && includeAdmissionFee) ? Number(admissionFee || 0) : 0;
-  const grossTotal = treatmentsSubtotal + effectiveOutdoorSubtotal + effectiveIndoorSubtotal + actualAdmissionFee;
+  const indoorGross1Day = indoorDailyNet + indoorAccommodationSubtotal + actualAdmissionFee;
+  const outdoorGross1Day = outdoorDailyNet;
+  const grossTotal = includeIndoor
+    ? (includeOutdoor ? Math.max(indoorGross1Day, outdoorGross1Day) : indoorGross1Day)
+    : outdoorGross1Day;
 
   const overallDiscountAmount = Math.round((grossTotal * Number(overallDiscountPercent || 0)) / 100);
   const grandTotal = Math.max(0, grossTotal - overallDiscountAmount);
   const dueAmount = Math.max(0, grandTotal - Number(advancePaid || 0));
 
-  // Helper function to recalculate cycle payment amounts and day ranges based on cycle days ratio
-  const recalculatePhasesByDays = (phases: PaymentPhase[], totalGrand: number): PaymentPhase[] => {
-    const totalDaysSum = phases.reduce((sum, p) => sum + (p.daysOrSessions || 0), 0);
-    if (totalDaysSum <= 0 || totalGrand <= 0) {
-      return phases.map((p, idx) => ({
-        ...p,
-        amount: totalGrand > 0 ? Math.round(totalGrand / Math.max(1, phases.length)) : 0,
-        percentage: Math.round(100 / Math.max(1, phases.length))
-      }));
-    }
-
-    let runningDay = 1;
-    let accumulatedAmt = 0;
-
-    return phases.map((p, idx) => {
-      const pDays = Math.max(0, p.daysOrSessions || 0);
-      let amt = 0;
-
-      if (idx === phases.length - 1) {
-        amt = Math.max(0, totalGrand - accumulatedAmt);
-      } else {
-        amt = Math.round(totalGrand * (pDays / totalDaysSum));
-        accumulatedAmt += amt;
-      }
-
-      const startDay = runningDay;
-      const endDay = startDay + Math.max(0, pDays - 1);
-      runningDay = endDay + 1;
-
-      const pct = Math.round((amt / totalGrand) * 100);
-      const ordinal = `${idx + 1}${idx === 0 ? 'st' : idx === 1 ? 'nd' : idx === 2 ? 'rd' : 'th'}`;
-
-      const updatedTitle = pDays > 0 
-        ? `${ordinal} ${pDays}-Days Payment (Day ${startDay}–${endDay})` 
-        : p.phaseName;
-
-      return {
-        ...p,
-        phaseName: updatedTitle,
-        daysOrSessions: pDays,
-        amount: amt,
-        percentage: pct
-      };
-    });
-  };
-
-  const get4CycleDays = (totalDays: number): number[] => {
-    if (totalDays <= 0) return [7, 8, 7, 8];
-    if (totalDays < 4) {
-      const res = [1, 0, 0, 0];
-      for (let i = 0; i < totalDays; i++) res[i] = 1;
-      return res;
-    }
-    const base = Math.floor(totalDays / 4);
-    const rem = totalDays % 4;
-    const cycleDays = [base, base, base, base];
-    if (rem === 1) {
-      cycleDays[3] += 1;
-    } else if (rem === 2) {
-      cycleDays[1] += 1;
-      cycleDays[3] += 1;
-    } else if (rem === 3) {
-      cycleDays[1] += 1;
-      cycleDays[2] += 1;
-      cycleDays[3] += 1;
-    }
-    return cycleDays;
-  };
-
-  // Auto-recalculate Payment Phases when grandTotal, paymentPlanMode, or treatmentDays changes
-  useEffect(() => {
-    if (grandTotal <= 0) {
-      setPaymentPhases([]);
-      return;
-    }
-
-    const totalDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 30;
-
-    if (paymentPlanMode === '4_cycles') {
-      const cycleDaysArr = get4CycleDays(totalDays);
-      const phases: PaymentPhase[] = [];
-      let runningDay = 1;
-
-      for (let i = 0; i < cycleDaysArr.length; i++) {
-        const cDays = cycleDaysArr[i];
-        const startDay = runningDay;
-        const endDay = startDay + Math.max(0, cDays - 1);
-        runningDay = endDay + 1;
-
-        const ordinal = `${i + 1}${i === 0 ? 'st' : i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'}`;
-        phases.push({
-          id: `phase-4c-${i + 1}`,
-          phaseName: `${ordinal} ${cDays}-Days Payment (Day ${startDay}–${endDay})`,
-          daysOrSessions: cDays,
-          amount: 0,
-          percentage: 0,
-          notes: i === 0 ? 'Initial course starting installment' : `Cycle ${i + 1} treatment cycle payment`
-        });
-      }
-      setPaymentPhases(recalculatePhasesByDays(phases, grandTotal));
-    } else if (paymentPlanMode === '10_day_cycles') {
-      const numPhases = Math.max(1, Math.ceil(totalDays / 10));
-      const phases: PaymentPhase[] = [];
-      for (let i = 0; i < numPhases; i++) {
-        const startDay = (i * 10) + 1;
-        const endDay = Math.min((i + 1) * 10, totalDays);
-        const cycleDays = endDay - startDay + 1;
-
-        phases.push({
-          id: `phase-10d-${i + 1}`,
-          phaseName: i === 0 
-            ? `1st ${cycleDays}-Days Payment (Day ${startDay}–${endDay})` 
-            : `${i + 1}${i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'} ${cycleDays}-Days Payment (Day ${startDay}–${endDay})`,
-          daysOrSessions: cycleDays,
-          amount: 0,
-          percentage: 0,
-          notes: i === 0 ? 'Initial course starting installment' : `Cycle ${i + 1} treatment cycle payment`
-        });
-      }
-      setPaymentPhases(recalculatePhasesByDays(phases, grandTotal));
-    } else if (paymentPlanMode === '15_day_cycles') {
-      const numPhases = Math.max(1, Math.ceil(totalDays / 15));
-      const phases: PaymentPhase[] = [];
-      for (let i = 0; i < numPhases; i++) {
-        const startDay = (i * 15) + 1;
-        const endDay = Math.min((i + 1) * 15, totalDays);
-        const cycleDays = endDay - startDay + 1;
-
-        phases.push({
-          id: `phase-15d-${i + 1}`,
-          phaseName: i === 0 
-            ? `1st ${cycleDays}-Days Payment (Day ${startDay}–${endDay})` 
-            : `${i + 1}${i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'} ${cycleDays}-Days Payment (Day ${startDay}–${endDay})`,
-          daysOrSessions: cycleDays,
-          amount: 0,
-          percentage: 0,
-          notes: i === 0 ? '1st half treatment installment' : '2nd half treatment installment'
-        });
-      }
-      setPaymentPhases(recalculatePhasesByDays(phases, grandTotal));
-    } else if (paymentPlanMode === 'full') {
-      setPaymentPhases([{
-        id: 'phase-full-1',
-        phaseName: '1-Time Full Payment',
-        daysOrSessions: totalDays,
-        amount: grandTotal,
-        percentage: 100,
-        notes: 'Full payment upon enrollment'
-      }]);
-    } else if (paymentPlanMode === 'custom_phases') {
-      if (paymentPhases.length === 0) {
-        const initialPhases: PaymentPhase[] = [
-          {
-            id: `phase-custom-1`,
-            phaseName: '1st Cycle Payment',
-            daysOrSessions: Math.ceil(totalDays / 2),
-            amount: 0,
-            percentage: 50,
-            notes: 'Advance at course start'
-          },
-          {
-            id: `phase-custom-2`,
-            phaseName: '2nd Cycle Payment',
-            daysOrSessions: Math.floor(totalDays / 2),
-            amount: 0,
-            percentage: 50,
-            notes: 'Remaining balance midway'
-          }
-        ];
-        setPaymentPhases(recalculatePhasesByDays(initialPhases, grandTotal));
-      } else {
-        setPaymentPhases(prev => recalculatePhasesByDays(prev, grandTotal));
-      }
-    }
-  }, [grandTotal, paymentPlanMode, treatmentDays]);
-
-  const updatePaymentPhase = (id: string, fields: Partial<PaymentPhase>) => {
-    setPaymentPhases(prev => {
-      const targetIdx = prev.findIndex(p => p.id === id);
-      if (targetIdx === -1) return prev;
-
-      // When daysOrSessions is changed, auto-distribute remaining course days among other cycles
-      if (fields.daysOrSessions !== undefined) {
-        const numCycles = prev.length;
-        const totalCourseDays = (treatmentDays !== '' && Number(treatmentDays) > 0)
-          ? Number(treatmentDays)
-          : (prev.reduce((s, p) => s + (p.daysOrSessions || 0), 0) || 30);
-
-        if (numCycles <= 1) {
-          const updated = prev.map(p => p.id === id ? { ...p, ...fields, daysOrSessions: totalCourseDays } : p);
-          return recalculatePhasesByDays(updated, grandTotal);
-        }
-
-        const newDaysForTarget = Math.max(0, Math.min(totalCourseDays, fields.daysOrSessions));
-        const remainingDays = Math.max(0, totalCourseDays - newDaysForTarget);
-        const otherCyclesCount = numCycles - 1;
-
-        const baseOtherDays = Math.floor(remainingDays / otherCyclesCount);
-        let remOtherDays = remainingDays % otherCyclesCount;
-
-        const updatedWithDays = prev.map((p) => {
-          if (p.id === id) {
-            return { ...p, ...fields, daysOrSessions: newDaysForTarget };
-          } else {
-            let bonus = 0;
-            if (remOtherDays > 0) {
-              bonus = 1;
-              remOtherDays--;
-            }
-            return {
-              ...p,
-              daysOrSessions: baseOtherDays + bonus
-            };
-          }
-        });
-
-        return recalculatePhasesByDays(updatedWithDays, grandTotal);
-      }
-
-      if (fields.amount !== undefined) {
-        const isCleared = fields.amount === '';
-        const newAmt = isCleared ? '' : Math.max(0, Number(fields.amount));
-        const numericAmt = isCleared ? 0 : Number(newAmt);
-        const numCycles = prev.length;
-
-        if (numCycles <= 1) {
-          return prev.map(p => p.id === id ? {
-            ...p,
-            ...fields,
-            amount: newAmt,
-            percentage: grandTotal > 0 ? Math.round((numericAmt / grandTotal) * 100) : 0
-          } : p);
-        }
-
-        const updated = prev.map((p, idx) => {
-          if (idx === targetIdx) {
-            const pct = grandTotal > 0 ? Math.round((numericAmt / grandTotal) * 100) : 0;
-            return { ...p, ...fields, amount: newAmt, percentage: pct };
-          }
-          return { ...p };
-        });
-
-        if (targetIdx < numCycles - 1) {
-          let sumFixed = 0;
-          for (let i = 0; i <= targetIdx; i++) {
-            const a = updated[i].amount;
-            sumFixed += (a === '' ? 0 : Number(a));
-          }
-          const remTotal = Math.max(0, grandTotal - sumFixed);
-          const subsequentCount = numCycles - 1 - targetIdx;
-          const base = Math.floor(remTotal / subsequentCount);
-          const rem = remTotal - (base * subsequentCount);
-
-          for (let i = targetIdx + 1; i < numCycles; i++) {
-            const amt = base + (i === targetIdx + 1 ? rem : 0);
-            const pct = grandTotal > 0 ? Math.round((amt / grandTotal) * 100) : 0;
-            updated[i] = {
-              ...updated[i],
-              amount: amt,
-              percentage: pct
-            };
-          }
-        } else {
-          const remTotal = Math.max(0, grandTotal - numericAmt);
-          const priorCount = numCycles - 1;
-          const base = Math.floor(remTotal / priorCount);
-          const rem = remTotal - (base * priorCount);
-
-          for (let i = 0; i < targetIdx; i++) {
-            const amt = base + (i === 0 ? rem : 0);
-            const pct = grandTotal > 0 ? Math.round((amt / grandTotal) * 100) : 0;
-            updated[i] = {
-              ...updated[i],
-              amount: amt,
-              percentage: pct
-            };
-          }
-        }
-
-        return updated;
-      } else {
-        return prev.map(p => p.id === id ? { ...p, ...fields } : p);
-      }
-    });
-  };
-
-  const distributeDaysEqually = (totalDays: number, count: number): number[] => {
-    if (count <= 0) return [];
-    if (totalDays <= 0) return new Array(count).fill(0);
-    const base = Math.floor(totalDays / count);
-    const rem = totalDays % count;
-    const daysArr = new Array(count).fill(base);
-    for (let i = 0; i < rem; i++) {
-      daysArr[count - 1 - i] += 1;
-    }
-    return daysArr;
-  };
-
-  const addCustomPhase = () => {
-    setPaymentPhases(prev => {
-      const newCount = prev.length + 1;
-      const totalCourseDays = (treatmentDays !== '' && Number(treatmentDays) > 0)
-        ? Number(treatmentDays)
-        : (prev.reduce((s, p) => s + (p.daysOrSessions || 0), 0) || 30);
-
-      const splitDaysArr = distributeDaysEqually(totalCourseDays, newCount);
-
-      const updatedPhases: PaymentPhase[] = [];
-      for (let i = 0; i < newCount; i++) {
-        const nextNum = i + 1;
-        const days = splitDaysArr[i];
-        if (i < prev.length) {
-          updatedPhases.push({
-            ...prev[i],
-            daysOrSessions: days,
-          });
-        } else {
-          updatedPhases.push({
-            id: `phase-custom-${Date.now()}`,
-            phaseName: `${nextNum}${nextNum === 1 ? 'st' : nextNum === 2 ? 'nd' : nextNum === 3 ? 'rd' : 'th'} Payment Cycle`,
-            daysOrSessions: days,
-            amount: 0,
-            percentage: 0,
-            notes: 'Custom installment cycle'
-          });
-        }
-      }
-
-      return recalculatePhasesByDays(updatedPhases, grandTotal);
-    });
-  };
-
-  const removeCustomPhase = (id: string) => {
-    setPaymentPhases(prev => {
-      const filtered = prev.filter(p => p.id !== id);
-      if (filtered.length === 0) return [];
-
-      const totalCourseDays = (treatmentDays !== '' && Number(treatmentDays) > 0)
-        ? Number(treatmentDays)
-        : (prev.reduce((s, p) => s + (p.daysOrSessions || 0), 0) || 30);
-
-      const splitDaysArr = distributeDaysEqually(totalCourseDays, filtered.length);
-
-      const updatedPhases = filtered.map((p, idx) => ({
-        ...p,
-        daysOrSessions: splitDaysArr[idx]
-      }));
-
-      return recalculatePhasesByDays(updatedPhases, grandTotal);
-    });
-  };
-
-  // Build Invoice Object
   const generateQuotationData = (): InvoiceQuotation => {
     const dateStr = new Date().toISOString().split('T')[0];
     const validUntilDate = new Date();
     validUntilDate.setDate(validUntilDate.getDate() + 7);
 
-    const formattedTreatments: IndividualTreatment[] = activeTreatments.map(t => ({
-      id: t.id,
-      treatmentName: t.treatmentName,
-      unitCost: t.unitCost,
-      sessions: t.sessions === '' ? 1 : Number(t.sessions),
-      discountPercent: t.discountPercent === '' ? 0 : Number(t.discountPercent),
-      discountAmount: t.discountAmount,
-      totalCost: t.totalCost
-    }));
+    const formattedIndoorServices: IndoorService[] = includeIndoor
+      ? activeIndoorServices.map(i => ({
+          id: i.id,
+          roomType: i.roomType,
+          dailyRate: i.dailyRate,
+          days: 1,
+          totalAmount: i.dailyRate,
+          remarks: i.remarks || ''
+        }))
+      : [];
 
-    const formattedOutdoorPackages: OutdoorPackage[] = activeOutdoorPackages.map(p => ({
-      id: p.id,
-      packageType: p.packageType || 'custom',
-      packageName: p.packageName,
-      totalBaseCost: p.totalBaseCost,
-      discountPercent: p.discountPercent === '' ? 0 : Number(p.discountPercent),
-      discountAmount: p.discountAmount,
-      netCost: p.netCost,
-      description: p.description || ''
-    }));
-
-    const formattedIndoorServices: IndoorService[] = activeIndoorServices.map(i => {
-      const iDays = showFullIndoorCalculation ? (i.days === '' ? 1 : Number(i.days)) : 1;
-      const iTotal = showFullIndoorCalculation ? (i.totalAmount || 0) : (i.dailyRate || 0);
-      return {
-        id: i.id,
-        roomType: i.roomType,
-        dailyRate: i.dailyRate,
-        days: iDays,
-        totalAmount: iTotal,
-        remarks: i.remarks || ''
-      };
-    });
-
-    const formattedAdditionalTreatments: AdditionalTreatment[] = activeAdditionalTreatments.map(a => ({
-      id: a.id,
-      treatmentName: a.treatmentName,
-      unitCost: a.unitCost,
-      sessions: a.sessions === '' ? 1 : Number(a.sessions),
-      discountPercent: a.discountPercent === '' ? 0 : Number(a.discountPercent),
-      discountAmount: a.discountAmount,
-      totalCost: a.totalCost,
-      isRatioBased: a.isRatioBased,
-      sessionsPer10Days: a.sessionsPer10Days,
-      description: a.description || ''
-    }));
-
-    if (foodChargeSelected) {
-      const fcDays = showFullIndoorCalculation ? (foodChargeDays === '' ? 1 : Number(foodChargeDays)) : 1;
-      const fcRate = foodChargePerDay === '' ? 0 : Number(foodChargePerDay);
-      const fcTotal = showFullIndoorCalculation ? (foodChargeTotal || 0) : fcRate;
-      if (fcTotal > 0 || fcRate > 0) {
-        formattedIndoorServices.push({
-          id: 'food-charge-3x',
-          roomType: 'Food Charge 3 Times',
-          dailyRate: fcRate,
-          days: fcDays,
-          totalAmount: fcTotal,
-          remarks: '3 Times Daily Meals'
-        });
-      }
+    if (includeIndoor && foodChargeSelected && foodCharge1DayTotal > 0) {
+      formattedIndoorServices.push({
+        id: 'food-charge-3x',
+        roomType: 'Food Charge 3 Times',
+        dailyRate: foodCharge1DayTotal,
+        days: 1,
+        totalAmount: foodCharge1DayTotal,
+        remarks: '3 Times Daily Meals'
+      });
     }
 
-    // Calculate existing visit count for this patient
     const pPhone = selectedPatient?.phone || '01700000000';
-    const existingCount = quotations.filter(q => 
-      (q.patientPhone && q.patientPhone !== '01700000000' && q.patientPhone === pPhone) || 
-      (q.patientName.toLowerCase() === selectedPatient?.name.toLowerCase())
+    const existingCount = quotations.filter(
+      q =>
+        (q.patientPhone && q.patientPhone !== '01700000000' && q.patientPhone === pPhone) ||
+        q.patientName.toLowerCase() === (selectedPatient?.name || '').toLowerCase()
     ).length;
 
-    const nextVisitNumber = editingQuotation ? (editingQuotation.visitNumber || 1) : (existingCount + 1);
+    const nextVisitNumber = editingQuotation ? (editingQuotation.visitNumber || 1) : existingCount + 1;
     const getOrdinalSuffix = (n: number) => {
-      const s = ["th", "st", "nd", "rd"];
+      const s = ['th', 'st', 'nd', 'rd'];
       const v = n % 100;
       return n + (s[(v - 20) % 10] || s[v] || s[0]);
     };
-    const visitLabel = editingQuotation ? (editingQuotation.visitLabel || `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`) : `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`;
+    const visitLabel = editingQuotation
+      ? editingQuotation.visitLabel || `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`
+      : `${getOrdinalSuffix(nextVisitNumber).toUpperCase()} INVOICE`;
+
+    const patientTreatmentMode: 'outdoor' | 'indoor' | 'both' =
+      includeOutdoor && includeIndoor ? 'both' : includeIndoor ? 'indoor' : 'outdoor';
+
+    const safeAdvanceDays = Math.max(1, Number(advanceCourseDays || 10) || 10);
+    const outDiscNum = outdoorDiscountPercent === '' ? 0 : Number(outdoorDiscountPercent);
+    const inDiscNum = indoorDiscountPercent === '' ? 0 : Number(indoorDiscountPercent);
 
     return {
       id: editingQuotation ? editingQuotation.id : draftInvoiceIdRef.current,
@@ -3023,26 +1629,30 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       patientPhone: pPhone,
       patientAge: selectedPatient?.age,
       patientGender: selectedPatient?.gender,
+      patientAddress: patientAddress.trim(),
       doctorName: billingDoctor.trim() || currentUser?.name || selectedPatient?.doctorName || 'Senior Consultant',
       createdDate: editingQuotation ? editingQuotation.createdDate : dateStr,
       validUntil: validUntilDate.toISOString().split('T')[0],
       visitNumber: nextVisitNumber,
-      visitLabel: visitLabel,
-      patientTreatmentMode: patientTreatmentMode,
+      visitLabel,
+      patientTreatmentMode,
+      advanceCourseDays: safeAdvanceDays,
+      outdoorDiscountPercent: outDiscNum,
+      indoorDiscountPercent: inDiscNum,
 
-      treatments: formattedTreatments,
-      treatmentsSubtotal,
+      treatments: primaryTreatments,
+      treatmentsSubtotal: primaryTreatmentsSubtotal,
 
-      outdoorPackages: formattedOutdoorPackages,
-      outdoorSubtotal,
+      outdoorPackages: [],
+      outdoorSubtotal: 0,
 
       indoorServices: formattedIndoorServices,
-      indoorSubtotal: effectiveIndoorSubtotal,
+      indoorSubtotal: indoorAccommodationSubtotal,
 
-      additionalTreatments: formattedAdditionalTreatments,
-      additionalTreatmentsSubtotal,
+      additionalTreatments: primaryAdditional,
+      additionalTreatmentsSubtotal: primaryAdditionalSubtotal,
 
-      admissionFee: Number(admissionFee || 0),
+      admissionFee: actualAdmissionFee,
       consultationFee: 0,
       investigationFee: 0,
       overallDiscountPercent: Number(overallDiscountPercent || 0),
@@ -3053,38 +1663,51 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
       advancePaid: Number(advancePaid || 0),
       dueAmount,
 
-      paymentPlanMode,
-      paymentPhases,
-
+      paymentPlanMode: 'full',
+      paymentPhases: [],
       paymentStatus,
       notes,
       createdBy: currentUser?.name ? `${currentUser.name} (${currentUser.role})` : 'Billing Counter Staff',
-      packageComparison: savedComparisonSnapshot || {
-        showOutdoor: patientTreatmentMode === 'outdoor' || patientTreatmentMode === '',
-        showIndoor: patientTreatmentMode === 'indoor' || patientTreatmentMode === '',
-        foodChargeSelected,
+      packageComparison: {
+        showOutdoor: includeOutdoor,
+        showIndoor: includeIndoor,
+        patientAddress: patientAddress.trim(),
+        advanceCourseDays: safeAdvanceDays,
+        outdoorDiscountPercent: outDiscNum,
+        indoorDiscountPercent: inDiscNum,
+        foodChargeSelected: includeIndoor && foodChargeSelected,
         foodChargePerDay: Number(foodChargePerDay || 500),
-        includeAdmissionFee,
+        includeAdmissionFee: includeIndoor && includeAdmissionFee,
         admissionFee: Number(admissionFee || 1000),
+        outdoorTreatments: includeOutdoor ? outdoorDailyRows : [],
+        indoorTreatments: includeIndoor ? indoorDailyRows : [],
+        outdoorAdditionalTreatments: includeOutdoor ? outdoorWeeklyRows : [],
+        indoorAdditionalTreatments: includeIndoor ? indoorWeeklyRows : [],
         comparedAt: new Date().toISOString()
       }
     };
   };
 
-  const handleSave = async () => {
-    if (isSaving) return;
+  const validateBeforeSaveOrPrint = (): boolean => {
     if (!selectedPatient) {
       alert('Please select or search a patient first!');
-      return;
+      return false;
     }
+    if (!includeOutdoor && !includeIndoor) {
+      alert('Please select Outdoor and/or Indoor mode first!');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSave = async () => {
+    if (isSaving || !validateBeforeSaveOrPrint()) return;
     setSaveError(null);
     setIsSaving(true);
     try {
       const quot = generateQuotationData();
       await onSaveQuotation(quot);
-      if (editingQuotation && onCancelEdit) {
-        onCancelEdit();
-      }
+      if (editingQuotation && onCancelEdit) onCancelEdit();
       clearFormAndDraftState();
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 3000);
@@ -3096,19 +1719,13 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   };
 
   const handlePrint = async () => {
-    if (isSaving) return;
-    if (!selectedPatient) {
-      alert('Please select a patient first!');
-      return;
-    }
+    if (isSaving || !validateBeforeSaveOrPrint()) return;
     setSaveError(null);
     setIsSaving(true);
     try {
       const quot = generateQuotationData();
       const savedQuotation = (await onSaveQuotation(quot)) || quot;
-      if (editingQuotation && onCancelEdit) {
-        onCancelEdit();
-      }
+      if (editingQuotation && onCancelEdit) onCancelEdit();
       clearFormAndDraftState();
       onPreviewPrint(savedQuotation);
     } catch (err: any) {
@@ -3118,161 +1735,76 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }
   };
 
-  // Called when user clicks "Print Comparison" inside PackageComparisonModal
-  // Automatically saves 1st/current quotation before triggering print
-  const handleSaveBeforeComparisonPrint = async () => {
-    if (isSaving) return false;
-    let targetPatient = selectedPatient;
-    if (!targetPatient) {
-      const fallbackName = phoneSearch ? `Patient (${phoneSearch})` : 'Walk-in Patient';
-      const fallbackPhone = phoneSearch || '01700000000';
-      targetPatient = {
-        id: makeUniqueId(),
-        name: fallbackName,
-        phone: fallbackPhone,
-        status: 'Quotation Created',
-        createdAt: new Date().toISOString()
-      };
-      setSelectedPatient(targetPatient);
-    }
-
-    const quot = generateQuotationData();
-    if (!quot.patientName) {
-      quot.patientName = targetPatient.name || 'Walk-in Patient';
-    }
-    if (!quot.patientPhone) {
-      quot.patientPhone = targetPatient.phone || '';
-    }
-
-    // Reuse ID if already saved in current comparison session to avoid duplicate invoices
-    if (!editingQuotation && activeComparisonQuotationId) {
-      quot.id = activeComparisonQuotationId;
-    } else if (!editingQuotation) {
-      setActiveComparisonQuotationId(quot.id);
-    }
-
-    setSaveError(null);
-    setIsSaving(true);
-    try {
-      await onSaveQuotation(quot);
-      setIsSaved(true);
-      setTimeout(() => setIsSaved(false), 3000);
-      return true;
-    } catch (err: any) {
-      setSaveError(err?.message || 'Failed to save quotation before printing.');
-      return false;
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Action: Return back to Post Consultation tab
   const handleBackToPostConsultation = async () => {
-    let targetPatient = selectedPatient;
-    if (targetPatient) {
+    if (selectedPatient) {
       const updated: Patient = {
-        ...targetPatient,
+        ...selectedPatient,
         quotationCreated: true,
-        status: targetPatient.status === 'Completed' ? 'Completed' : 'Quotation Created'
+        status: selectedPatient.status === 'Completed' ? 'Completed' : 'Quotation Created'
       };
-      if (onUpdatePatient) {
-        onUpdatePatient(updated);
-      }
-      addOrUpdatePatientApi(updated).catch(err => {
-        console.error('Failed to update patient quotation flag in background:', err);
-      });
+      if (onUpdatePatient) onUpdatePatient(updated);
+      addOrUpdatePatientApi(updated).catch(() => {});
     }
-
-    // Auto-save quotation draft if there are selected treatments so quotation is recorded
     try {
-      const hasSelectedTreatments = treatmentList.some(t => t.selected);
-      if (hasSelectedTreatments) {
+      if (treatmentList.some(t => t.selected) && (includeOutdoor || includeIndoor)) {
         const quot = generateQuotationData();
-        if (targetPatient) {
-          quot.patientName = quot.patientName || targetPatient.name || 'Patient';
-          quot.patientPhone = quot.patientPhone || targetPatient.phone || '';
-          quot.patientId = targetPatient.id;
-        }
         await onSaveQuotation(quot);
       }
-    } catch (e) {
-      console.warn('Silent save before returning to post consultation:', e);
-    }
-
-    setIsCompareModalOpen(false);
-    if (onBackToPostConsultation) {
-      onBackToPostConsultation();
-    }
+    } catch {}
+    if (onBackToPostConsultation) onBackToPostConsultation();
   };
 
-  return (
-    <>
-      <div className="max-w-7xl mx-auto w-full space-y-8 print:hidden">
+  const bothModesActive = includeOutdoor && includeIndoor;
 
-      {/* Editing Quotation Notification Banner */}
+  return (
+    <div className="max-w-7xl mx-auto w-full space-y-6 print:hidden">
+      {/* Editing Notification Banner */}
       {editingQuotation && (
-        <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-amber-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center font-bold text-white shrink-0 shadow-xs">
-              <Sparkles className="w-5 h-5 text-amber-100" />
+        <div className="bg-amber-600 text-white rounded-2xl p-4 sm:p-5 shadow-md border border-amber-500 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-black uppercase tracking-wider bg-black/25 px-2.5 py-0.5 rounded-md">
+                Editing Mode
+              </span>
+              <span className="font-mono text-xs font-bold text-amber-100">{editingQuotation.quotationNumber}</span>
             </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-black uppercase tracking-wider bg-black/25 px-2.5 py-0.5 rounded-full">
-                  Editing Mode
-                </span>
-                <span className="font-mono text-xs font-bold text-amber-100">
-                  {editingQuotation.quotationNumber}
-                </span>
-                {editingQuotation.visitLabel && (
-                  <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">
-                    {editingQuotation.visitLabel}
-                  </span>
-                )}
-              </div>
-              <h3 className="text-base font-extrabold text-white mt-0.5">
-                Editing Invoice for {editingQuotation.patientName} ({editingQuotation.patientPhone})
-              </h3>
-              <p className="text-xs text-amber-100 font-medium">
-                Make your modifications below. Clicking "Save Quotation" or "Preview & Print" will update this invoice.
-              </p>
-            </div>
+            <h3 className="text-base font-extrabold text-white mt-1">
+              Editing Invoice for {editingQuotation.patientName} ({editingQuotation.patientPhone})
+            </h3>
           </div>
           {onCancelEdit && (
             <button
               type="button"
               onClick={onCancelEdit}
-              className="bg-white/90 hover:bg-white text-slate-900 text-xs font-bold px-3.5 py-2 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0"
+              className="bg-white text-slate-900 text-xs font-bold px-3.5 py-2 rounded-xl shadow cursor-pointer shrink-0"
             >
               Cancel Edit
             </button>
           )}
         </div>
       )}
-      
-      {/* Patient Selection Header Banner */}
+
+      {/* Step 1: Patient Selection */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-        
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
           <div>
-            <div className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-800 text-xs px-2.5 py-0.5 rounded-full font-bold">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Step 1: Select Patient</span>
+            <div className="inline-flex items-center gap-1.5 text-emerald-700 text-xs font-bold uppercase tracking-wider">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Step 1: Select Patient (1-Day Quotation Counseling)</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-1">
               <h2 className="text-2xl font-black text-slate-900">
-                {editingQuotation ? 'Update Invoice & Quotation' : 'Invoice Quotation Builder'}
+                {editingQuotation ? 'Update 1-Day Quotation' : 'Invoice Quotation Builder'}
               </h2>
               {isDraftRestored && !editingQuotation && (
-                <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200">
+                <span className="text-[11px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md border border-amber-200">
                   Draft Restored
                 </span>
               )}
               <button
                 type="button"
                 onClick={handleResetDraft}
-                title="Clear form inputs"
-                className="text-xs font-bold text-slate-600 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 px-2.5 py-1 rounded-lg border border-slate-200 transition-colors ml-1 cursor-pointer"
+                className="text-xs font-bold text-slate-600 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 px-2.5 py-1 rounded-lg border border-slate-200 transition-colors cursor-pointer"
               >
                 {editingQuotation ? 'Reset Form' : 'Clear Form'}
               </button>
@@ -3280,8 +1812,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 <button
                   type="button"
                   onClick={handleBackToPostConsultation}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-lg border border-blue-200 transition-all shadow-2xs cursor-pointer active:scale-95 ml-1"
-                  title="Return to Post Consultation tab"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-lg border border-blue-200 transition-all cursor-pointer"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>Back to Post Consultation</span>
@@ -3290,9 +1821,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             </div>
           </div>
 
-          {/* Quick Phone Search Form with Multi-Patient Dropdown & Date Scope Toggle */}
+          {/* Search Form */}
           <div className="relative w-full md:w-auto flex flex-col items-end gap-1.5">
-            {/* Scope Selector: Today vs All Dates */}
             <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200">
               <button
                 type="button"
@@ -3300,14 +1830,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   setSearchDateScope('today');
                   if (phoneSearch.trim()) handlePatientSearchChange(phoneSearch, 'today');
                 }}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                  searchDateScope === 'today'
-                    ? 'bg-emerald-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  searchDateScope === 'today' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
-                title={`Search only today's appointments (${getTodayDateStr()})`}
               >
-                <span>📅 Today</span>
+                Today
               </button>
               <button
                 type="button"
@@ -3315,14 +1842,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   setSearchDateScope('all');
                   if (phoneSearch.trim()) handlePatientSearchChange(phoneSearch, 'all');
                 }}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                  searchDateScope === 'all'
-                    ? 'bg-emerald-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  searchDateScope === 'all' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
-                title="Search across all dates & past appointments"
               >
-                <span>🌐 All Dates</span>
+                All Dates
               </button>
             </div>
 
@@ -3330,13 +1854,11 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
               <div className="relative flex-1 md:w-72">
                 <input
                   type="text"
-                  placeholder={searchDateScope === 'today' ? "Search today's patient by mobile/name/serial..." : "Search all patients by mobile/name/serial..."}
+                  placeholder={searchDateScope === 'today' ? "Search today's patient..." : 'Search all patients...'}
                   value={phoneSearch}
                   onChange={(e) => handlePatientSearchChange(e.target.value)}
                   onFocus={() => {
-                    if (phoneSearch.trim().length > 0 && matchingPatients.length > 0) {
-                      setIsPatientDropdownOpen(true);
-                    }
+                    if (phoneSearch.trim().length > 0 && matchingPatients.length > 0) setIsPatientDropdownOpen(true);
                   }}
                   className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
                 />
@@ -3360,139 +1882,51 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 disabled={isSearchingLive}
                 className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-75 text-white text-xs font-bold px-4 py-2 rounded-xl shadow transition-all cursor-pointer flex items-center gap-1 shrink-0"
               >
-                {isSearchingLive ? (
-                  <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <Search className="w-3.5 h-3.5" />
-                )}
+                <Search className="w-3.5 h-3.5" />
                 <span>{isSearchingLive ? 'Searching...' : 'Search'}</span>
               </button>
             </form>
 
-            {/* Patient Selection Dropdown */}
             {isPatientDropdownOpen && (
               <div className="absolute right-0 top-full mt-2 w-full md:w-96 bg-white border border-slate-300 rounded-2xl shadow-2xl z-50 overflow-hidden">
                 <div className="bg-slate-900 text-white px-3.5 py-2.5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Users className="w-4 h-4 text-emerald-400" />
-                    <span className="text-xs font-bold">
-                      {matchingPatients.length} {searchDateScope === 'today' ? "Today's Appointment" : 'Patient'}{matchingPatients.length !== 1 ? 's' : ''} Found
-                    </span>
+                    <span className="text-xs font-bold">{matchingPatients.length} Patient(s) Found</span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setIsPatientDropdownOpen(false)}
-                    className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
-
-                {/* Search Scope Context Banner inside Dropdown */}
-                <div className="p-2.5 text-[11px] bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
-                  <span className="text-slate-600 font-medium">
-                    {searchDateScope === 'today' ? `Filtering: Today (${getTodayDateStr()})` : 'Searching: All Dates'}
-                  </span>
-                  {searchDateScope === 'today' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchDateScope('all');
-                        handlePatientSearchChange(phoneSearch, 'all');
-                      }}
-                      className="text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer"
-                    >
-                      🌐 Search All Dates
-                    </button>
+                <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                  {matchingPatients.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500">No matching patients found.</div>
+                  ) : (
+                    matchingPatients.map((pat, idx) => (
+                      <div
+                        key={pat.id ? `${pat.id}-${idx}` : `pat-${idx}`}
+                        onClick={() => handleSelectPatient(pat)}
+                        className={`p-3 cursor-pointer hover:bg-emerald-50 flex items-center justify-between gap-2 ${
+                          selectedPatient?.id === pat.id ? 'bg-emerald-50 border-l-4 border-emerald-600' : ''
+                        }`}
+                      >
+                        <div className="text-xs">
+                          <div className="font-bold text-slate-900">
+                            {pat.name} {pat.serialNo ? <span className="font-mono text-slate-500">#{pat.serialNo}</span> : null}
+                          </div>
+                          <div className="text-[11px] text-slate-600">
+                            {pat.phone} • {pat.doctorName || 'Doctor'} {pat.appointmentDate ? `• ${pat.appointmentDate}` : ''}
+                          </div>
+                        </div>
+                        <span className="text-[11px] font-bold text-emerald-700">Select</span>
+                      </div>
+                    ))
                   )}
                 </div>
-
-                {matchingPatients.length === 0 ? (
-                  <div className="p-5 text-center space-y-2">
-                    <p className="text-xs text-slate-600 font-medium">
-                      {searchDateScope === 'today'
-                        ? `No patient found matching "${phoneSearch}" in today's list.`
-                        : `No patient found matching "${phoneSearch}".`}
-                    </p>
-                    {searchDateScope === 'today' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSearchDateScope('all');
-                          handlePatientSearchChange(phoneSearch, 'all');
-                        }}
-                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                      >
-                        🌐 Search Across All Dates
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
-                    {matchingPatients.map((pat, idx) => {
-                      const isSelected = selectedPatient?.id === pat.id;
-                      const isToday = (pat.appointmentDate || pat.createdAt?.split('T')[0]) === getTodayDateStr();
-                      return (
-                        <div
-                          key={pat.id || `pat-${idx}`}
-                          onClick={() => handleSelectPatient(pat)}
-                          className={`p-3 transition-colors cursor-pointer hover:bg-emerald-50/80 flex items-start justify-between gap-3 ${isSelected ? 'bg-emerald-50 border-l-4 border-emerald-600' : ''}`}
-                        >
-                          <div className="space-y-1 flex-1">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-bold text-slate-900 text-xs">{pat.name}</span>
-                              {pat.serialNo && (
-                                <span className="bg-slate-200 text-slate-800 text-[10px] font-mono px-1.5 py-0.2 rounded font-black">
-                                  #{pat.serialNo}
-                                </span>
-                              )}
-                              {isToday ? (
-                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.2 rounded border border-emerald-200">
-                                  Today
-                                </span>
-                              ) : pat.appointmentDate ? (
-                                <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.2 rounded font-medium">
-                                  {pat.appointmentDate}
-                                </span>
-                              ) : null}
-                              {pat.gender && (
-                                <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.2 rounded">
-                                  {pat.gender}{pat.age ? `, ${pat.age}y` : ''}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                              <span className="font-semibold text-emerald-700">📱 {pat.phone}</span>
-                              {pat.doctorName && <span className="text-slate-600">🩺 {pat.doctorName}</span>}
-                              {pat.appointmentTime && (
-                                <span className="text-slate-500">⏰ {pat.appointmentTime}</span>
-                              )}
-                            </div>
-                            {(pat.notes || pat.remark) && (
-                              <p className="text-[10px] text-slate-500 italic line-clamp-1">
-                                📝 {pat.notes || pat.remark}
-                              </p>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectPatient(pat);
-                            }}
-                            className={`shrink-0 text-xs font-bold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
-                              isSelected
-                                ? 'bg-emerald-600 text-white border-emerald-600'
-                                : 'bg-white hover:bg-emerald-600 hover:text-white text-emerald-700 border-emerald-300'
-                            }`}
-                          >
-                            {isSelected ? '✓ Selected' : 'Select'}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -3500,8 +1934,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
 
         {/* Selected Patient Card */}
         {selectedPatient ? (
-          <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-inner flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="space-y-1">
+          <div className="bg-slate-900 text-white rounded-2xl p-5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div className="space-y-1.5 flex-1">
               <div className="flex items-center gap-2">
                 <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider">Active Patient Selected</p>
                 {selectedPatient.serialNo && (
@@ -3522,44 +1956,36 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                 <span className="font-bold text-emerald-300">Mobile: {selectedPatient.phone}</span>
                 {selectedPatient.age && <span>• Age: {selectedPatient.age} Yrs</span>}
                 {selectedPatient.appointmentDate && (
-                  <span className="text-slate-400">• Appt: {selectedPatient.appointmentDate} {selectedPatient.appointmentTime || ''}</span>
+                  <span className="text-slate-400">• Appt: {selectedPatient.appointmentDate}</span>
                 )}
               </p>
-              <div className="flex items-center gap-2 pt-1">
-                <Stethoscope className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span className="text-xs text-slate-300 font-medium">Consulting Doctor:</span>
-                <span className="bg-slate-950 text-emerald-300 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs font-bold shadow-2xs">
-                  {billingDoctor || 'Hospital System Admin'}
-                </span>
-              </div>
-
-              {/* Show multiple appointments badge if same phone has multiple appointments */}
-              {patients.filter(p => p.phone === selectedPatient.phone).length > 1 && (
-                <div className="pt-2 flex items-center gap-2">
-                  <span className="text-[11px] bg-amber-950 text-amber-300 border border-amber-800 px-2 py-0.5 rounded-md flex items-center gap-1 font-semibold">
-                    <Users className="w-3 h-3 text-amber-400" />
-                    {patients.filter(p => p.phone === selectedPatient.phone).length} appointments registered with this mobile
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <div className="flex items-center gap-1.5">
+                  <Stethoscope className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="text-xs text-slate-300">Consulting Doctor:</span>
+                  <span className="bg-slate-950 text-emerald-300 border border-slate-700 rounded-lg px-2.5 py-0.5 text-xs font-bold">
+                    {billingDoctor || 'Senior Consultant'}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const allForPhone = patients.filter(p => p.phone === selectedPatient.phone);
-                      setMatchingPatients(allForPhone);
-                      setIsPatientDropdownOpen(true);
-                    }}
-                    className="text-[11px] text-emerald-300 hover:text-emerald-200 underline font-bold cursor-pointer"
-                  >
-                    Switch Patient / Appointment
-                  </button>
                 </div>
-              )}
+                <div className="flex items-center gap-1.5 flex-1 min-w-[220px]">
+                  <span className="text-xs text-slate-300 shrink-0">Address:</span>
+                  <input
+                    type="text"
+                    placeholder="Enter patient address for print..."
+                    value={patientAddress}
+                    onChange={(e) => setPatientAddress(e.target.value)}
+                    className="flex-1 bg-slate-950 text-white border border-slate-700 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <span className="bg-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl border border-slate-700 font-semibold">
                 Status: {selectedPatient.status}
               </span>
               <button
+                type="button"
                 onClick={() => setSelectedPatient(null)}
                 className="text-xs text-emerald-400 hover:text-emerald-300 underline font-medium px-2 py-1 cursor-pointer"
               >
@@ -3569,1685 +1995,1086 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
           </div>
         ) : (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-800 text-xs flex items-center gap-3">
-            <UserSearch className="w-5 h-5 text-amber-600 flex-shrink-0" />
+            <UserSearch className="w-5 h-5 text-amber-600 shrink-0" />
             <div>
               <p className="font-bold">No Patient Selected Yet</p>
-              <p className="text-xs text-amber-700">
-                Search by phone number in the search box above or click "Create Quotation" on any patient in the Appointments list.
+              <p className="text-amber-700">
+                Search by mobile number/name above or click "Create Quotation" from Appointments / Consultation.
               </p>
             </div>
           </div>
         )}
-
       </div>
 
-      {/* THREE CORE SECTIONS */}
-
-      {/* SECTION 1: Individual Treatments & Therapies List */}
+      {/* SECTION 1: Daily Treatments & Therapies (1-Day Basis + Independent Outdoor / Indoor Selection) */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-        
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-800 font-bold text-xs">
               1
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>1. Individual Treatments & Therapies</span>
-                <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                  Catalog List Mode
-                </span>
+              <h3 className="text-base font-bold text-slate-900">
+                1. Daily Treatments & Therapies (1-Day Counseling Cost)
               </h3>
               <p className="text-xs text-slate-500">
-                System admin catalog treatments listed below. Select items and manually enter sessions and discounts for invoice quotation.
+                Select Outdoor, Indoor, or both simultaneously. Each prints as its own clean 1-Day A4 page.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Eye Icon Toggle Button for Full Package vs Per Day Cost mode */}
+            <div className="relative w-56">
+              <input
+                type="text"
+                placeholder="Filter treatments..."
+                value={treatmentSearch}
+                onChange={(e) => setTreatmentSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
+            </div>
             <button
               type="button"
-              onClick={toggleTreatmentCalculationMode}
-              className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
-                showFullTreatmentCalculation
-                  ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
-                  : 'bg-slate-100 hover:bg-slate-200 text-amber-600 border-slate-300'
-              }`}
-              title={showFullTreatmentCalculation ? 'Toggle Day View' : 'Toggle Full View'}
+              onClick={addCustomTreatmentItem}
+              className="flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-xs px-3 py-1.5 rounded-xl transition cursor-pointer shrink-0"
             >
-              {showFullTreatmentCalculation ? (
-                <Eye className="w-4 h-4 text-slate-600 shrink-0" />
-              ) : (
-                <EyeOff className="w-4 h-4 text-amber-600 shrink-0" />
-              )}
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Custom</span>
             </button>
           </div>
         </div>
 
-        {/* Patient Type & Treatment Duration Control Bar for Auto Sessions */}
-        <div className="bg-gradient-to-r from-emerald-50/80 via-slate-50 to-indigo-50/80 border border-emerald-200/80 rounded-xl p-3.5 space-y-2.5 shadow-2xs">
-          <div className="flex flex-wrap items-center gap-3.5">
-            
-            {/* Patient Type Checkboxes: Outdoor & Indoor */}
-            <div className="flex flex-wrap items-center gap-3 shrink-0">
-              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Activity className="w-4 h-4 text-emerald-600" />
-                <span>Patient Type:</span>
-              </span>
+        {/* Independent Outdoor / Indoor Mode + Separate Discounts + Configurable Advance Days Bar */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Activity className="w-4 h-4 text-emerald-600" />
+              <span>Treatment Type (Select One or Both):</span>
+            </span>
 
-              <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-xl border text-xs font-bold transition shadow-2xs ${
-                patientTreatmentMode === 'outdoor'
+            {/* Independent Outdoor Checkbox */}
+            <label
+              className={`flex items-center gap-2 cursor-pointer px-3.5 py-2 rounded-xl border text-xs font-bold transition ${
+                includeOutdoor
                   ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                   : 'bg-white text-slate-700 border-slate-300 hover:border-emerald-400'
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={patientTreatmentMode === 'outdoor'}
-                  onChange={() => {
-                    const nextMode = patientTreatmentMode === 'outdoor' ? '' : 'outdoor';
-                    handlePatientModeChange(nextMode);
-                  }}
-                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
-                />
-                <span>Outdoor Patient</span>
-              </label>
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={includeOutdoor}
+                onChange={(e) => handleToggleOutdoorMode(e.target.checked)}
+                className="w-4 h-4 rounded accent-emerald-600 cursor-pointer"
+              />
+              <span>Outdoor</span>
+            </label>
 
-              <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-xl border text-xs font-bold transition shadow-2xs ${
-                patientTreatmentMode === 'indoor'
+            {/* Independent Indoor Checkbox */}
+            <label
+              className={`flex items-center gap-2 cursor-pointer px-3.5 py-2 rounded-xl border text-xs font-bold transition ${
+                includeIndoor
                   ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
                   : 'bg-white text-slate-700 border-slate-300 hover:border-indigo-400'
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={patientTreatmentMode === 'indoor'}
-                  onChange={() => {
-                    const nextMode = patientTreatmentMode === 'indoor' ? '' : 'indoor';
-                    handlePatientModeChange(nextMode);
-                  }}
-                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 accent-indigo-600 cursor-pointer"
-                />
-                <span>Indoor Patient</span>
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={includeIndoor}
+                onChange={(e) => handleToggleIndoorMode(e.target.checked)}
+                className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+              />
+              <span>Indoor</span>
+            </label>
+
+            {/* Separate Outdoor Discount (%) */}
+            <div className="flex items-center gap-2 border-l border-slate-300 pl-4">
+              <label className={`text-xs font-bold whitespace-nowrap ${includeOutdoor ? 'text-emerald-900' : 'text-slate-400'}`}>
+                Outdoor Discount (%):
               </label>
+              <div className="relative w-20">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  disabled={!includeOutdoor}
+                  placeholder="0"
+                  value={outdoorDiscountPercent === '' ? '' : outdoorDiscountPercent}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
+                    handleOutdoorDiscountChange(val);
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  className={`w-full pl-2 pr-6 py-1.5 border rounded-xl text-xs font-bold text-center tabular-nums ${
+                    includeOutdoor
+                      ? 'bg-white border-emerald-300 text-emerald-900 focus:ring-2 focus:ring-emerald-500'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                  }`}
+                />
+                <span className="absolute right-2 top-2 text-[10px] font-bold text-emerald-700">%</span>
+              </div>
             </div>
 
-            {/* Treatment Package & Bulk Discount Input Fields */}
-            <div className="flex flex-wrap items-center gap-3.5 border-l border-slate-200/80 pl-3.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="text-xs font-bold text-slate-800 whitespace-nowrap">
-                  Treatment Package:
-                </label>
-                <div className="flex items-center gap-1.5" title={!patientTreatmentMode ? "Please select Outdoor or Indoor Patient type first" : ""}>
-                  {(['30 Days', '7 Days', '15 Days', '5 Days', 'Per Day'] as const).map((pkg) => {
-                    const isSelected = treatmentPackage === pkg;
-                    return (
-                      <button
-                        key={pkg}
-                        type="button"
-                        disabled={!patientTreatmentMode}
-                        onClick={() => handlePackageSelect(pkg)}
-                        className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
-                          isSelected
-                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                            : patientTreatmentMode
-                            ? 'bg-white text-slate-700 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/50'
-                            : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
-                        }`}
-                      >
-                        {pkg}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Day Input Field - opens when 'Per Day' package is selected */}
-                {treatmentPackage === 'Per Day' && (
-                  <div className="relative w-28 ml-1 animate-fadeIn" title={!patientTreatmentMode ? "Please select Outdoor or Indoor Patient type first" : ""}>
-                    <input
-                      type="number"
-                      min={1}
-                      disabled={!patientTreatmentMode}
-                      placeholder="Days"
-                      value={treatmentDays}
-                      onChange={(e) => {
-                        const val = e.target.value === '' ? '' : Math.max(1, Number(e.target.value));
-                        handlePerDayDaysInputChange(val);
-                      }}
-                      className="w-full pl-3 pr-9 py-1.5 border border-emerald-400 bg-white text-slate-900 font-bold text-xs text-center rounded-xl focus:ring-2 focus:ring-emerald-500 shadow-2xs"
-                    />
-                    <span className="absolute right-2 top-2 text-[10px] text-slate-400 font-bold">Days</span>
-                  </div>
-                )}
+            {/* Separate Indoor Discount (%) */}
+            <div className="flex items-center gap-2 border-l border-slate-300 pl-4">
+              <label className={`text-xs font-bold whitespace-nowrap ${includeIndoor ? 'text-indigo-900' : 'text-slate-400'}`}>
+                Indoor Discount (%):
+              </label>
+              <div className="relative w-20">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  disabled={!includeIndoor}
+                  placeholder="0"
+                  value={indoorDiscountPercent === '' ? '' : indoorDiscountPercent}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
+                    handleIndoorDiscountChange(val);
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  className={`w-full pl-2 pr-6 py-1.5 border rounded-xl text-xs font-bold text-center tabular-nums ${
+                    includeIndoor
+                      ? 'bg-white border-indigo-300 text-indigo-900 focus:ring-2 focus:ring-indigo-500'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                  }`}
+                />
+                <span className="absolute right-2 top-2 text-[10px] font-bold text-indigo-700">%</span>
               </div>
-
-              <div className="flex items-center gap-2 border-l border-slate-200/80 pl-3.5">
-                <label className="text-xs font-bold text-slate-800 whitespace-nowrap">
-                  Discount (%):
-                </label>
-                <div className="relative w-24" title={!patientTreatmentMode ? "Please select Outdoor or Indoor Patient type first" : ""}>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    disabled={!patientTreatmentMode}
-                    placeholder="0"
-                    value={bulkDiscountPercent === 0 || bulkDiscountPercent === '' ? '' : bulkDiscountPercent}
-                    onChange={(e) => {
-                      const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
-                      handleBulkDiscountChange(val);
-                    }}
-                    onFocus={(e) => e.target.select()}
-                    className={`w-full pl-3 pr-6 py-1.5 border rounded-xl text-xs font-bold text-center shadow-2xs transition-colors ${
-                      patientTreatmentMode
-                        ? 'bg-white border-amber-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
-                        : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
-                    }`}
-                  />
-                  <span className="absolute right-2 top-2 text-[10px] text-amber-600 font-bold">%</span>
-                </div>
-              </div>
-
-              {/* Compare Packages Button */}
-              <button
-                type="button"
-                onClick={() => setIsCompareModalOpen(true)}
-                className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-emerald-600 hover:from-amber-600 hover:to-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl shadow-2xs transition-all active:scale-95 cursor-pointer border border-amber-400/30 ml-auto"
-                title="Compare costs and savings across Outdoor/Indoor and 30-Day/15-Day/Per-Day packages"
-              >
-                <Scale className="w-3.5 h-3.5" />
-                <span>Compare Package Costs</span>
-              </button>
             </div>
 
+            {/* Configurable Advance Payment Days for Bengali Note */}
+            <div className="flex items-center gap-2 border-l border-slate-300 pl-4">
+              <label className="text-xs font-bold text-slate-800 whitespace-nowrap flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                <span>Advance Note Days:</span>
+              </label>
+              <div className="relative w-20">
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  placeholder="10"
+                  value={advanceCourseDays === '' ? '' : advanceCourseDays}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? '' : Math.min(365, Math.max(1, Number(e.target.value)));
+                    setAdvanceCourseDays(val);
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  className="w-full px-2 py-1.5 border border-amber-300 bg-white text-slate-900 font-bold text-xs text-center rounded-xl focus:ring-2 focus:ring-amber-500 tabular-nums"
+                />
+              </div>
+            </div>
           </div>
 
-          {/* Active Auto-Calculation Notice */}
-          {patientTreatmentMode && (
-            <div className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg border flex items-center justify-between flex-wrap gap-2 transition-all ${
-              showFullTreatmentCalculation
-                ? 'bg-emerald-100/90 text-emerald-950 border-emerald-300/80'
-                : 'bg-amber-100/90 text-amber-950 border-amber-300/80'
-            }`}>
-              <span>
-                {showFullTreatmentCalculation ? (
-                  <>
-                    ✨ Sessions auto-calculated for <strong className="uppercase underline text-emerald-950">{patientTreatmentMode}</strong> patient for <strong>{treatmentDays || 1} Days</strong>
-                    {treatmentPackage ? ` (Package: ${treatmentPackage}${bulkDiscountPercent !== '' ? ` | Discount: ${bulkDiscountPercent}%` : ''})` : ''}.
-                  </>
-                ) : (
-                  <>
-                    👁️ <strong>Daily Cost Focus Mode Active:</strong> Displaying <strong>Per Day (1-Day)</strong> sessions & cost for initial patient counseling
-                    {treatmentPackage ? ` (Active Package Context: ${treatmentPackage} | ${patientTreatmentMode.toUpperCase()})` : ''}.
-                  </>
-                )}
-              </span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-md font-mono font-bold shadow-2xs ${
-                showFullTreatmentCalculation
-                  ? 'bg-white text-emerald-800'
-                  : 'bg-amber-500 text-white'
-              }`}>
-                {showFullTreatmentCalculation ? 'Full Course Active' : '1-Day View Active'}
-              </span>
-            </div>
-          )}
+          <div className="text-[11px] font-semibold text-slate-600 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200">
+            <span>
+              Print Output:{' '}
+              <strong className="text-slate-900">
+                {bothModesActive
+                  ? '2 Pages in 1 PDF (Page 1: Outdoor Treatment Cost, Page 2: Indoor Treatment Cost)'
+                  : includeIndoor
+                  ? '1 Page PDF (Indoor Treatment Cost only)'
+                  : includeOutdoor
+                  ? '1 Page PDF (Outdoor Treatment Cost only)'
+                  : 'Select Outdoor and/or Indoor above'}
+              </strong>
+            </span>
+            <span className="text-emerald-800 font-bold">1-Day Counseling Basis</span>
+          </div>
         </div>
 
-        {/* Treatment List Table */}
+        {/* Daily Treatments Table */}
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                <th className="p-3 w-16 text-center">
-                  <div className="flex items-center justify-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={isAllTreatmentsSelected}
-                      onChange={toggleSelectAllTreatments}
-                      className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                      title="Select / Deselect All Treatments"
-                    />
-                  </div>
+                <th className="p-3 w-14 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isAllTreatmentsSelected}
+                    onChange={toggleSelectAllTreatments}
+                    className="w-4 h-4 rounded accent-emerald-600 cursor-pointer"
+                    title="Select / Deselect All"
+                  />
                 </th>
                 <th className="p-3">SL & Treatment Name</th>
-                <th className="p-3 w-32">Unit Price (BDT)</th>
-                <th className="p-3 w-36 text-center">{showFullTreatmentCalculation ? 'Total Sessions' : 'Per Day Session'}</th>
-                <th className="p-3 w-24 text-center">Discount (%)</th>
-                <th className="p-3 w-28 text-center">Discount (BDT)</th>
-                <th className="p-3 w-32 text-right">{showFullTreatmentCalculation ? 'Total Cost' : 'Per Day Cost'}</th>
+                <th className="p-3 w-32">Price (1 Session)</th>
+                <th className="p-3 w-36 text-center">Quantity (1 Day)</th>
+                <th className="p-3 w-44 text-center">Discount (%)</th>
+                <th className="p-3 w-40 text-right">Net Price (1 Day)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredTreatmentList.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-400 text-xs font-medium">
+                  <td colSpan={6} className="p-6 text-center text-slate-400 text-xs">
                     No treatment matching "{treatmentSearch}".
                   </td>
                 </tr>
               ) : (
                 filteredTreatmentList.map((item, idx) => {
                   const isChecked = item.selected;
+                  const outP = computeRowPricing(item, item.outdoorQty, item.outdoorDiscountPct, 'outdoor', outdoorDiscountPercent);
+                  const inP = computeRowPricing(item, item.indoorQty, item.indoorDiscountPct, 'indoor', indoorDiscountPercent);
+
                   return (
-                    <tr 
-                      key={item.id ? `${item.id}-${idx}` : `tr-${idx}`} 
+                    <tr
+                      key={item.id}
                       onClick={() => toggleTreatmentSelection(item.id)}
                       className={`transition-colors cursor-pointer ${
-                        isChecked 
-                          ? 'bg-emerald-50/80 font-medium' 
-                          : 'bg-white hover:bg-slate-50 text-slate-600'
+                        isChecked ? 'bg-emerald-50/70 font-medium' : 'bg-white hover:bg-slate-50 text-slate-600'
                       }`}
                     >
-                      {/* Checkbox */}
                       <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isChecked}
                           onChange={() => toggleTreatmentSelection(item.id)}
-                          className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                          className="w-4 h-4 rounded accent-emerald-600 cursor-pointer"
                         />
                       </td>
 
-                      {/* SL & Name */}
                       <td className="p-3">
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-slate-500 text-xs w-6">
-                              {idx + 1}.
-                            </span>
+                            <span className="font-mono font-bold text-slate-500 text-xs w-6">{idx + 1}.</span>
                             {item.isCustom ? (
                               <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="text"
                                   value={item.treatmentName}
                                   onChange={(e) => updateTreatmentItem(item.id, { treatmentName: e.target.value })}
-                                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 w-full"
+                                  className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 w-full"
                                 />
                                 <button
+                                  type="button"
                                   onClick={() => removeCustomTreatmentItem(item.id)}
-                                  className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0"
-                                  title="Remove custom item"
+                                  className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             ) : (
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className={`text-xs font-bold ${isChecked ? 'text-emerald-950' : 'text-slate-800'}`}>
-                                  {item.treatmentName}
-                                </span>
-                                {isChecked && item.isIndoorFree && (
-                                  <span
-                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
-                                      patientTreatmentMode === 'indoor'
-                                        ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
-                                        : 'bg-slate-100 text-slate-600 border-slate-200'
-                                    }`}
-                                    title={patientTreatmentMode === 'indoor' ? 'Indoor Patient - 100% Free Treatment' : 'Free for Indoor Patients'}
-                                  >
-                                    🎁 {patientTreatmentMode === 'indoor' ? 'Indoor 100% Free' : 'Free for Indoor'}
-                                  </span>
-                                )}
-                                {isChecked && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0 && (
-                                  <span
-                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
-                                      patientTreatmentMode === 'outdoor'
-                                        ? 'bg-amber-100 text-amber-900 border-amber-300 ring-1 ring-amber-400'
-                                        : 'bg-slate-100 text-slate-600 border-slate-200'
-                                    }`}
-                                    title={`Outdoor Discount: ${item.outdoorDiscountPercent}% Off`}
-                                  >
-                                    🏷️ Outdoor {item.outdoorDiscountPercent}% Off
-                                  </span>
-                                )}
-                                {isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (
-                                  <span
-                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
-                                    title={`Fixed Discount: BDT ${item.fixedDiscountAmount}`}
-                                  >
-                                    🏷️ Fixed BDT {item.fixedDiscountAmount.toLocaleString()} Off
-                                  </span>
-                                )}
-                                {isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && (!item.fixedDiscountAmount || Number(item.fixedDiscountAmount) === 0) && (
-                                  <span
-                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
-                                    title={`Fixed Discount: ${item.defaultDiscountPercent}% Off`}
-                                  >
-                                    🏷️ Fixed {item.defaultDiscountPercent}% Off
-                                  </span>
-                                )}
+                              <span className={`text-xs font-bold ${isChecked ? 'text-slate-900' : 'text-slate-800'}`}>
+                                {item.treatmentName}
+                              </span>
+                            )}
+                          </div>
+                          {item.description && !item.isCustom && (
+                            <p className="text-[11px] text-slate-500 pl-8">{item.description}</p>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="p-3" onClick={(e) => item.isCustom && e.stopPropagation()}>
+                        {item.isCustom ? (
+                          <input
+                            type="number"
+                            value={item.unitCost || ''}
+                            onChange={(e) => updateTreatmentItem(item.id, { unitCost: Number(e.target.value) || 0 })}
+                            className="w-24 px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold tabular-nums"
+                          />
+                        ) : (
+                          <span className="font-bold text-slate-800 tabular-nums">BDT {item.unitCost.toLocaleString()}</span>
+                        )}
+                      </td>
+
+                      {/* Quantity */}
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        {bothModesActive ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[10px] font-bold text-emerald-700 w-7 text-right">Out:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                placeholder="1"
+                                value={item.outdoorQty === '' ? '' : item.outdoorQty}
+                                onChange={(e) => updateTreatmentItem(item.id, { outdoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                                className="w-14 px-1.5 py-0.5 bg-white border border-emerald-300 rounded text-xs font-bold text-center tabular-nums"
+                              />
+                            </div>
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[10px] font-bold text-indigo-700 w-7 text-right">In:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                placeholder="1"
+                                value={item.indoorQty === '' ? '' : item.indoorQty}
+                                onChange={(e) => updateTreatmentItem(item.id, { indoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                                className="w-14 px-1.5 py-0.5 bg-white border border-indigo-300 rounded text-xs font-bold text-center tabular-nums"
+                              />
+                            </div>
+                          </div>
+                        ) : includeIndoor ? (
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="1"
+                            value={item.indoorQty === '' ? '' : item.indoorQty}
+                            onChange={(e) => updateTreatmentItem(item.id, { indoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                            className="w-16 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                          />
+                        ) : (
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="1"
+                            value={item.outdoorQty === '' ? '' : item.outdoorQty}
+                            onChange={(e) => updateTreatmentItem(item.id, { outdoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                            className="w-16 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                          />
+                        )}
+                      </td>
+
+                      {/* Discount (%) */}
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        {bothModesActive ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[10px] font-bold text-emerald-700 w-7 text-right">Out:</span>
+                              {isChecked && outP.isLockedDiscount ? (
+                                <span className="text-[10px] font-bold text-emerald-800">{outP.lockReason}</span>
+                              ) : (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  placeholder="0"
+                                  value={item.outdoorDiscountPct === '' ? '' : item.outdoorDiscountPct}
+                                  onChange={(e) => updateTreatmentItem(item.id, { outdoorDiscountPct: e.target.value === '' ? '' : Number(e.target.value) })}
+                                  className="w-16 px-1.5 py-0.5 bg-white border border-emerald-300 rounded text-xs font-bold text-center tabular-nums"
+                                />
+                              )}
+                            </div>
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[10px] font-bold text-indigo-700 w-7 text-right">In:</span>
+                              {isChecked && inP.isLockedDiscount ? (
+                                <span className="text-[10px] font-bold text-indigo-800">{inP.lockReason}</span>
+                              ) : (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  placeholder="0"
+                                  value={item.indoorDiscountPct === '' ? '' : item.indoorDiscountPct}
+                                  onChange={(e) => updateTreatmentItem(item.id, { indoorDiscountPct: e.target.value === '' ? '' : Number(e.target.value) })}
+                                  className="w-16 px-1.5 py-0.5 bg-white border border-indigo-300 rounded text-xs font-bold text-center tabular-nums"
+                                />
+                              )}
+                            </div>
+                          </div>
+                        ) : includeIndoor ? (
+                          isChecked && inP.isLockedDiscount ? (
+                            <span className="text-[11px] font-bold text-indigo-800">{inP.lockReason}</span>
+                          ) : (
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              placeholder="0"
+                              value={item.indoorDiscountPct === '' ? '' : item.indoorDiscountPct}
+                              onChange={(e) => updateTreatmentItem(item.id, { indoorDiscountPct: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-20 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                            />
+                          )
+                        ) : isChecked && outP.isLockedDiscount ? (
+                          <span className="text-[11px] font-bold text-emerald-800">{outP.lockReason}</span>
+                        ) : (
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            placeholder="0"
+                            value={item.outdoorDiscountPct === '' ? '' : item.outdoorDiscountPct}
+                            onChange={(e) => updateTreatmentItem(item.id, { outdoorDiscountPct: e.target.value === '' ? '' : Number(e.target.value) })}
+                            className="w-20 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                          />
+                        )}
+                      </td>
+
+                      {/* Net Price */}
+                      <td className="p-3 text-right tabular-nums">
+                        {bothModesActive ? (
+                          <div className="space-y-0.5 text-xs font-bold">
+                            <div className={isChecked ? 'text-emerald-700' : 'text-slate-400'}>
+                              Out: BDT {outP.netCost.toLocaleString()}
+                            </div>
+                            <div className={isChecked ? 'text-indigo-700' : 'text-slate-400'}>
+                              In: BDT {inP.netCost.toLocaleString()}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className={`text-sm font-black ${isChecked ? 'text-emerald-700' : 'text-slate-400'}`}>
+                            BDT {(includeIndoor ? inP.netCost : outP.netCost).toLocaleString()}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Section 1 Subtotal Bar */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <span className="text-slate-600 font-medium">
+            Selected daily treatments: <strong className="text-emerald-800">{activeTreatments.length}</strong>
+          </span>
+          <div className="flex flex-wrap items-center gap-4">
+            {includeOutdoor && (
+              <div className="font-bold text-emerald-800 tabular-nums">
+                Outdoor Daily Total: BDT {outdoorDailyNet.toLocaleString()}
+              </div>
+            )}
+            {includeIndoor && (
+              <div className="font-bold text-indigo-800 tabular-nums">
+                Indoor Daily Total: BDT {indoorDailyNet.toLocaleString()}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 2: Indoor Room & Food Charges (1 Day Only) */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs">
+              2
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900">
+                  2. Indoor Room & Food Charges (1 Day)
+                </h3>
+                {!includeIndoor && (
+                  <span className="text-[11px] font-bold bg-amber-50 text-amber-800 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1">
+                    <Lock className="w-3 h-3" />
+                    <span>Check "Indoor" above to enable</span>
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500">
+                Select cabin/ward and 3-time daily meal charge for the 1-Day Indoor quotation sheet.
+              </p>
+            </div>
+          </div>
+
+          {includeIndoor && (
+            <div className="flex items-center gap-2">
+              <div className="relative w-48">
+                <input
+                  type="text"
+                  placeholder="Filter rooms..."
+                  value={indoorSearch}
+                  onChange={(e) => setIndoorSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
+              </div>
+              <button
+                type="button"
+                onClick={addCustomIndoorService}
+                className="flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-300 font-bold text-xs px-3 py-1.5 rounded-xl cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Custom Room</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className={!includeIndoor ? 'opacity-50 pointer-events-none select-none space-y-4' : 'space-y-4'}>
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
+                  <th className="p-3 w-14 text-center">
+                    <input
+                      type="checkbox"
+                      checked={isAllIndoorServicesSelected}
+                      onChange={toggleSelectAllIndoorServices}
+                      disabled={!includeIndoor}
+                      className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+                    />
+                  </th>
+                  <th className="p-3">Type & Details</th>
+                  <th className="p-3 w-36">Price (Per Day)</th>
+                  <th className="p-3 w-24 text-center">Day</th>
+                  <th className="p-3 w-36 text-right">Net Price (1 Day)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredIndoorServiceList.map((item, idx) => {
+                  const isChecked = includeIndoor && item.selected;
+                  return (
+                    <tr
+                      key={item.id}
+                      onClick={() => toggleIndoorServiceSelection(item.id)}
+                      className={`transition-colors cursor-pointer ${
+                        isChecked ? 'bg-indigo-50/80 font-medium' : 'bg-white hover:bg-slate-50 text-slate-600'
+                      }`}
+                    >
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          disabled={!includeIndoor}
+                          onChange={() => toggleIndoorServiceSelection(item.id)}
+                          className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+                        />
+                      </td>
+                      <td className="p-3">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-slate-500 w-6">{idx + 1}.</span>
+                            {item.isCustom ? (
+                              <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="text"
+                                  value={item.roomType}
+                                  onChange={(e) => updateIndoorServiceItem(item.id, { roomType: e.target.value })}
+                                  className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold w-full"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeIndoorServiceItem(item.id)}
+                                  className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
+                            ) : (
+                              <span className={`text-xs font-bold ${isChecked ? 'text-indigo-950' : 'text-slate-800'}`}>
+                                {item.roomType}
+                              </span>
                             )}
                           </div>
                           {item.isCustom ? (
                             <input
                               type="text"
-                              placeholder="Treatment details..."
-                              value={item.description || ''}
+                              value={item.remarks || ''}
                               onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => updateTreatmentItem(item.id, { description: e.target.value })}
-                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-emerald-400"
+                              onChange={(e) => updateIndoorServiceItem(item.id, { remarks: e.target.value })}
+                              placeholder="Room details..."
+                              className="w-full px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px]"
                             />
                           ) : (
-                            item.description && (
-                              <p className="text-[11px] text-slate-500 font-medium pl-8">
-                                {item.description}
-                              </p>
-                            )
+                            item.remarks && <p className="text-[11px] text-slate-500 pl-8">{item.remarks}</p>
                           )}
                         </div>
                       </td>
-
-                      {/* Unit Price - Read-only from catalog for standard items */}
-                      <td className="p-3">
+                      <td className="p-3" onClick={(e) => item.isCustom && e.stopPropagation()}>
                         {item.isCustom ? (
-                          <div className="relative" onClick={(e) => e.stopPropagation()}>
-                            <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                            <input
-                              type="number"
-                              value={item.unitCost === 0 || item.unitCost === '' ? '' : item.unitCost}
-                              onChange={(e) => updateTreatmentItem(item.id, { unitCost: Number(e.target.value) })}
-                              onFocus={(e) => e.target.select()}
-                              placeholder="0"
-                              className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
-                            />
-                          </div>
+                          <input
+                            type="number"
+                            value={item.dailyRate || ''}
+                            onChange={(e) => updateIndoorServiceItem(item.id, { dailyRate: Number(e.target.value) || 0 })}
+                            className="w-24 px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold tabular-nums"
+                          />
                         ) : (
-                          <div className="space-y-0.5">
-                            <div className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 inline-flex items-center gap-1">
-                              <span className="text-[10px] text-slate-500 font-semibold">BDT</span>
-                              <span>{(item.unitCost || 0).toLocaleString()}</span>
-                            </div>
-                            {item.rateNote && (
-                              <p className="text-[10px] text-slate-500 font-medium px-0.5">
-                                {item.rateNote}
-                              </p>
-                            )}
-                          </div>
+                          <span className="font-bold text-slate-800 tabular-nums">BDT {item.dailyRate.toLocaleString()}</span>
                         )}
                       </td>
-
-                      {/* Sessions - Manual Entry */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="number"
-                          min={1}
-                          placeholder="0"
-                          value={item.sessions === 0 || item.sessions === '' ? '' : item.sessions}
-                          onChange={(e) => updateTreatmentItem(item.id, { sessions: e.target.value === '' ? '' : Number(e.target.value) })}
-                          onFocus={(e) => e.target.select()}
-                          className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                            isChecked
-                              ? 'bg-white border-slate-300 text-slate-900 focus:ring-2 focus:ring-emerald-500'
-                              : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-emerald-500'
-                          }`}
-                        />
-                      </td>
-
-                      {/* Discount (%) - Manual Entry */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        {isChecked && patientTreatmentMode === 'indoor' && item.isIndoorFree ? (
-                          <div
-                            className="bg-indigo-100/80 border border-indigo-300 text-indigo-900 rounded-lg py-1 px-1 text-[11px] font-black text-center shadow-2xs"
-                            title="Indoor patients get this treatment 100% free"
-                          >
-                            100% Free
-                          </div>
-                        ) : isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 ? (
-                          <div
-                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
-                            title={`Fixed Discount Tag: BDT ${Number(item.fixedDiscountAmount).toLocaleString()}`}
-                          >
-                            <span>🏷️</span>
-                            <span>Fixed BDT {Number(item.fixedDiscountAmount).toLocaleString()}</span>
-                          </div>
-                        ) : isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 ? (
-                          <div
-                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
-                            title={`Fixed Discount Tag: ${Number(item.defaultDiscountPercent)}%`}
-                          >
-                            <span>🏷️</span>
-                            <span>Fixed {Number(item.defaultDiscountPercent)}%</span>
-                          </div>
-                        ) : (
-                          <div className="relative">
-                            <input
-                              type="number"
-                              min={0}
-                              max={100}
-                              placeholder="0"
-                              value={item.discountPercent === 0 || item.discountPercent === '' ? '' : item.discountPercent}
-                              onChange={(e) => updateTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
-                              onFocus={(e) => e.target.select()}
-                              className={`w-full pr-5 pl-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                                isChecked
-                                  ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-emerald-500'
-                                  : 'bg-slate-50 border-slate-200 text-amber-800 focus:ring-2 focus:ring-emerald-500'
-                              }`}
-                            />
-                            <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Discount Amount */}
-                      <td className="p-3 text-center">
-                        <span className={`text-xs font-semibold ${item.discountAmount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                          -BDT {(item.discountAmount || 0).toLocaleString()}
-                        </span>
-                      </td>
-
-                      {/* Total Cost */}
-                      <td className="p-3 text-right">
-                        <span className={`text-xs font-black ${isChecked ? 'text-emerald-700 text-sm' : 'text-slate-400'}`}>
-                          BDT {(item.totalCost || 0).toLocaleString()}
+                      <td className="p-3 text-center font-bold text-slate-700 tabular-nums">1</td>
+                      <td className="p-3 text-right font-black tabular-nums">
+                        <span className={isChecked ? 'text-indigo-700 text-sm' : 'text-slate-400'}>
+                          BDT {(isChecked ? item.dailyRate : 0).toLocaleString()}
                         </span>
                       </td>
                     </tr>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Detailed Breakdown Bar (Per Day Discount, Per Day Subtotal, Total Discount, Treatments Subtotal) */}
-        <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 font-medium pb-2.5 border-b border-slate-200">
-            <div>
-              Selected treatments: <span className="font-bold text-emerald-800">{activeTreatments.length}</span> of {treatmentList.length} items
-            </div>
-            <div className="text-[11px] bg-emerald-100/80 text-emerald-900 font-bold px-2.5 py-0.5 rounded-md border border-emerald-300">
-              Package Duration: {numTreatmentDays} Days ({patientTreatmentMode ? patientTreatmentMode.toUpperCase() : 'NO TYPE'})
-            </div>
+                })}
+              </tbody>
+            </table>
           </div>
 
-          <div className="flex flex-col sm:flex-row justify-end items-stretch gap-3">
-            {/* 1. Dynamic Discount Card (Highlighted) */}
-            <div className="bg-amber-50 p-3 px-4 rounded-xl border border-amber-200/90 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
-              <div className="text-[10px] text-amber-800 font-bold uppercase tracking-wider">
-                {showFullTreatmentCalculation ? `Total Discount (${numTreatmentDays} Days)` : 'Per Day Discount Amount'}
-              </div>
-              <div className="text-sm sm:text-base font-black text-rose-600 mt-1">
-                -BDT {(showFullTreatmentCalculation ? treatmentsFullTotalDiscount : treatmentsPerDayDiscountAmount).toLocaleString()}
-              </div>
-            </div>
-
-            {/* 2. Dynamic Subtotal Card (White Background) */}
-            <div className="bg-white p-3 px-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
-              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-                {showFullTreatmentCalculation ? `Treatments Subtotal (${numTreatmentDays} Days)` : 'Per Day Subtotal'}
-              </div>
-              <div className="text-sm sm:text-base font-black text-slate-900 mt-1">
-                BDT {(showFullTreatmentCalculation ? treatmentsFullSubtotal : treatmentsPerDaySubtotal).toLocaleString()}
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </div>
-
-
-      {/* SECTION 2: PAYMENT CYCLE & COUNSELING SCHEDULE BREAKDOWN CARD */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-emerald-300 space-y-4">
-        
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-xs shadow-2xs">
-              <CreditCard className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                <span>2. Payment Cycle & Counseling Schedule</span>
-                <span className="text-[10px] font-black bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded-full border border-emerald-300 uppercase tracking-wider">
-                  Counseling Tool
-                </span>
-              </h3>
-              <p className="text-xs text-slate-500">
-                Select an automatic or custom installment schedule to present manageable payment steps during patient counseling.
-              </p>
-            </div>
-          </div>
-
-          {/* Cycle Mode Tabs */}
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('4_cycles')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === '4_cycles'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              4 Cycles Schedule
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('10_day_cycles')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === '10_day_cycles'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              10-Day Cycles
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('15_day_cycles')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === '15_day_cycles'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              15-Day Cycles
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('full')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === 'full'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Full Payment
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentPlanMode('custom_phases')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                paymentPlanMode === 'custom_phases'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Custom Installments
-            </button>
-          </div>
-        </div>
-
-        {/* Payment Cycle Breakdown Cards */}
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 font-medium gap-2">
-            <span className="flex items-center gap-1.5">
-              <span>Total Course Payable Bill:</span>
-              <strong className="text-emerald-800 font-extrabold text-sm">BDT {grandTotal.toLocaleString()}</strong>
-              {treatmentDays !== '' && Number(treatmentDays) > 0 && (
-                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
-                  {treatmentDays}-Day Course
-                </span>
-              )}
-            </span>
-
-            {paymentPlanMode === 'custom_phases' && (
-              <button
-                type="button"
-                onClick={addCustomPhase}
-                className="flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-bold text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1 rounded-lg border border-emerald-300 transition-colors cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ Add Installment Cycle</span>
-              </button>
-            )}
-          </div>
-
-          {/* Cycle Cards List */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {paymentPhases.map((phase, idx) => (
-              <div 
-                key={phase.id || idx}
-                className="bg-gradient-to-br from-slate-50 via-white to-emerald-50/40 rounded-xl p-4 border border-emerald-200 shadow-2xs space-y-2.5 relative group"
-              >
-                <div className="flex items-center justify-between gap-2 border-b border-emerald-100 pb-2">
-                  <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                    <span>Cycle {idx + 1}</span>
-                  </span>
-                  <span className="text-[10px] font-black bg-emerald-100/90 text-emerald-900 px-2 py-0.5 rounded-md border border-emerald-200">
-                    {phase.percentage || (grandTotal > 0 ? Math.round(((phase.amount === '' ? 0 : Number(phase.amount)) / grandTotal) * 100) : 0)}% of Bill
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {/* Editable Title */}
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Cycle Title</label>
+          {/* Food Charge 3 Times (1 Day) */}
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs border-collapse">
+              <tbody>
+                <tr
+                  onClick={() => includeIndoor && setFoodChargeSelected(prev => !prev)}
+                  className={`cursor-pointer transition-colors ${
+                    includeIndoor && foodChargeSelected ? 'bg-amber-50/80' : 'bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <td className="p-3 w-14 text-center" onClick={(e) => e.stopPropagation()}>
                     <input
-                      type="text"
-                      value={phase.phaseName}
-                      onChange={(e) => updatePaymentPhase(phase.id, { phaseName: e.target.value })}
-                      className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                      type="checkbox"
+                      disabled={!includeIndoor}
+                      checked={includeIndoor && foodChargeSelected}
+                      onChange={(e) => setFoodChargeSelected(e.target.checked)}
+                      className="w-4 h-4 rounded accent-amber-600 cursor-pointer"
                     />
-                  </div>
-
-                  <div className="grid grid-cols-5 gap-2">
-                    {/* Editable Cycle Days */}
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-black text-emerald-800 uppercase mb-0.5">
-                        Cycle Days
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          min={1}
-                          value={phase.daysOrSessions !== undefined ? (phase.daysOrSessions || '') : ''}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : Number(e.target.value);
-                            updatePaymentPhase(phase.id, { daysOrSessions: val });
-                          }}
-                          placeholder="Days"
-                          className="w-full pr-8 pl-2.5 py-1 bg-emerald-50/70 border border-emerald-300 rounded-lg text-xs font-black text-emerald-950 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                        />
-                        <span className="absolute right-1.5 top-1 text-slate-400 font-bold text-[10px] pointer-events-none">Days</span>
-                      </div>
-                    </div>
-
-                    {/* Editable Amount */}
-                    <div className="col-span-3">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Payment Amount (BDT)</label>
-                      <div className="relative">
-                        <span className="absolute left-2.5 top-1.5 text-slate-400 font-bold text-xs">BDT</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={phase.amount === '' ? '' : phase.amount}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            updatePaymentPhase(phase.id, { amount: val === '' ? '' : Number(val) });
-                          }}
-                          onFocus={(e) => e.target.select()}
-                          placeholder="0"
-                          className="w-full pl-10 pr-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-black text-emerald-800 focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Notes */}
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Counseling Note</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 1st 10 days treatment fee..."
-                      value={phase.notes || ''}
-                      onChange={(e) => updatePaymentPhase(phase.id, { notes: e.target.value })}
-                      className="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                </div>
-
-                {paymentPlanMode === 'custom_phases' && paymentPhases.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeCustomPhase(phase.id)}
-                    className="absolute top-2 right-2 text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                    title="Remove this installment cycle"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Phase Sum Verification Bar */}
-          {paymentPhases.length > 0 && (
-            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
-              <span className="font-medium">
-                Total Installments Sum: <strong className="text-emerald-900 font-bold">BDT {paymentPhases.reduce((s, p) => s + (p.amount === '' ? 0 : Number(p.amount) || 0), 0).toLocaleString()}</strong>
-              </span>
-              {paymentPhases.reduce((s, p) => s + (p.amount === '' ? 0 : Number(p.amount) || 0), 0) !== grandTotal && (
-                <span className="text-rose-700 font-bold bg-rose-50 px-2.5 py-0.5 rounded-md border border-rose-200 text-[11px]">
-                  ⚠️ Warning: Sum of installments (BDT {paymentPhases.reduce((s, p) => s + (p.amount === '' ? 0 : Number(p.amount) || 0), 0).toLocaleString()}) does not equal Grand Total (BDT {grandTotal.toLocaleString()})
-                </span>
-              )}
-            </div>
-          )}
-
-        </div>
-
-      </div>
-
-
-      {/* SECTION 3: Outdoor Services & Packages */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-        
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-teal-100 flex items-center justify-center text-teal-700 font-bold text-xs">
-              3
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <span>3. Outdoor Packages</span>
-                  <span className="text-[11px] font-semibold bg-teal-100 text-teal-800 px-2.5 py-0.5 rounded-full border border-teal-200">
-                    Catalog List Mode
-                  </span>
-                </h3>
-                {patientTreatmentMode === 'indoor' && (
-                  <span className="text-[11px] font-bold bg-amber-50 text-amber-800 px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-amber-600" />
-                    <span>Indoor Mode (Locked)</span>
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-500">
-                System admin catalog outdoor packages listed below. Select items and set discounts for invoice quotation.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <button
-              type="button"
-              onClick={() => setIsOutdoorSectionOpen(prev => !prev)}
-              className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 text-xs font-bold shrink-0"
-              title={isOutdoorSectionOpen ? 'Collapse Outdoor Section' : 'Expand Outdoor Section'}
-            >
-              {isOutdoorSectionOpen ? (
-                <>
-                  <span>Collapse</span>
-                  <ChevronUp className="w-4 h-4 text-slate-600" />
-                </>
-              ) : (
-                <>
-                  <span>Expand Section</span>
-                  <ChevronDown className="w-4 h-4 text-slate-600" />
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {isOutdoorSectionOpen && (
-          <>
-            {/* Package Table */}
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                    <th className="p-3 w-16 text-center">SELECT</th>
-                    <th className="p-3">SL & Package Name</th>
-                    <th className="p-3 w-32">Base Fee (BDT)</th>
-                    <th className="p-3 w-28 text-center">Discount (%)</th>
-                    <th className="p-3 w-32 text-center">Discount (BDT)</th>
-                    <th className="p-3 w-36 text-right">Net Price (BDT)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredOutdoorPackageList.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-6 text-center text-slate-400 text-xs font-medium">
-                        No outdoor package matching "{outdoorSearch}".
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredOutdoorPackageList.map((item, idx) => {
-                      const isChecked = item.selected;
-                      const isLocked = patientTreatmentMode === 'indoor';
-                      return (
-                        <tr 
-                          key={item.id ? `${item.id}-${idx}` : `pkg-tr-${idx}`} 
-                          onClick={() => {
-                            if (!isLocked) toggleOutdoorPackageSelection(item.id);
-                          }}
-                          className={`transition-colors ${
-                            isLocked 
-                              ? 'bg-slate-50/70 text-slate-400 cursor-not-allowed opacity-75' 
-                              : isChecked 
-                                ? 'bg-teal-50/80 font-medium cursor-pointer' 
-                                : 'bg-white hover:bg-slate-50 text-slate-600 cursor-pointer'
-                          }`}
-                        >
-                          {/* Checkbox */}
-                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              disabled={isLocked}
-                              onChange={() => toggleOutdoorPackageSelection(item.id)}
-                              className={`w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500 accent-teal-600 ${
-                                isLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                              }`}
-                            />
-                          </td>
-
-                          {/* SL & Package Name */}
-                          <td className="p-3">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono font-bold text-slate-500 text-xs w-6">
-                                  {idx + 1}.
-                                </span>
-                                {item.isCustom ? (
-                                  <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
-                                    <input
-                                      type="text"
-                                      disabled={isLocked}
-                                      value={item.packageName}
-                                      onChange={(e) => updateOutdoorPackageItem(item.id, { packageName: e.target.value })}
-                                      className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-teal-500 w-full disabled:bg-slate-100 disabled:cursor-not-allowed"
-                                    />
-                                    <button
-                                      disabled={isLocked}
-                                      onClick={() => removeOutdoorPackageItem(item.id)}
-                                      className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                                      title="Remove custom package"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className={`text-xs font-bold ${isChecked ? 'text-teal-950' : 'text-slate-800'}`}>
-                                    {item.packageName}
-                                  </span>
-                                )}
-                              </div>
-                              {item.isCustom ? (
-                                <input
-                                  type="text"
-                                  disabled={isLocked}
-                                  placeholder="Package details / description..."
-                                  value={item.description || ''}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onChange={(e) => updateOutdoorPackageItem(item.id, { description: e.target.value })}
-                                  className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-teal-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                                />
-                              ) : (
-                                item.description && (
-                                  <p className="text-[11px] text-slate-500 font-medium pl-8">
-                                    {item.description}
-                                  </p>
-                                )
-                              )}
-                            </div>
-                          </td>
-
-                          {/* Base Fee */}
-                          <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                            <div className="space-y-0.5">
-                              <div className="relative">
-                                <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                                <input
-                                  type="number"
-                                  disabled={isLocked}
-                                  placeholder="0"
-                                  value={item.totalBaseCost === '' ? '' : item.totalBaseCost}
-                                  onChange={(e) => updateOutdoorPackageItem(item.id, { totalBaseCost: e.target.value === '' ? '' : Number(e.target.value) })}
-                                  className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                                />
-                              </div>
-                              {item.rateNote && (
-                                <p className="text-[10px] text-slate-500 font-medium px-0.5">
-                                  {item.rateNote}
-                                </p>
-                              )}
-                            </div>
-                          </td>
-
-                          {/* Discount (%) */}
-                          <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                            <div className="relative">
-                              <input
-                                type="number"
-                                min={0}
-                                max={100}
-                                disabled={isLocked}
-                                placeholder="0"
-                                value={item.discountPercent === '' ? '' : item.discountPercent}
-                                onChange={(e) => updateOutdoorPackageItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
-                                className="w-full pr-5 pl-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-amber-800 text-center focus:ring-2 focus:ring-teal-500 placeholder-slate-300 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                              />
-                              <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
-                            </div>
-                          </td>
-
-                          {/* Discount Amount */}
-                          <td className="p-3 text-center">
-                            <span className={`text-xs font-semibold ${item.discountAmount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                              -BDT {(item.discountAmount || 0).toLocaleString()}
-                            </span>
-                          </td>
-
-                          {/* Net Price */}
-                          <td className="p-3 text-right">
-                            <span className={`text-xs font-black ${isChecked ? 'text-teal-700 text-sm' : 'text-slate-400'}`}>
-                              BDT {(item.netCost || 0).toLocaleString()}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs">
-              <div className="text-slate-500 font-medium">
-                Selected outdoor packages: <span className="font-bold text-teal-800">{activeOutdoorPackages.length}</span> of {outdoorPackageList.length} items
-              </div>
-
-              <div className="text-right flex items-center gap-2">
-                <span className="text-slate-700 font-bold">Outdoor Packages Subtotal: </span>
-                <span className="text-teal-700 font-black text-base ml-2">
-                  BDT {outdoorSubtotal.toLocaleString()}
-                </span>
-              </div>
-            </div>
-          </>
-        )}
-
-      </div>
-
-
-      {/* SECTION 4: Indoor Services */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-        
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs">
-              4
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <span>4. Indoor Room & Accommodation Services</span>
-                  <span className="text-[11px] font-semibold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
-                    Catalog List Mode
-                  </span>
-                </h3>
-                {patientTreatmentMode === 'outdoor' && (
-                  <span className="text-[11px] font-bold bg-amber-50 text-amber-800 px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-amber-600" />
-                    <span>Outdoor Mode (Closed)</span>
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-500">
-                System admin catalog room / cabin types listed below. Select items and enter stay duration (days) for invoice quotation.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            {isIndoorSectionOpen && (
-              <button
-                type="button"
-                onClick={toggleIndoorCalculationMode}
-                className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
-                  showFullIndoorCalculation
-                    ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
-                    : 'bg-slate-100 hover:bg-slate-200 text-indigo-600 border-slate-300'
-                }`}
-                title={showFullIndoorCalculation ? 'Toggle Day View' : 'Toggle Full View'}
-              >
-                {showFullIndoorCalculation ? (
-                  <Eye className="w-4 h-4 text-slate-600 shrink-0" />
-                ) : (
-                  <EyeOff className="w-4 h-4 text-indigo-600 shrink-0" />
-                )}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setIsIndoorSectionOpen(prev => !prev)}
-              className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 text-xs font-bold"
-              title={isIndoorSectionOpen ? 'Collapse Indoor Section' : 'Expand Indoor Section'}
-            >
-              {isIndoorSectionOpen ? (
-                <>
-                  <span>Collapse</span>
-                  <ChevronUp className="w-4 h-4 text-slate-600" />
-                </>
-              ) : (
-                <>
-                  <span>Expand Section</span>
-                  <ChevronDown className="w-4 h-4 text-slate-600" />
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {isIndoorSectionOpen && (
-          <>
-            {/* Indoor Table */}
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                    <th className="p-3 w-16 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <input
-                          type="checkbox"
-                          checked={isAllIndoorServicesSelected}
-                          onChange={toggleSelectAllIndoorServices}
-                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
-                          title="Select / Deselect All Indoor Rooms"
-                        />
-                      </div>
-                    </th>
-                    <th className="p-3">SL & Room / Cabin Type</th>
-                    <th className="p-3 w-36">Daily Rate (BDT)</th>
-                    <th className="p-3 w-28 text-center">Days Stay</th>
-                    <th className="p-3 w-36 text-right">
-                      {showFullIndoorCalculation ? 'Total Amount (BDT)' : 'Per Day Amount (BDT)'}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredIndoorServiceList.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="p-6 text-center text-slate-400 text-xs font-medium">
-                        No room / cabin type matching "{indoorSearch}".
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredIndoorServiceList.map((item, idx) => {
-                      const isChecked = item.selected;
-                      return (
-                        <tr 
-                          key={item.id ? `${item.id}-${idx}` : `ind-tr-${idx}`} 
-                          onClick={() => toggleIndoorServiceSelection(item.id)}
-                          className={`transition-colors cursor-pointer ${
-                            isChecked 
-                              ? 'bg-indigo-50/80 font-medium' 
-                              : 'bg-white hover:bg-slate-50 text-slate-600'
-                          }`}
-                        >
-                          {/* Checkbox */}
-                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleIndoorServiceSelection(item.id)}
-                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
-                            />
-                          </td>
-
-                          {/* SL & Room Type */}
-                          <td className="p-3">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono font-bold text-slate-500 text-xs w-6">
-                                  {idx + 1}.
-                                </span>
-                                {item.isCustom ? (
-                                  <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
-                                    <input
-                                      type="text"
-                                      value={item.roomType}
-                                      onChange={(e) => updateIndoorServiceItem(item.id, { roomType: e.target.value })}
-                                      className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-indigo-500 w-full"
-                                    />
-                                    <button
-                                      onClick={() => removeIndoorServiceItem(item.id)}
-                                      className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0"
-                                      title="Remove custom room"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className={`text-xs font-bold ${isChecked ? 'text-indigo-950' : 'text-slate-800'}`}>
-                                    {item.roomType}
-                                  </span>
-                                )}
-                              </div>
-                              {item.isCustom ? (
-                                <input
-                                  type="text"
-                                  placeholder="Room number / clinical remarks..."
-                                  value={item.remarks || ''}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onChange={(e) => updateIndoorServiceItem(item.id, { remarks: e.target.value })}
-                                  className="w-full bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] text-slate-600 focus:outline-none focus:border-indigo-400"
-                                />
-                              ) : (
-                                item.remarks && (
-                                  <p className="text-[11px] text-slate-500 font-medium pl-8">
-                                    {item.remarks}
-                                  </p>
-                                )
-                              )}
-                            </div>
-                          </td>
-
-                          {/* Daily Rate */}
-                          <td className="p-3">
-                            {item.isCustom ? (
-                              <div className="relative" onClick={(e) => e.stopPropagation()}>
-                                <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                                <input
-                                  type="number"
-                                  value={item.dailyRate}
-                                  onChange={(e) => updateIndoorServiceItem(item.id, { dailyRate: Number(e.target.value) })}
-                                  className="w-full pl-8 pr-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
-                                />
-                              </div>
-                            ) : (
-                              <div className="space-y-0.5">
-                                <div className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 inline-flex items-center gap-1">
-                                  <span className="text-[10px] text-slate-500 font-semibold">BDT</span>
-                                  <span>{(item.dailyRate || 0).toLocaleString()} / day</span>
-                                </div>
-                                {item.rateNote && (
-                                  <p className="text-[10px] text-slate-500 font-medium px-0.5">
-                                    {item.rateNote}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                          </td>
-
-                          {/* Days Stay */}
-                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="number"
-                              min={1}
-                              placeholder="0"
-                              value={
-                                showFullIndoorCalculation
-                                  ? (item.days === '' ? '' : item.days)
-                                  : 1
-                              }
-                              onChange={(e) => updateIndoorServiceItem(item.id, { days: e.target.value === '' ? '' : Number(e.target.value) })}
-                              className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                                !showFullIndoorCalculation
-                                  ? 'bg-slate-100 border-slate-200 text-indigo-900 font-extrabold'
-                                  : isChecked
-                                    ? 'bg-white border-slate-300 text-indigo-900 focus:ring-2 focus:ring-indigo-500'
-                                    : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-indigo-500'
-                              }`}
-                            />
-                          </td>
-
-                          {/* Amount (Per Day vs Total) */}
-                          <td className="p-3 text-right">
-                            <span className={`text-xs font-black ${isChecked ? 'text-indigo-700 text-sm' : 'text-slate-400'}`}>
-                              BDT {(showFullIndoorCalculation ? (item.totalAmount || 0) : (item.dailyRate || 0)).toLocaleString()}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Additional Food Charge Table */}
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                    <th className="p-3 w-16 text-center">SELECT</th>
-                    <th className="p-3">SL & SERVICE NAME</th>
-                    <th className="p-3 w-36">PER DAY CHARGE (BDT)</th>
-                    <th className="p-3 w-28 text-center">DAY STAY</th>
-                    <th className="p-3 w-36 text-right">
-                      {showFullIndoorCalculation ? 'TOTAL AMOUNT (BDT)' : 'PER DAY AMOUNT (BDT)'}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr 
-                    onClick={toggleFoodChargeSelection}
-                    className={`transition-colors cursor-pointer ${
-                      foodChargeSelected 
-                        ? 'bg-amber-50/80 font-medium' 
-                        : 'bg-white hover:bg-slate-50 text-slate-600'
-                    }`}
-                  >
-                    {/* Checkbox */}
-                    <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={foodChargeSelected}
-                        onChange={toggleFoodChargeSelection}
-                        className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer accent-amber-600"
-                      />
-                    </td>
-
-                    {/* Service Name */}
-                    <td className="p-3">
-                      <div className="space-y-0.5">
-                        <span className={`text-xs font-bold ${foodChargeSelected ? 'text-amber-950' : 'text-slate-800'}`}>
-                          Food Charge 3 Times
-                        </span>
-                        <p className="text-[11px] text-slate-500 font-medium">
-                          Food & Meal Charges (3 Times Daily)
-                        </p>
-                      </div>
-                    </td>
-
-                    {/* Per Day Charge */}
-                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                      <div className="relative">
-                        <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                        <input
-                          type="number"
-                          min={0}
-                          placeholder="500"
-                          value={foodChargePerDay === '' ? '' : foodChargePerDay}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? '' : Number(e.target.value);
-                            setFoodChargePerDay(val);
-                            if (val !== '' && !foodChargeSelected) {
-                              setFoodChargeSelected(true);
-                              if (foodChargeDays === '') {
-                                setFoodChargeDays(treatmentDays !== '' && Number(treatmentDays) > 0 ? Number(treatmentDays) : 1);
-                              }
-                            }
-                          }}
-                          className={`w-full pl-8 pr-1.5 py-1 border rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 ${
-                            foodChargeSelected ? 'bg-white border-slate-300' : 'bg-slate-50 border-slate-200'
-                          }`}
-                        />
-                      </div>
-                    </td>
-
-                    {/* Day Stay */}
-                    <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                  </td>
+                  <td className="p-3">
+                    <div className="font-bold text-slate-900">Food (Breakfast, Lunch, Dinner)</div>
+                    <div className="text-[11px] text-slate-500">Printed inside Indoor Room &amp; Food table (1 Day)</div>
+                  </td>
+                  <td className="p-3 w-36" onClick={(e) => e.stopPropagation()}>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
                       <input
                         type="number"
-                        min={1}
-                        placeholder="0"
-                        value={
-                          showFullIndoorCalculation
-                            ? (foodChargeDays === '' ? '' : foodChargeDays)
-                            : 1
-                        }
+                        min={0}
+                        disabled={!includeIndoor}
+                        value={foodChargePerDay === '' ? '' : foodChargePerDay}
                         onChange={(e) => {
                           const val = e.target.value === '' ? '' : Number(e.target.value);
-                          setFoodChargeDays(val);
-                          if (val !== '' && Number(val) > 0) {
-                            setFoodChargeSelected(true);
-                          } else if (val === '') {
-                            setFoodChargeSelected(false);
-                          }
+                          setFoodChargePerDay(val);
+                          if (val !== '' && !foodChargeSelected) setFoodChargeSelected(true);
                         }}
-                        className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                          !showFullIndoorCalculation
-                            ? 'bg-slate-100 border-slate-200 text-amber-900 font-extrabold'
-                            : foodChargeSelected
-                              ? 'bg-white border-slate-300 text-amber-900 focus:ring-2 focus:ring-amber-500'
-                              : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-amber-500'
-                        }`}
+                        className="w-full pl-8 pr-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold tabular-nums"
                       />
-                    </td>
-
-                    {/* Amount (Per Day vs Total) */}
-                    <td className="p-3 text-right">
-                      <span className={`text-xs font-black ${foodChargeSelected ? 'text-amber-700 text-sm' : 'text-slate-400'}`}>
-                        BDT {(showFullIndoorCalculation ? foodChargeTotal : (foodChargeSelected ? (foodChargePerDay === '' ? 0 : Number(foodChargePerDay)) : 0)).toLocaleString()}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs gap-3">
-              <div className="text-slate-500 font-medium">
-                Selected room / accommodation: <span className="font-bold text-indigo-800">{activeIndoorServices.length + (foodChargeSelected ? 1 : 0)}</span> of {indoorServiceList.length + 1} items
-              </div>
-
-              <div className="flex flex-col sm:flex-row justify-end items-stretch gap-3">
-                <div className="bg-white p-3 px-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between min-w-[200px] sm:min-w-[220px]">
-                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-                    {showFullIndoorCalculation ? `Indoor Accommodation Subtotal (${numTreatmentDays} Days)` : 'Per Day Subtotal'}
-                  </div>
-                  <div className="text-sm sm:text-base font-black text-indigo-900 mt-1">
-                    BDT {(showFullIndoorCalculation ? indoorSubtotal : indoorPerDaySubtotal).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
+                    </div>
+                  </td>
+                  <td className="p-3 w-24 text-center font-bold text-slate-700 tabular-nums">1 Day</td>
+                  <td className="p-3 w-36 text-right font-black tabular-nums">
+                    <span className={includeIndoor && foodChargeSelected ? 'text-amber-700 text-sm' : 'text-slate-400'}>
+                      BDT {foodCharge1DayTotal.toLocaleString()}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
-
-      {/* SECTION 5: Weekly Treatments */}
+      {/* SECTION 3: Weekly Treatments (Per Session) */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-        
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-700 font-bold text-xs">
-              5
+              3
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>5. Weekly Treatments</span>
+              <h3 className="text-base font-bold text-slate-900">
+                3. Weekly / Special Treatments (Per Session)
               </h3>
               <p className="text-xs text-slate-500">
-                Weekly procedures (Ozon, ED, etc.). Supports automatic 10-day cycle ratio session calculation (3 sessions per 10 days).
+                Shown as a separate table below Daily Treatments (e.g., Ozone Therapy: Outdoor 40% Off / Indoor 100% Free).
               </p>
             </div>
           </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative w-48">
+              <input
+                type="text"
+                placeholder="Filter weekly..."
+                value={additionalTreatmentSearch}
+                onChange={(e) => setAdditionalTreatmentSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
+            </div>
+            <button
+              type="button"
+              onClick={addCustomAdditionalTreatment}
+              className="flex items-center gap-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 font-bold text-xs px-3 py-1.5 rounded-xl cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Custom</span>
+            </button>
+          </div>
         </div>
 
-        {/* Weekly Treatments Table */}
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-[11px] uppercase font-bold tracking-wider">
-                <th className="p-3 w-16 text-center">
+                <th className="p-3 w-14 text-center">
                   <input
                     type="checkbox"
                     checked={isAllAdditionalTreatmentsSelected}
                     onChange={toggleSelectAllAdditionalTreatments}
-                    className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer accent-sky-600"
-                    title="Select / Deselect All Weekly Treatments"
+                    className="w-4 h-4 rounded accent-sky-600 cursor-pointer"
                   />
                 </th>
                 <th className="p-3">SL & Treatment Name</th>
-                <th className="p-3 w-28 text-center">Unit Price (BDT)</th>
-                <th className="p-3 w-28 text-center">Sessions</th>
-                <th className="p-3 w-24 text-center">Discount (%)</th>
-                <th className="p-3 w-28 text-center">Discount (BDT)</th>
-                <th className="p-3 w-32 text-right">Total Price (BDT)</th>
+                <th className="p-3 w-32">Price</th>
+                <th className="p-3 w-36 text-center">Quantity</th>
+                <th className="p-3 w-48 text-center">Discount (% / ৳)</th>
+                <th className="p-3 w-40 text-right">Net Price</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredAdditionalTreatmentList.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-400 text-xs font-medium">
-                    No weekly treatments found.
-                  </td>
-                </tr>
-              ) : (
-                filteredAdditionalTreatmentList.map((item, idx) => {
-                  const isChecked = item.selected;
-                  return (
-                    <tr
-                      key={item.id}
-                      onClick={() => toggleAdditionalTreatmentSelection(item.id)}
-                      className={`transition-colors cursor-pointer ${
-                        isChecked
-                          ? 'bg-sky-50/80 font-medium'
-                          : 'bg-white hover:bg-slate-50 text-slate-600'
-                      }`}
-                    >
-                      {/* Checkbox */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleAdditionalTreatmentSelection(item.id)}
-                          className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer accent-sky-600"
-                        />
-                      </td>
+              {filteredAdditionalTreatmentList.map((item, idx) => {
+                const isChecked = item.selected;
+                const outP = computeRowPricing(item, item.outdoorQty, item.outdoorDiscountPct, 'outdoor', 0, item.outdoorDiscountType, item.outdoorDiscountFixed);
+                const inP = computeRowPricing(item, item.indoorQty, item.indoorDiscountPct, 'indoor', 0, item.indoorDiscountType, item.indoorDiscountFixed);
+                const outType = item.outdoorDiscountType || (item.fixedDiscountAmount && item.fixedDiscountAmount > 0 && item.outdoorDiscountPct === '' ? 'fixed' : 'percent');
+                const inType = item.indoorDiscountType || (item.fixedDiscountAmount && item.fixedDiscountAmount > 0 && !isItemIndoorFreeByDefault(item) && item.indoorDiscountPct === '' ? 'fixed' : 'percent');
 
-                      {/* SL & Treatment Name */}
-                      <td className="p-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-slate-500 text-xs w-6">
-                              {idx + 1}.
-                            </span>
-                            {item.isCustom ? (
-                              <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
-                                <input
-                                  type="text"
-                                  value={item.treatmentName}
-                                  onChange={(e) => updateAdditionalTreatmentItem(item.id, { treatmentName: e.target.value })}
-                                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-sky-500 w-full"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => removeCustomAdditionalTreatment(item.id)}
-                                  className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer shrink-0"
-                                  title="Remove custom treatment"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className={`text-xs font-bold ${isChecked ? 'text-sky-950' : 'text-slate-800'}`}>
-                                  {item.treatmentName}
-                                </span>
-                                {isChecked && item.isIndoorFree && (
-                                  <span
-                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
-                                      patientTreatmentMode === 'indoor'
-                                        ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
-                                        : 'bg-slate-100 text-slate-600 border-slate-200'
-                                    }`}
-                                    title={patientTreatmentMode === 'indoor' ? 'Indoor Patient - 100% Free Treatment' : 'Free for Indoor Patients'}
-                                  >
-                                    🎁 {patientTreatmentMode === 'indoor' ? 'Indoor 100% Free' : 'Free for Indoor'}
-                                  </span>
-                                )}
-                                {isChecked && item.outdoorDiscountPercent !== undefined && Number(item.outdoorDiscountPercent) > 0 && (
-                                  <span
-                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${
-                                      patientTreatmentMode === 'outdoor'
-                                        ? 'bg-amber-100 text-amber-900 border-amber-300 ring-1 ring-amber-400'
-                                        : 'bg-slate-100 text-slate-600 border-slate-200'
-                                    }`}
-                                    title={`Outdoor Discount: ${item.outdoorDiscountPercent}% Off`}
-                                  >
-                                    🏷️ Outdoor {item.outdoorDiscountPercent}% Off
-                                  </span>
-                                )}
-                                {isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 && (
-                                  <span
-                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
-                                    title={`Fixed Discount: BDT ${item.fixedDiscountAmount}`}
-                                  >
-                                    🏷️ Fixed BDT {item.fixedDiscountAmount.toLocaleString()} Off
-                                  </span>
-                                )}
-                                {isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 && (!item.fixedDiscountAmount || Number(item.fixedDiscountAmount) === 0) && (
-                                  <span
-                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 bg-emerald-100 text-emerald-900 border-emerald-300"
-                                    title={`Fixed Discount: ${item.defaultDiscountPercent}% Off`}
-                                  >
-                                    🏷️ Fixed {item.defaultDiscountPercent}% Off
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          {item.description && !item.isCustom && (
-                            <p className="text-[11px] text-slate-500 font-medium pl-8">
-                              {item.description}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Unit Price */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <div className="relative">
-                          <span className="absolute left-2 top-1.5 text-slate-400 text-[10px] font-bold">BDT</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={item.unitCost === 0 ? '' : item.unitCost}
-                            onChange={(e) => updateAdditionalTreatmentItem(item.id, { unitCost: e.target.value === '' ? 0 : Number(e.target.value) })}
-                            className="w-full pl-8 pr-1 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 text-center focus:ring-2 focus:ring-sky-500"
-                          />
-                        </div>
-                      </td>
-
-                      {/* Sessions */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <div className="space-y-1">
-                          <input
-                            type="number"
-                            min={1}
-                            placeholder="0"
-                            value={item.sessions === '' ? '' : item.sessions}
-                            onChange={(e) => updateAdditionalTreatmentItem(item.id, { sessions: e.target.value === '' ? '' : Number(e.target.value) })}
-                            className={`w-full px-1.5 py-1 border rounded-lg text-xs font-bold text-center placeholder-slate-300 transition-colors ${
-                              isChecked
-                                ? 'bg-white border-slate-300 text-sky-900 focus:ring-2 focus:ring-sky-500'
-                                : 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-2 focus:ring-sky-500'
-                            }`}
-                          />
-                        </div>
-                      </td>
-
-                      {/* Discount (%) */}
-                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        {isChecked && patientTreatmentMode === 'indoor' && item.isIndoorFree ? (
-                          <div
-                            className="bg-indigo-100/80 border border-indigo-300 text-indigo-900 rounded-lg py-1 px-1 text-[11px] font-black text-center shadow-2xs"
-                            title="Indoor patients get this treatment 100% free"
-                          >
-                            100% Free
-                          </div>
-                        ) : isChecked && item.fixedDiscountAmount !== undefined && Number(item.fixedDiscountAmount) > 0 ? (
-                          <div
-                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
-                            title={`Fixed Discount Tag: BDT ${Number(item.fixedDiscountAmount).toLocaleString()}`}
-                          >
-                            <span>🏷️</span>
-                            <span>Fixed BDT {Number(item.fixedDiscountAmount).toLocaleString()}</span>
-                          </div>
-                        ) : isChecked && item.defaultDiscountPercent !== undefined && Number(item.defaultDiscountPercent) > 0 ? (
-                          <div
-                            className="bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg py-1 px-1 text-[10px] font-black text-center shadow-2xs cursor-default flex items-center justify-center gap-0.5 whitespace-nowrap"
-                            title={`Fixed Discount Tag: ${Number(item.defaultDiscountPercent)}%`}
-                          >
-                            <span>🏷️</span>
-                            <span>Fixed {Number(item.defaultDiscountPercent)}%</span>
+                return (
+                  <tr
+                    key={item.id}
+                    onClick={() => toggleAdditionalTreatmentSelection(item.id)}
+                    className={`transition-colors cursor-pointer ${
+                      isChecked ? 'bg-sky-50/80 font-medium' : 'bg-white hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleAdditionalTreatmentSelection(item.id)}
+                        className="w-4 h-4 rounded accent-sky-600 cursor-pointer"
+                      />
+                    </td>
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-slate-500 w-6">{idx + 1}.</span>
+                        {item.isCustom ? (
+                          <div className="flex items-center gap-2 w-full" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              value={item.treatmentName}
+                              onChange={(e) => updateAdditionalTreatmentItem(item.id, { treatmentName: e.target.value })}
+                              className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold w-full"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeCustomAdditionalTreatment(item.id)}
+                              className="p-1 text-rose-500 hover:bg-rose-100 rounded cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         ) : (
-                          <div className="relative">
+                          <span className={`text-xs font-bold ${isChecked ? 'text-sky-950' : 'text-slate-800'}`}>
+                            {item.treatmentName}
+                          </span>
+                        )}
+                      </div>
+                      {item.description && !item.isCustom && (
+                        <p className="text-[11px] text-slate-500 pl-8">{item.description}</p>
+                      )}
+                    </td>
+
+                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="number"
+                        min={0}
+                        value={item.unitCost || ''}
+                        onChange={(e) => updateAdditionalTreatmentItem(item.id, { unitCost: Number(e.target.value) || 0 })}
+                        className="w-24 px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold tabular-nums"
+                      />
+                    </td>
+
+                    <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      {bothModesActive ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="text-[10px] font-bold text-emerald-700 w-7 text-right">Out:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="1"
+                              value={item.outdoorQty === '' ? '' : item.outdoorQty}
+                              onChange={(e) => updateAdditionalTreatmentItem(item.id, { outdoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-14 px-1.5 py-0.5 bg-white border border-emerald-300 rounded text-xs font-bold text-center tabular-nums"
+                            />
+                          </div>
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="text-[10px] font-bold text-indigo-700 w-7 text-right">In:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="1"
+                              value={item.indoorQty === '' ? '' : item.indoorQty}
+                              onChange={(e) => updateAdditionalTreatmentItem(item.id, { indoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-14 px-1.5 py-0.5 bg-white border border-indigo-300 rounded text-xs font-bold text-center tabular-nums"
+                            />
+                          </div>
+                        </div>
+                      ) : includeIndoor ? (
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="1"
+                          value={item.indoorQty === '' ? '' : item.indoorQty}
+                          onChange={(e) => updateAdditionalTreatmentItem(item.id, { indoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                          className="w-16 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                        />
+                      ) : (
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="1"
+                          value={item.outdoorQty === '' ? '' : item.outdoorQty}
+                          onChange={(e) => updateAdditionalTreatmentItem(item.id, { outdoorQty: e.target.value === '' ? '' : Number(e.target.value) })}
+                          className="w-16 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                        />
+                      )}
+                    </td>
+
+                    <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      {bothModesActive ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="text-[10px] font-bold text-emerald-700 w-7 text-right">Out:</span>
                             <input
                               type="number"
                               min={0}
-                              max={100}
+                              max={outType === 'percent' ? 100 : undefined}
                               placeholder="0"
-                              value={item.discountPercent === 0 || item.discountPercent === '' ? '' : item.discountPercent}
-                              onChange={(e) => updateAdditionalTreatmentItem(item.id, { discountPercent: e.target.value === '' ? '' : Number(e.target.value) })}
-                              onFocus={(e) => e.target.select()}
-                              className="w-full pr-5 pl-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-amber-800 text-center focus:ring-2 focus:ring-sky-500 placeholder-slate-300"
+                              value={
+                                outType === 'fixed'
+                                  ? item.outdoorDiscountFixed === '' || item.outdoorDiscountFixed === undefined
+                                    ? ''
+                                    : item.outdoorDiscountFixed
+                                  : item.outdoorDiscountPct === ''
+                                  ? ''
+                                  : item.outdoorDiscountPct
+                              }
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                if (outType === 'fixed') {
+                                  updateAdditionalTreatmentItem(item.id, { outdoorDiscountType: 'fixed', outdoorDiscountFixed: val });
+                                } else {
+                                  updateAdditionalTreatmentItem(item.id, { outdoorDiscountType: 'percent', outdoorDiscountPct: val });
+                                }
+                              }}
+                              className="w-16 px-1.5 py-0.5 bg-white border border-emerald-300 rounded text-xs font-bold text-center tabular-nums"
                             />
-                            <span className="absolute right-1.5 top-1.5 text-amber-600 text-[10px] font-bold">%</span>
+                            <button
+                              type="button"
+                              title="Switch between % and Fixed Taka (৳)"
+                              onClick={() =>
+                                updateAdditionalTreatmentItem(item.id, {
+                                  outdoorDiscountType: outType === 'fixed' ? 'percent' : 'fixed'
+                                })
+                              }
+                              className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 cursor-pointer"
+                            >
+                              {outType === 'fixed' ? '৳' : '%'}
+                            </button>
                           </div>
-                        )}
-                      </td>
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="text-[10px] font-bold text-indigo-700 w-7 text-right">In:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={inType === 'percent' ? 100 : undefined}
+                              placeholder="0"
+                              value={
+                                inType === 'fixed'
+                                  ? item.indoorDiscountFixed === '' || item.indoorDiscountFixed === undefined
+                                    ? ''
+                                    : item.indoorDiscountFixed
+                                  : item.indoorDiscountPct === ''
+                                  ? ''
+                                  : item.indoorDiscountPct
+                              }
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : Number(e.target.value);
+                                if (inType === 'fixed') {
+                                  updateAdditionalTreatmentItem(item.id, { indoorDiscountType: 'fixed', indoorDiscountFixed: val });
+                                } else {
+                                  updateAdditionalTreatmentItem(item.id, { indoorDiscountType: 'percent', indoorDiscountPct: val });
+                                }
+                              }}
+                              className="w-16 px-1.5 py-0.5 bg-white border border-indigo-300 rounded text-xs font-bold text-center tabular-nums"
+                            />
+                            <button
+                              type="button"
+                              title="Switch between % and Fixed Taka (৳)"
+                              onClick={() =>
+                                updateAdditionalTreatmentItem(item.id, {
+                                  indoorDiscountType: inType === 'fixed' ? 'percent' : 'fixed'
+                                })
+                              }
+                              className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 cursor-pointer"
+                            >
+                              {inType === 'fixed' ? '৳' : '%'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : includeIndoor ? (
+                        <div className="flex items-center justify-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            max={inType === 'percent' ? 100 : undefined}
+                            placeholder="0"
+                            value={
+                              inType === 'fixed'
+                                ? item.indoorDiscountFixed === '' || item.indoorDiscountFixed === undefined
+                                  ? ''
+                                  : item.indoorDiscountFixed
+                                : item.indoorDiscountPct === ''
+                                ? ''
+                                : item.indoorDiscountPct
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? '' : Number(e.target.value);
+                              if (inType === 'fixed') {
+                                updateAdditionalTreatmentItem(item.id, { indoorDiscountType: 'fixed', indoorDiscountFixed: val });
+                              } else {
+                                updateAdditionalTreatmentItem(item.id, { indoorDiscountType: 'percent', indoorDiscountPct: val });
+                              }
+                            }}
+                            className="w-20 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                          />
+                          <button
+                            type="button"
+                            title="Switch between % and Fixed Taka (৳)"
+                            onClick={() =>
+                              updateAdditionalTreatmentItem(item.id, {
+                                indoorDiscountType: inType === 'fixed' ? 'percent' : 'fixed'
+                              })
+                            }
+                            className="px-2 py-1 text-[11px] font-bold rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 cursor-pointer"
+                          >
+                            {inType === 'fixed' ? '৳' : '%'}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            max={outType === 'percent' ? 100 : undefined}
+                            placeholder="0"
+                            value={
+                              outType === 'fixed'
+                                ? item.outdoorDiscountFixed === '' || item.outdoorDiscountFixed === undefined
+                                  ? ''
+                                  : item.outdoorDiscountFixed
+                                : item.outdoorDiscountPct === ''
+                                ? ''
+                                : item.outdoorDiscountPct
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? '' : Number(e.target.value);
+                              if (outType === 'fixed') {
+                                updateAdditionalTreatmentItem(item.id, { outdoorDiscountType: 'fixed', outdoorDiscountFixed: val });
+                              } else {
+                                updateAdditionalTreatmentItem(item.id, { outdoorDiscountType: 'percent', outdoorDiscountPct: val });
+                              }
+                            }}
+                            className="w-20 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center tabular-nums"
+                          />
+                          <button
+                            type="button"
+                            title="Switch between % and Fixed Taka (৳)"
+                            onClick={() =>
+                              updateAdditionalTreatmentItem(item.id, {
+                                outdoorDiscountType: outType === 'fixed' ? 'percent' : 'fixed'
+                              })
+                            }
+                            className="px-2 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 cursor-pointer"
+                          >
+                            {outType === 'fixed' ? '৳' : '%'}
+                          </button>
+                        </div>
+                      )}
+                    </td>
 
-                      {/* Discount Amount */}
-                      <td className="p-3 text-center">
-                        <span className={`text-xs font-semibold ${item.discountAmount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                          -BDT {(item.discountAmount || 0).toLocaleString()}
+                    <td className="p-3 text-right tabular-nums">
+                      {bothModesActive ? (
+                        <div className="space-y-0.5 text-xs font-bold">
+                          <div className={isChecked ? 'text-emerald-700' : 'text-slate-400'}>
+                            Out: BDT {outP.netCost.toLocaleString()}
+                          </div>
+                          <div className={isChecked ? 'text-indigo-700' : 'text-slate-400'}>
+                            In: {inP.netCost === 0 && isChecked ? 'FREE' : `BDT ${inP.netCost.toLocaleString()}`}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className={`text-sm font-black ${isChecked ? 'text-sky-700' : 'text-slate-400'}`}>
+                          {includeIndoor && isChecked && inP.netCost === 0
+                            ? 'FREE'
+                            : `BDT ${(includeIndoor ? inP.netCost : outP.netCost).toLocaleString()}`}
                         </span>
-                      </td>
-
-                      {/* Total Cost */}
-                      <td className="p-3 text-right">
-                        <span className={`text-xs font-black ${isChecked ? 'text-sky-700 text-sm' : 'text-slate-400'}`}>
-                          BDT {(item.totalCost || 0).toLocaleString()}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
-
-        {/* Footer Subtotal */}
-        <div className="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 text-xs">
-          <div className="text-slate-500 font-medium">
-            Selected weekly treatments: <span className="font-bold text-sky-800">{activeAdditionalTreatments.length}</span> of {additionalTreatmentList.length} items
-          </div>
-
-          <div className="text-right flex items-center gap-2">
-            <span className="text-slate-700 font-bold">Weekly Treatments Subtotal: </span>
-            <span className="text-sky-700 font-black text-base ml-2">
-              BDT {additionalTreatmentsSubtotal.toLocaleString()}
-            </span>
-          </div>
-        </div>
-
       </div>
 
-
-      {/* SUMMARY, DISCOUNTS, PAYMENTS & GRAND TOTAL */}
+      {/* SECTION 4: Additional Fees, Notes & Billing Summary */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Left Notes & Terms */}
         <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
           <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
             <FileCheck className="w-4 h-4 text-emerald-600" />
-            <span>Additional Fees & Quotation Notes</span>
+            <span>Additional Fees & Bengali Counseling Note</span>
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Admission Fee (Indoor) */}
             <div>
-              <label className={`flex items-center gap-2 text-xs font-bold uppercase mb-1 ${patientTreatmentMode === 'outdoor' ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}>
+              <label className={`flex items-center gap-2 text-xs font-bold uppercase mb-1 ${!includeIndoor ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}>
                 <input
                   type="checkbox"
-                  disabled={patientTreatmentMode === 'outdoor'}
-                  checked={patientTreatmentMode === 'outdoor' ? false : includeAdmissionFee}
-                  onChange={(e) => {
-                    if (patientTreatmentMode !== 'outdoor') {
-                      setIncludeAdmissionFee(e.target.checked);
-                    }
-                  }}
-                  className={`w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 accent-emerald-600 ${patientTreatmentMode === 'outdoor' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                  disabled={!includeIndoor}
+                  checked={includeIndoor && includeAdmissionFee}
+                  onChange={(e) => includeIndoor && setIncludeAdmissionFee(e.target.checked)}
+                  className="w-4 h-4 rounded accent-emerald-600 cursor-pointer"
                 />
-                <span>Admission Fee (One Time - Non Refundable)</span>
-                {patientTreatmentMode === 'outdoor' && (
-                  <span className="text-[10px] lowercase text-amber-600 font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                    (Indoor only - locked)
-                  </span>
-                )}
+                <span>Admission Fee</span>
               </label>
               <div className="relative">
                 <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">BDT</span>
                 <input
                   type="number"
                   placeholder="1000"
-                  disabled={patientTreatmentMode === 'outdoor' || !includeAdmissionFee}
+                  disabled={!includeIndoor || !includeAdmissionFee}
                   value={admissionFee === '' ? '' : admissionFee}
                   onChange={(e) => setAdmissionFee(e.target.value === '' ? '' : Number(e.target.value))}
-                  className={`w-full pl-10 pr-3 py-2 border rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-                    patientTreatmentMode !== 'outdoor' && includeAdmissionFee ? 'bg-slate-50 border-slate-300' : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                  className={`w-full pl-10 pr-3 py-2 border rounded-xl text-xs font-bold tabular-nums ${
+                    includeIndoor && includeAdmissionFee
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
                   }`}
                 />
               </div>
             </div>
+
+            {/* Configurable Advance Payment Days */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                Advance Payment Days
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={advanceCourseDays === '' ? '' : advanceCourseDays}
+                onChange={(e) => setAdvanceCourseDays(e.target.value === '' ? '' : Math.min(365, Math.max(1, Number(e.target.value))))}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 tabular-nums"
+              />
+            </div>
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-              Terms & Clinical Notes
-            </label>
+            <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Clinical / Internal Notes</label>
             <textarea
-              rows={3}
+              rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full p-3 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                Billing Status
-              </label>
+              <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Billing Status</label>
               <select
                 value={paymentStatus}
                 onChange={(e) => setPaymentStatus(e.target.value as any)}
-                className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold"
               >
                 <option value="Quotation">Quotation / Estimate</option>
                 <option value="Partial Paid">Partial Paid</option>
@@ -5256,9 +3083,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                Advance Payment Received
-              </label>
+              <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Advance Payment Received</label>
               <div className="relative">
                 <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">BDT</span>
                 <input
@@ -5267,257 +3092,153 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
                   onChange={(e) => setAdvancePaid(e.target.value === '' ? '' : Number(e.target.value))}
                   onFocus={(e) => e.target.select()}
                   placeholder="0"
-                  className="w-full pl-10 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="w-full pl-10 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-emerald-800 tabular-nums"
                 />
               </div>
             </div>
           </div>
-
         </div>
 
-        {/* Right Final Calculation Card */}
-        <div className="bg-white text-slate-900 rounded-2xl p-6 shadow-md border-2 border-slate-200 space-y-5 flex flex-col justify-between">
-          
+        {/* Right Billing Summary Card */}
+        <div className="bg-white text-slate-900 rounded-2xl p-6 shadow-md border border-slate-200 space-y-4 flex flex-col justify-between">
           <div className="space-y-3">
             <h3 className="text-base font-bold text-slate-900 border-b border-slate-200 pb-2 flex items-center justify-between">
-              <span>Billing Summary</span>
+              <span>1-Day Counseling Summary</span>
               <Calculator className="w-5 h-5 text-emerald-600" />
             </h3>
 
-            <div className="space-y-3 text-xs text-slate-700">
-              
-              {/* Treatments Subtotal Section */}
-              <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200/90 space-y-2">
-                <div className="text-xs font-bold text-emerald-900 uppercase tracking-wider border-b border-emerald-200/80 pb-1.5 flex items-center justify-between">
-                  <span>
-                    {patientTreatmentMode === 'outdoor' 
-                      ? 'Treatments Subtotal - Outdoor Packages' 
-                      : patientTreatmentMode === 'indoor'
-                      ? 'Treatments Subtotal - Indoor'
-                      : 'Treatments Subtotal'}
-                  </span>
+            {includeOutdoor && (
+              <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 space-y-1 text-xs">
+                <div className="font-bold text-emerald-900 uppercase">Outdoor (1 Day)</div>
+                <div className="flex justify-between">
+                  <span>Daily Gross:</span>
+                  <span className="font-bold tabular-nums">BDT {outdoorDailyGross.toLocaleString()}</span>
                 </div>
-
-                <div className="space-y-1.5 text-slate-700">
-                  <div className="flex justify-between">
-                    <span>Total Bill:</span>
-                    <span className="font-bold text-slate-900">BDT {treatmentsGrossSubtotal.toLocaleString()}</span>
-                  </div>
-
-                  <div className="flex justify-between text-rose-700 font-medium">
-                    <span>Discount Amount:</span>
-                    <span className="font-bold text-rose-700">-BDT {treatmentsTotalDiscount.toLocaleString()}</span>
-                  </div>
-
-                  <div className="flex justify-between pt-1 border-t border-emerald-200/80 font-bold text-emerald-900">
-                    <span>After Discount Gross Total Bill:</span>
-                    <span className="text-sm font-extrabold text-emerald-800">BDT {treatmentsSubtotal.toLocaleString()}</span>
-                  </div>
+                <div className="flex justify-between text-rose-700">
+                  <span>Discount:</span>
+                  <span className="font-bold tabular-nums">-BDT {outdoorDailyDiscount.toLocaleString()}</span>
                 </div>
-              </div>
-
-              {/* Additional Services */}
-              <div className="space-y-2 pt-2 border-t border-slate-200">
-                {activeIndoorServices.length > 0 ? (
-                  <div className="space-y-1 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-200/80">
-                    <div className="flex justify-between items-center text-xs font-bold text-indigo-900">
-                      <span>
-                        Indoor Rooms ({activeIndoorServices.length})
-                        {!showFullIndoorCalculation && <span className="text-[10px] font-normal text-indigo-600 ml-1">(Per Day)</span>}:
-                      </span>
-                      <span className="text-indigo-800">BDT {effectiveIndoorRoomSubtotal.toLocaleString()}</span>
-                    </div>
-                    <div className="space-y-1 pt-1 border-t border-indigo-200/60">
-                      {activeIndoorServices.map((room) => {
-                        const roomDays = showFullIndoorCalculation ? (room.days === '' ? 1 : Number(room.days)) : 1;
-                        const roomAmt = showFullIndoorCalculation ? (room.totalAmount || 0) : (room.dailyRate || 0);
-                        return (
-                          <div key={room.id} className="flex justify-between items-center text-[11px] text-slate-700">
-                            <span className="truncate pr-1 text-slate-700" title={room.roomType}>• {room.roomType} ({roomDays}d)</span>
-                            <span className="font-bold text-slate-900 shrink-0">BDT {roomAmt.toLocaleString()}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-700">Indoor Accommodation:</span>
-                    <span className="font-bold text-slate-500">BDT 0</span>
+                <div className="flex justify-between pt-1 border-t border-emerald-200 font-extrabold text-emerald-900">
+                  <span>Daily Net:</span>
+                  <span className="tabular-nums">BDT {outdoorDailyNet.toLocaleString()}</span>
+                </div>
+                {outdoorWeeklyRows.length > 0 && (
+                  <div className="flex justify-between text-sky-800 font-bold pt-1">
+                    <span>Weekly Therapies:</span>
+                    <span className="tabular-nums">BDT {outdoorWeeklyNet.toLocaleString()}</span>
                   </div>
                 )}
-
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-700">
-                    Food Charge
-                    {!showFullIndoorCalculation && foodChargeSelected && <span className="text-[10px] text-slate-500 ml-1">(Per Day)</span>}:
-                  </span>
-                  <span className="font-bold text-slate-900">BDT {effectiveFoodChargeTotal.toLocaleString()}</span>
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-700">Admission Fee:</span>
-                  <span className="font-bold text-slate-900">BDT {actualAdmissionFee.toLocaleString()}</span>
-                </div>
               </div>
+            )}
 
-              {/* Overall Special Discount */}
-              <div className="pt-2 border-t border-slate-200">
-                <div className="flex justify-between items-center text-xs text-amber-800 font-semibold mb-1">
-                  <span>Additional Special Discount (%):</span>
-                  <span>-BDT {overallDiscountAmount.toLocaleString()}</span>
+            {includeIndoor && (
+              <div className="bg-indigo-50/70 p-3 rounded-xl border border-indigo-200 space-y-1 text-xs">
+                <div className="font-bold text-indigo-900 uppercase">Indoor (1 Day)</div>
+                <div className="flex justify-between">
+                  <span>Daily Gross:</span>
+                  <span className="font-bold tabular-nums">BDT {indoorDailyGross.toLocaleString()}</span>
                 </div>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  placeholder="0"
-                  value={overallDiscountPercent === '' ? '' : overallDiscountPercent}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value)));
-                    setOverallDiscountPercent(val);
-                  }}
-                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              {/* Grand Total */}
-              <div className="pt-3 border-t-2 border-slate-300">
-                <div className="flex justify-between items-end">
-                  <span className="text-xs text-slate-800 uppercase font-extrabold tracking-wider">Grand Total Bill:</span>
-                  <span className="text-2xl font-black text-emerald-700">
-                    BDT {grandTotal.toLocaleString()}
-                  </span>
+                <div className="flex justify-between text-rose-700">
+                  <span>Discount:</span>
+                  <span className="font-bold tabular-nums">-BDT {indoorDailyDiscount.toLocaleString()}</span>
                 </div>
-              </div>
-
-              {/* Weekly Treatments (Separated Below Grand Total) */}
-              {activeAdditionalTreatments.length > 0 && (
-                <div className="space-y-1.5 bg-sky-50/80 p-3 rounded-xl border border-sky-200">
-                  <div className="flex justify-between items-center text-xs font-bold text-sky-950">
-                    <span>Weekly Treatments ({activeAdditionalTreatments.length}):</span>
-                    <span className="text-sky-900 font-extrabold">BDT {additionalTreatmentsSubtotal.toLocaleString()}</span>
+                <div className="flex justify-between pt-1 border-t border-indigo-200 font-extrabold text-indigo-900">
+                  <span>Daily Treatment Net:</span>
+                  <span className="tabular-nums">BDT {indoorDailyNet.toLocaleString()}</span>
+                </div>
+                {indoorWeeklyRows.length > 0 && (
+                  <div className="flex justify-between text-sky-800 font-bold">
+                    <span>Weekly Therapies:</span>
+                    <span className="tabular-nums">{indoorWeeklyNet === 0 ? 'FREE' : `BDT ${indoorWeeklyNet.toLocaleString()}`}</span>
                   </div>
-                  <div className="space-y-1 pt-1.5 border-t border-sky-200/80">
-                    {activeAdditionalTreatments.map((tr) => (
-                      <div key={tr.id} className="flex justify-between items-center text-[11px] text-slate-700">
-                        <span className="truncate pr-1 text-slate-700" title={tr.treatmentName}>• {tr.treatmentName} ({tr.sessions}s)</span>
-                        <span className="font-bold text-slate-900 shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="text-[10px] text-sky-800 pt-1 border-t border-sky-200/60 italic">
-                    * Billed separately per session/week (Excluded from Grand Total)
-                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>Room (1 Day):</span>
+                  <span className="font-bold tabular-nums">BDT {indoorRoomDailySubtotal.toLocaleString()}</span>
                 </div>
-              )}
-
-              {/* Advance & Due */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5">
-                <div className="flex justify-between text-xs font-semibold text-slate-700">
-                  <span>Advance Paid:</span>
-                  <span className="font-bold text-slate-900">BDT {advancePaid.toLocaleString()}</span>
+                <div className="flex justify-between">
+                  <span>Food (1 Day):</span>
+                  <span className="font-bold tabular-nums">BDT {foodCharge1DayTotal.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-xs font-bold text-rose-700">
-                  <span>Net Due Balance:</span>
-                  <span className="text-base font-black text-rose-700">BDT {dueAmount.toLocaleString()}</span>
+                <div className="flex justify-between">
+                  <span>Admission Fee (1-Time):</span>
+                  <span className="font-bold tabular-nums">BDT {actualAdmissionFee.toLocaleString()}</span>
                 </div>
               </div>
+            )}
 
+            <div className="pt-2 border-t border-slate-200">
+              <div className="flex justify-between items-center text-xs text-amber-800 font-semibold mb-1">
+                <span>Additional Special Discount (%):</span>
+                <span className="tabular-nums">-BDT {overallDiscountAmount.toLocaleString()}</span>
+              </div>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                placeholder="0"
+                value={overallDiscountPercent === '' ? '' : overallDiscountPercent}
+                onChange={(e) => setOverallDiscountPercent(e.target.value === '' ? '' : Math.min(100, Math.max(0, Number(e.target.value))))}
+                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold tabular-nums"
+              />
+            </div>
+
+            <div className="pt-2 border-t-2 border-slate-300 flex justify-between items-end">
+              <span className="text-xs text-slate-800 uppercase font-extrabold">Recorded Quotation Total:</span>
+              <span className="text-xl font-black text-emerald-700 tabular-nums">BDT {grandTotal.toLocaleString()}</span>
+            </div>
+
+            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span>Advance Paid:</span>
+                <span className="font-bold tabular-nums">BDT {Number(advancePaid || 0).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-rose-700 font-bold">
+                <span>Net Due Balance:</span>
+                <span className="tabular-nums">BDT {dueAmount.toLocaleString()}</span>
+              </div>
             </div>
           </div>
 
-          {/* Bottom Actions */}
-          <div className="space-y-2.5 pt-4">
+          <div className="space-y-2.5 pt-2">
             {saveError && (
               <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold px-3 py-2 rounded-xl">
                 {saveError}
               </div>
             )}
             <button
+              type="button"
               onClick={handlePrint}
               disabled={isSaving}
-              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs py-3 px-4 rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-lg transition-all cursor-pointer"
             >
               <Printer className="w-4 h-4" />
               <span>{isSaving ? 'Saving...' : 'Print A4 Invoice Quotation'}</span>
             </button>
 
             <button
+              type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-emerald-300 font-bold text-xs py-2.5 px-4 rounded-xl border border-slate-700 transition-colors cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-emerald-300 font-bold text-xs py-2.5 px-4 rounded-xl border border-slate-700 transition-colors cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>{isSaving ? 'Saving...' : (isSaved ? 'Quotation Saved!' : 'Save Quotation Record')}</span>
+              <span>{isSaving ? 'Saving...' : isSaved ? 'Quotation Saved!' : 'Save Quotation Record'}</span>
             </button>
 
             {onBackToPostConsultation && (
               <button
                 type="button"
                 onClick={handleBackToPostConsultation}
-                className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs py-2.5 px-4 rounded-xl border border-blue-200 transition-colors cursor-pointer active:scale-95"
-                title="Return to Post Consultation tab"
+                className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs py-2.5 px-4 rounded-xl border border-blue-200 transition-colors cursor-pointer"
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span>Back to Post Consultation</span>
               </button>
             )}
           </div>
-
         </div>
-
       </div>
-
-      </div>
-
-      {/* Package Comparison Modal */}
-      <PackageComparisonModal
-        isOpen={isCompareModalOpen}
-        onClose={() => setIsCompareModalOpen(false)}
-        selectedTreatments={treatmentList.filter(t => t.selected).map(t => {
-          const numDays = (treatmentDays !== '' && Number(treatmentDays) > 0) ? Number(treatmentDays) : 0;
-          const calcDays = showFullTreatmentCalculation ? (numDays > 0 ? numDays : 1) : 1;
-          const currentSessions = t.sessions === '' ? 0 : Number(t.sessions);
-          const currentDaily = calcDays > 0 ? (currentSessions / calcDays) : currentSessions;
-
-          let effOutdoorDaily = t.outdoorSessions !== undefined ? t.outdoorSessions : 1;
-          let effIndoorDaily = t.indoorSessions !== undefined ? t.indoorSessions : 1;
-
-          if (patientTreatmentMode === 'outdoor' && currentDaily > 0) {
-            effOutdoorDaily = currentDaily;
-          } else if (patientTreatmentMode === 'indoor' && currentDaily > 0) {
-            effIndoorDaily = currentDaily;
-          } else if (patientTreatmentMode === '' && currentDaily > 0) {
-            effOutdoorDaily = currentDaily;
-            effIndoorDaily = currentDaily;
-          }
-
-          return {
-            ...t,
-            outdoorSessions: effOutdoorDaily,
-            indoorSessions: effIndoorDaily,
-          };
-        })}
-        selectedAdditionalTreatments={additionalTreatmentList.filter(t => t.selected)}
-        allIndoorServices={indoorServiceList}
-        initialFoodChargeSelected={foodChargeSelected}
-        initialFoodChargePerDay={foodChargePerDay === '' ? 500 : Number(foodChargePerDay)}
-        initialIncludeAdmissionFee={includeAdmissionFee}
-        initialAdmissionFee={admissionFee === '' ? 1000 : Number(admissionFee)}
-        currentMode={patientTreatmentMode}
-        currentPackage={treatmentPackage}
-        patientName={selectedPatient?.name || (phoneSearch ? `Patient (${phoneSearch})` : 'Walk-in Patient')}
-        patientMobile={selectedPatient?.phone || (selectedPatient as any)?.mobile || (selectedPatient as any)?.mobileNumber || (selectedPatient as any)?.patientPhone || (selectedPatient as any)?.patientMobile || phoneSearch || ''}
-        consultingDoctor={billingDoctor}
-        initialSavedComparison={savedComparisonSnapshot}
-        onSaveComparison={(comp) => {
-          setSavedComparisonSnapshot(comp);
-        }}
-        onApplyPackage={handleApplyPackageFromComparison}
-        onBeforePrint={handleSaveBeforeComparisonPrint}
-        onBackToPostConsultation={handleBackToPostConsultation}
-      />
-    </>
+    </div>
   );
 };

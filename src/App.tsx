@@ -71,18 +71,6 @@ export default function App() {
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
   const [consultationSubTab, setConsultationSubTab] = useState<'pre' | 'post'>('pre');
 
-  // Global calculation view mode for Section 1 (Treatments) and Section 4 (Indoor Rooms)
-  const [showFullTreatmentCalculation, setShowFullTreatmentCalculation] = useState<boolean>(false);
-  const [showFullIndoorCalculation, setShowFullIndoorCalculation] = useState<boolean>(false);
-
-  const isAllCalculationsFull = showFullTreatmentCalculation && showFullIndoorCalculation;
-
-  const handleToggleAllCalculations = () => {
-    const nextVal = !isAllCalculationsFull;
-    setShowFullTreatmentCalculation(nextVal);
-    setShowFullIndoorCalculation(nextVal);
-  };
-
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedWorkingDate, setSelectedWorkingDate] = useState<string>(todayStr);
   const selectedWorkingDateRef = useRef<string>(todayStr);
@@ -823,8 +811,6 @@ export default function App() {
         currentUser={currentUser}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
-        isAllCalculationsFull={isAllCalculationsFull}
-        onToggleAllCalculations={handleToggleAllCalculations}
         isSyncing={isSyncing}
         onRefreshData={() => initializeAppData(true)}
       />
@@ -930,10 +916,6 @@ export default function App() {
                 onCancelEdit={() => setEditingQuotation(null)}
                 onSaveQuotation={handleSaveQuotation}
                 onPreviewPrint={handlePreviewPrint}
-                showFullTreatmentCalculation={showFullTreatmentCalculation}
-                setShowFullTreatmentCalculation={setShowFullTreatmentCalculation}
-                showFullIndoorCalculation={showFullIndoorCalculation}
-                setShowFullIndoorCalculation={setShowFullIndoorCalculation}
                 onBackToPostConsultation={handleBackToPostConsultation}
                 onUpdatePatient={handleUpdatePatient}
               />
@@ -1037,7 +1019,7 @@ export default function App() {
           <p>© {new Date().getFullYear()} SUO XI Hospital (Acupuncture) • All Rights Reserved.</p>
           <p className="text-emerald-400 font-medium">Developed & Designed By SUOXI IT</p>
           <div className="flex items-center gap-2">
-            <span className="text-emerald-400 font-semibold">SUO XI Billing System v2.1</span>
+            <span className="text-emerald-400 font-semibold">SUO XI Billing System v3</span>
           </div>
         </div>
       </footer>

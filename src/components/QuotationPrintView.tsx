@@ -1,16 +1,79 @@
-import React, { useState, useEffect } from 'react';
-import { Printer, ArrowLeft, Building2, Phone, Mail, Globe, MapPin, Copy, Check } from 'lucide-react';
-import { InvoiceQuotation } from '../types';
-import { SuoxiLogo } from './SuoxiLogo';
+import React, { useEffect } from 'react';
+import { Printer, ArrowLeft, FileText } from 'lucide-react';
+import { InvoiceQuotation, IndividualTreatment, AdditionalTreatment } from '../types';
+import { toBengaliDigits } from '../utils/bengaliNumber';
 
 interface QuotationPrintViewProps {
   quotation: InvoiceQuotation;
   onBack: () => void;
 }
 
-export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotation, onBack }) => {
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+const HEADER_LOGO_URL = 'https://suoxigroup.com/wp-content/uploads/2026/10/Complain-Box-Logo.png';
 
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatDisplayDate(dateStr?: string): string {
+  if (!dateStr) {
+    const now = new Date();
+    return `${String(now.getDate()).padStart(2, '0')} ${MONTHS_SHORT[now.getMonth()]} ${now.getFullYear()}`;
+  }
+  const ymd = dateStr.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (ymd) {
+    const y = Number(ymd[1]);
+    const m = Number(ymd[2]) - 1;
+    const d = String(Number(ymd[3])).padStart(2, '0');
+    return `${d} ${MONTHS_SHORT[m] || ''} ${y}`;
+  }
+  const parsed = new Date(dateStr);
+  if (!isNaN(parsed.getTime())) {
+    return `${String(parsed.getDate()).padStart(2, '0')} ${MONTHS_SHORT[parsed.getMonth()]} ${parsed.getFullYear()}`;
+  }
+  return dateStr;
+}
+
+function formatAgeDisplay(age?: string | number): string {
+  if (age === undefined || age === null || String(age).trim() === '') return '-';
+  const s = String(age).trim();
+  if (/^\d+$/.test(s)) return `${s}Y`;
+  return s;
+}
+
+function formatMoneyCell(amount: number): string {
+  const rounded = Math.round(Number(amount) || 0);
+  if (rounded === 0) return '0';
+  return `${rounded.toLocaleString('en-US')}/-`;
+}
+
+function formatTotalCell(amount: number, hasRows: boolean): string {
+  const rounded = Math.round(Number(amount) || 0);
+  if (hasRows && rounded === 0) return 'FREE';
+  return `${rounded.toLocaleString('en-US')}/-`;
+}
+
+function formatDiscountCell(row: {
+  discountType?: 'percent' | 'fixed';
+  fixedDiscountAmount?: number;
+  discountPercent?: number;
+  discountAmount?: number;
+}): string {
+  const discAmt = Math.round(Number(row.discountAmount) || 0);
+  const discPct = Number(row.discountPercent || 0);
+  if (row.discountType === 'fixed') {
+    return discAmt === 0 ? '0%' : `${discAmt.toLocaleString('en-US')}/-`;
+  }
+  if (
+    row.discountType !== 'percent' &&
+    row.fixedDiscountAmount &&
+    row.fixedDiscountAmount > 0 &&
+    discAmt > 0 &&
+    discPct < 100
+  ) {
+    return `${discAmt.toLocaleString('en-US')}/-`;
+  }
+  return `${discPct}%`;
+}
+
+export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotation, onBack }) => {
   // Automatically open browser print dialog safely once view is rendered
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -19,74 +82,528 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
       } catch (err) {
         console.warn('Auto print trigger failed:', err);
       }
-    }, 280);
+    }, 320);
     return () => clearTimeout(timer);
   }, []);
-
-  const handleCopyText = (text: string, key: string) => {
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch(() => {
-        fallbackCopyText(text);
-      });
-    } else {
-      fallbackCopyText(text);
-    }
-    setCopiedKey(key);
-    setTimeout(() => {
-      setCopiedKey(null);
-    }, 1800);
-  };
-
-  const fallbackCopyText = (text: string) => {
-    try {
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-    } catch (e) {
-      console.error('Fallback copy failed', e);
-    }
-  };
 
   const handlePrint = () => {
     window.print();
   };
 
-  // Calculate breakdown items for the Billing Summary
-  const treatmentsGrossSubtotal = (quotation.treatments && quotation.treatments.length > 0)
-    ? quotation.treatments.reduce((sum, tr) => sum + ((tr.unitCost || 0) * (tr.sessions || 1)), 0)
-    : (quotation.outdoorPackages || []).reduce((sum, pkg) => sum + (pkg.totalBaseCost || 0), 0);
+  const snap = quotation.packageComparison;
 
-  const treatmentsTotalDiscount = (quotation.treatments && quotation.treatments.length > 0)
-    ? quotation.treatments.reduce((sum, tr) => sum + (tr.discountAmount || 0), 0)
-    : (quotation.outdoorPackages || []).reduce((sum, pkg) => sum + (pkg.discountAmount || 0), 0);
+  // Determine which pages to render (Outdoor only, Indoor only, or Both in 2 pages)
+  const roomServices = (quotation.indoorServices || []).filter(
+    (s) => s.id !== 'food-charge-3x' && !s.roomType.toLowerCase().includes('food charge')
+  );
+  const foodService = (quotation.indoorServices || []).find(
+    (s) => s.id === 'food-charge-3x' || s.roomType.toLowerCase().includes('food charge')
+  );
 
-  const treatmentsSubtotal = quotation.treatmentsSubtotal || (treatmentsGrossSubtotal - treatmentsTotalDiscount);
+  let showOutdoor = false;
+  let showIndoor = false;
 
-  const roomServices = (quotation.indoorServices || [])
-    .filter(s => s.id !== 'food-charge-3x' && s.roomType !== 'Food Charge 3 Times');
+  if (quotation.patientTreatmentMode === 'both') {
+    showOutdoor = true;
+    showIndoor = true;
+  } else if (quotation.patientTreatmentMode === 'outdoor') {
+    showOutdoor = true;
+    showIndoor = false;
+  } else if (quotation.patientTreatmentMode === 'indoor') {
+    showOutdoor = false;
+    showIndoor = true;
+  } else if (snap && (snap.showOutdoor !== undefined || snap.showIndoor !== undefined)) {
+    showOutdoor = Boolean(snap.showOutdoor);
+    showIndoor = Boolean(snap.showIndoor);
+  } else {
+    showIndoor = roomServices.length > 0 || Boolean(foodService);
+    showOutdoor = !showIndoor;
+  }
 
-  const indoorRoomOnlySubtotal = roomServices
-    .reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+  if (!showOutdoor && !showIndoor) {
+    showOutdoor = true;
+  }
 
-  const foodChargeTotal = (quotation.indoorServices || [])
-    .filter(s => s.id === 'food-charge-3x' || s.roomType === 'Food Charge 3 Times')
-    .reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+  const advanceCourseDays = Math.max(
+    1,
+    Number(quotation.advanceCourseDays ?? snap?.advanceCourseDays ?? 10) || 10
+  );
 
-  const actualAdmissionFee = quotation.admissionFee ?? quotation.consultationFee ?? 0;
-  const overallDiscountAmount = quotation.overallDiscountAmount || 0;
+  const patientAddress =
+    quotation.patientAddress ||
+    snap?.patientAddress ||
+    '';
 
-  const mode = quotation.patientTreatmentMode || 
-    (quotation.outdoorPackages && quotation.outdoorPackages.length > 0 ? 'outdoor' : 
-     quotation.indoorServices && quotation.indoorServices.some(s => s.id !== 'food-charge-3x' && s.roomType !== 'Food Charge 3 Times') ? 'indoor' : 'individual');
+  // Resolve Outdoor & Indoor Daily Treatments (always 1-day view)
+  const baseTreatments: IndividualTreatment[] = quotation.treatments || [];
+  const outdoorTreatments: IndividualTreatment[] =
+    snap?.outdoorTreatments && snap.outdoorTreatments.length > 0
+      ? snap.outdoorTreatments
+      : baseTreatments.map((t) => {
+          const unitCost = Number(t.unitCost) || 0;
+          const qty = Number(t.sessions) || 1;
+          const gross = unitCost * qty;
+          if (t.discountType === 'fixed') {
+            const discAmt = Math.min(gross, Math.round(Number(t.discountAmount) || 0));
+            return {
+              ...t,
+              sessions: qty,
+              discountType: 'fixed',
+              discountPercent: gross > 0 ? Math.round((discAmt / gross) * 100) : 0,
+              discountAmount: discAmt,
+              totalCost: Math.max(0, gross - discAmt)
+            };
+          }
+          const discPct =
+            t.outdoorDiscountPercent !== undefined
+              ? Number(t.outdoorDiscountPercent)
+              : Number(quotation.outdoorDiscountPercent ?? snap?.outdoorDiscountPercent ?? t.discountPercent ?? 0);
+          const discAmt = Math.round((gross * discPct) / 100);
+          return {
+            ...t,
+            sessions: qty,
+            discountPercent: discPct,
+            discountAmount: discAmt,
+            totalCost: Math.max(0, gross - discAmt)
+          };
+        });
+
+  const indoorTreatments: IndividualTreatment[] =
+    snap?.indoorTreatments && snap.indoorTreatments.length > 0
+      ? snap.indoorTreatments
+      : baseTreatments.map((t) => {
+          const unitCost = Number(t.unitCost) || 0;
+          const qty = Number(t.sessions) || 1;
+          const gross = unitCost * qty;
+          if (t.discountType === 'fixed') {
+            const discAmt = Math.min(gross, Math.round(Number(t.discountAmount) || 0));
+            return {
+              ...t,
+              sessions: qty,
+              discountType: 'fixed',
+              discountPercent: gross > 0 ? Math.round((discAmt / gross) * 100) : 0,
+              discountAmount: discAmt,
+              totalCost: Math.max(0, gross - discAmt)
+            };
+          }
+          const discPct = t.isIndoorFree
+            ? 100
+            : Number(
+                quotation.patientTreatmentMode === 'indoor'
+                  ? t.discountPercent
+                  : quotation.indoorDiscountPercent ?? snap?.indoorDiscountPercent ?? t.discountPercent ?? 0
+              );
+          const discAmt = Math.round((gross * discPct) / 100);
+          return {
+            ...t,
+            sessions: qty,
+            discountPercent: discPct,
+            discountAmount: discAmt,
+            totalCost: Math.max(0, gross - discAmt)
+          };
+        });
+
+  // Resolve Outdoor & Indoor Weekly / Additional Treatments
+  const baseAdditional: AdditionalTreatment[] = quotation.additionalTreatments || [];
+  const outdoorAdditionalTreatments: AdditionalTreatment[] =
+    snap?.outdoorAdditionalTreatments && snap.outdoorAdditionalTreatments.length > 0
+      ? snap.outdoorAdditionalTreatments
+      : baseAdditional.map((a) => {
+          const unitCost = Number(a.unitCost) || 0;
+          const qty = Number(a.sessions) || 1;
+          const gross = unitCost * qty;
+          if (a.discountType === 'fixed') {
+            const discAmt = Math.min(gross, Math.round(Number(a.discountAmount) || 0));
+            return {
+              ...a,
+              sessions: qty,
+              discountType: 'fixed',
+              discountPercent: gross > 0 ? Math.round((discAmt / gross) * 100) : 0,
+              discountAmount: discAmt,
+              totalCost: Math.max(0, gross - discAmt)
+            };
+          }
+          const discPct =
+            a.outdoorDiscountPercent !== undefined
+              ? Number(a.outdoorDiscountPercent)
+              : Number(a.discountPercent ?? 0);
+          const discAmt = Math.round((gross * discPct) / 100);
+          return {
+            ...a,
+            sessions: qty,
+            discountPercent: discPct,
+            discountAmount: discAmt,
+            totalCost: Math.max(0, gross - discAmt)
+          };
+        });
+
+  const indoorAdditionalTreatments: AdditionalTreatment[] =
+    snap?.indoorAdditionalTreatments && snap.indoorAdditionalTreatments.length > 0
+      ? snap.indoorAdditionalTreatments
+      : baseAdditional.map((a) => {
+          const unitCost = Number(a.unitCost) || 0;
+          const qty = Number(a.sessions) || 1;
+          const gross = unitCost * qty;
+          const isOzone = a.treatmentName.toLowerCase().includes('ozon');
+          const isFree = Boolean(a.isIndoorFree) || isOzone;
+          if (isFree) {
+            return {
+              ...a,
+              sessions: qty,
+              discountType: 'percent',
+              discountPercent: 100,
+              discountAmount: gross,
+              totalCost: 0
+            };
+          }
+          if (a.discountType === 'fixed') {
+            const discAmt = Math.min(gross, Math.round(Number(a.discountAmount) || 0));
+            return {
+              ...a,
+              sessions: qty,
+              discountType: 'fixed',
+              discountPercent: gross > 0 ? Math.round((discAmt / gross) * 100) : 0,
+              discountAmount: discAmt,
+              totalCost: Math.max(0, gross - discAmt)
+            };
+          }
+          const discPct = Number(a.discountPercent ?? 0);
+          const discAmt = Math.round((gross * discPct) / 100);
+          return {
+            ...a,
+            sessions: qty,
+            discountPercent: discPct,
+            discountAmount: discAmt,
+            totalCost: Math.max(0, gross - discAmt)
+          };
+        });
+
+  // Food charge & admission fee (1-day indoor)
+  const foodChargeSelected =
+    snap?.foodChargeSelected !== undefined
+      ? Boolean(snap.foodChargeSelected)
+      : Boolean(foodService && (foodService.dailyRate > 0 || foodService.totalAmount > 0));
+  const foodChargePerDay = Number(
+    snap?.foodChargePerDay ?? foodService?.dailyRate ?? 0
+  );
+
+  const includeAdmissionFee =
+    snap?.includeAdmissionFee !== undefined
+      ? Boolean(snap.includeAdmissionFee)
+      : Number(quotation.admissionFee || 0) > 0;
+  const admissionFeeAmount = Number(
+    snap?.admissionFee ?? quotation.admissionFee ?? 0
+  );
+
+  const formattedDate = formatDisplayDate(quotation.createdDate);
+  const formattedAge = formatAgeDisplay(quotation.patientAge);
+
+  const renderPage = (
+    pageMode: 'outdoor' | 'indoor',
+    addPageBreakAfter: boolean
+  ) => {
+    const isIndoorPage = pageMode === 'indoor';
+    const dailyRows = isIndoorPage ? indoorTreatments : outdoorTreatments;
+    const weeklyRows = isIndoorPage ? indoorAdditionalTreatments : outdoorAdditionalTreatments;
+
+    const dailyTotal = dailyRows.reduce((sum, r) => sum + (Number(r.totalCost) || 0), 0);
+    const weeklyTotal = weeklyRows.reduce((sum, r) => sum + (Number(r.totalCost) || 0), 0);
+    const roomDailyTotal = roomServices.reduce((sum, r) => sum + (Number(r.dailyRate) || 0), 0);
+    const activeFoodAmount = isIndoorPage && foodChargeSelected && foodChargePerDay > 0 ? foodChargePerDay : 0;
+    const accommodationTableTotal = roomDailyTotal + activeFoodAmount;
+    const hasAccommodationRows = isIndoorPage && (roomServices.length > 0 || activeFoodAmount > 0);
+
+    return (
+      <div
+        key={pageMode}
+        className={`bg-white text-black mx-auto w-full max-w-[210mm] min-h-[275mm] px-8 py-6 sm:px-10 sm:py-7 shadow-xl border border-slate-200 rounded-xl print:rounded-none print:shadow-none print:border-none print:px-3 print:py-2 flex flex-col justify-between ${
+          addPageBreakAfter ? 'print-page-break mb-8 print:mb-0' : ''
+        }`}
+      >
+        <div>
+          {/* Top Hospital Letterhead */}
+          <div className="grid grid-cols-[120px_1fr_120px] sm:grid-cols-[145px_1fr_145px] items-center gap-2 pb-2.5 border-b border-slate-500">
+            <div className="flex items-center justify-start">
+              <img
+                src={HEADER_LOGO_URL}
+                alt="SUO XI Hospital Logo"
+                referrerPolicy="no-referrer"
+                className="h-14 sm:h-16 w-auto object-contain shrink-0"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (!img.dataset.fallback) {
+                    img.dataset.fallback = '1';
+                    img.src = '/api/logo';
+                  }
+                }}
+              />
+            </div>
+            <div className="text-center">
+              <h1 className="text-[21px] sm:text-[23px] font-black text-black tracking-tight leading-tight whitespace-nowrap">
+                SUO XI Hospital (Acupuncture)
+              </h1>
+              <p className="text-[11.5px] font-medium text-black leading-snug mt-0.5">
+                Phone: +8809613 100 600, www.suoxihospital.com
+              </p>
+              <p className="text-[11.5px] font-medium text-black leading-snug">
+                24/1 Chamelibagh, Shantinagar, Dhaka 1217
+              </p>
+            </div>
+            <div aria-hidden="true" />
+          </div>
+
+          {/* Patient Metadata Grid */}
+          <div className="py-2.5 border-b border-slate-500 text-[12px] text-black space-y-1.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <div>
+                <span className="font-normal">Name: </span>
+                <span className="font-semibold">{quotation.patientName || '-'}</span>
+              </div>
+              <div>
+                <span className="font-normal">Age: </span>
+                <span className="font-semibold">{formattedAge}</span>
+              </div>
+              <div>
+                <span className="font-normal">Sex: </span>
+                <span className="font-semibold">{quotation.patientGender || '-'}</span>
+              </div>
+              <div>
+                <span className="font-normal">Mobile: </span>
+                <span className="font-semibold">{quotation.patientPhone || '-'}</span>
+              </div>
+              <div>
+                <span className="font-normal">Date: </span>
+                <span className="font-semibold">{formattedDate}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+              <div className="flex-1 min-w-[220px]">
+                <span className="font-normal">Address: </span>
+                <span className="font-semibold">{patientAddress || '-'}</span>
+              </div>
+              <div>
+                <span className="font-normal">Consulting Doctor: </span>
+                <span className="font-semibold">{quotation.doctorName || '-'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Centered Mode Pill Heading */}
+          <div className="flex justify-center mt-2.5 mb-3">
+            <div className="border border-slate-700 rounded-[8px] px-7 py-1 text-[13.5px] font-bold text-black bg-white shadow-[0_0_0_0.2px_#334155]">
+              {isIndoorPage ? 'Indoor Treatment Cost' : 'Outdoor Treatment Cost'}
+            </div>
+          </div>
+
+          {/* Table 1: Daily Treatments */}
+          <div className="mb-4">
+            <table className="w-full border-collapse border border-slate-700 text-[12.5px] text-black">
+              <thead>
+                <tr className="bg-[#b3f5d1]">
+                  <th className="border border-slate-700 py-2 px-3 text-center font-bold w-[42%]">Treatment</th>
+                  <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Price</th>
+                  <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Quantity</th>
+                  <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Discount</th>
+                  <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[16%]">Net Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dailyRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="border border-slate-700 py-4 px-3 text-center text-slate-500">
+                      No daily treatments selected
+                    </td>
+                  </tr>
+                ) : (
+                  dailyRows.map((tr, idx) => (
+                    <tr key={tr.id || idx}>
+                      <td className="border border-slate-700 py-2 px-3 text-left font-normal">
+                        {tr.treatmentName}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {formatMoneyCell(tr.unitCost)}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {tr.sessions || 1}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {formatDiscountCell(tr)}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {formatMoneyCell(tr.totalCost)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+                <tr>
+                  <td colSpan={4} className="border border-slate-700 py-2 px-4 text-right font-bold">
+                    <span className="mr-12">Total Amount</span>
+                  </td>
+                  <td className="border border-slate-700 py-2 px-2.5 text-center font-bold tabular-nums">
+                    {formatTotalCell(dailyTotal, dailyRows.length > 0)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Table 2: Weekly / Special Treatments */}
+          {weeklyRows.length > 0 && (
+            <div className="mb-4">
+              <table className="w-full border-collapse border border-slate-700 text-[12.5px] text-black">
+                <thead>
+                  <tr className="bg-[#b3f5d1]">
+                    <th className="border border-slate-700 py-2 px-3 text-center font-bold w-[42%]">Treatment</th>
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Price</th>
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Quantity</th>
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Discount</th>
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[16%]">Net Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weeklyRows.map((tr, idx) => {
+                    const isLongName = tr.treatmentName.length > 32 || tr.treatmentName.includes('\n');
+                    return (
+                      <tr key={tr.id || idx}>
+                        <td
+                          className={`border border-slate-700 py-2 px-3 font-normal leading-snug ${
+                            isLongName ? 'text-left' : 'text-center'
+                          }`}
+                        >
+                          {tr.treatmentName}
+                        </td>
+                        <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                          {formatMoneyCell(tr.unitCost)}
+                        </td>
+                        <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                          {tr.sessions || 1}
+                        </td>
+                        <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                          {formatDiscountCell(tr)}
+                        </td>
+                        <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                          {formatMoneyCell(tr.totalCost)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr>
+                    <td colSpan={4} className="border border-slate-700 py-2 px-4 text-right font-bold">
+                      <span className="mr-12">Total Amount</span>
+                    </td>
+                    <td className="border border-slate-700 py-2 px-2.5 text-center font-bold tabular-nums">
+                      {formatTotalCell(weeklyTotal, weeklyRows.length > 0)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Table 3: Indoor Room / Cabin & Food (Indoor Page Only) */}
+          {hasAccommodationRows && (
+            <div className="mb-3">
+              <table className="w-full border-collapse border border-slate-700 text-[12.5px] text-black">
+                <thead>
+                  <tr className="bg-[#b3f5d1]">
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[20%]">Type</th>
+                    <th className="border border-slate-700 py-2 px-3 text-center font-bold w-[36%]">Details</th>
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Price</th>
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[14%]">Day</th>
+                    <th className="border border-slate-700 py-2 px-2.5 text-center font-bold w-[16%]">Net Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roomServices.map((room, idx) => (
+                    <tr key={room.id || idx}>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center font-normal">
+                        {room.roomType}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-3 text-center text-[11px] leading-snug">
+                        {room.remarks || '-'}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {formatMoneyCell(room.dailyRate)}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        1
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {formatMoneyCell(room.dailyRate)}
+                      </td>
+                    </tr>
+                  ))}
+                  {activeFoodAmount > 0 && (
+                    <tr>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center font-normal">
+                        Food
+                      </td>
+                      <td className="border border-slate-700 py-2 px-3 text-center text-[11px] leading-snug">
+                        Breakfast, Lunch, Dinner
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {formatMoneyCell(activeFoodAmount)}
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        1
+                      </td>
+                      <td className="border border-slate-700 py-2 px-2.5 text-center tabular-nums">
+                        {formatMoneyCell(activeFoodAmount)}
+                      </td>
+                    </tr>
+                  )}
+                  <tr>
+                    <td colSpan={4} className="border border-slate-700 py-2 px-4 text-right font-bold">
+                      <span className="mr-12">Total Amount</span>
+                    </td>
+                    <td className="border border-slate-700 py-2 px-2.5 text-center font-bold tabular-nums">
+                      {formatMoneyCell(accommodationTableTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Indoor Admission Fee Line (Asterisk format) */}
+          {isIndoorPage && includeAdmissionFee && admissionFeeAmount > 0 && (
+            <div className="font-bengali text-[14px] leading-relaxed text-black mt-2.5 mb-2">
+              * ভর্তি ফি (Admission Fee) {toBengaliDigits(admissionFeeAmount)}/- টাকা।
+            </div>
+          )}
+
+          {/* বিশেষ দ্রষ্টব্যঃ 2-Bullet Section */}
+          <div className="font-bengali text-[14px] leading-relaxed text-black mt-4">
+            <div className="font-medium mb-1">বিশেষ দ্রষ্টব্যঃ</div>
+            <ul className="list-disc pl-6 space-y-0.5">
+              <li>উপরে উল্লেখিত মূল্য ১ (এক) দিনের চিকিৎসার খরচ।</li>
+              <li>
+                ন্যূনতম {toBengaliDigits(advanceCourseDays)} দিনের চিকিৎসার সম্পূর্ণ অর্থ অগ্রিম পরিশোধ সাপেক্ষে চিকিৎসা শুরু করতে হবে।
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Bottom Boxed Bengali Reminder + Architects Daughter Footer Credit */}
+        <div className="pt-6 pb-1 flex flex-col items-center gap-3">
+          <div className="font-bengali border border-slate-700 rounded-[10px] px-7 py-2.5 text-center text-[14.5px] text-black bg-white">
+            প্রেসক্রিপশনে উল্লেখিত চিকিৎসার নির্ধারিত মেয়াদ সম্পূর্ণভাবে সম্পন্ন করার জন্য বলা হলো।
+          </div>
+          <div className="font-architects text-center text-[11px] text-black tracking-wide">
+            Developed &amp; Designed By SUOXI IT
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const totalPages = (showOutdoor ? 1 : 0) + (showIndoor ? 1 : 0);
 
   return (
     <div className="space-y-6">
-      
       {/* Top Action Bar (Hidden on Print) */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex items-center justify-between print:hidden">
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <button
           onClick={onBack}
           className="flex items-center gap-2 text-slate-600 hover:text-slate-900 font-bold text-xs px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
@@ -95,516 +612,33 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
           <span>Back</span>
         </button>
 
-        <div className="flex items-center gap-3">
-          <p className="text-xs text-slate-500 hidden sm:block">
-            Click print button below or press Ctrl + P to print invoice
-          </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold">
+            <FileText className="w-3.5 h-3.5 text-emerald-700" />
+            <span>
+              {totalPages === 2
+                ? '2 Pages in 1 PDF (Page 1: Outdoor, Page 2: Indoor)'
+                : showIndoor
+                ? '1 Page PDF (Indoor Treatment Cost)'
+                : '1 Page PDF (Outdoor Treatment Cost)'}
+            </span>
+          </div>
+
           <button
             onClick={handlePrint}
             className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
           >
             <Printer className="w-4 h-4" />
-            <span>Print Invoice</span>
+            <span>Print / Save PDF</span>
           </button>
         </div>
       </div>
 
-      {/* Printable A4 Document Sheet */}
-      <div className="bg-white rounded-xl shadow-xl p-8 max-w-4xl mx-auto border border-slate-200 text-slate-800 print:shadow-none print:border-none print:p-0 font-sans">
-        
-        {/* Hospital Header / Letterhead */}
-        <div className="border-b-2 border-emerald-800 pb-6 mb-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            
-            {/* Logo & Hospital Header */}
-            <div className="flex flex-col sm:flex-row items-center sm:items-center gap-4 text-center sm:text-left">
-              <SuoxiLogo size="lg" />
-              <div className="sm:border-l sm:border-slate-300 sm:pl-4 pt-1 sm:pt-0 space-y-1">
-                <h3 className="text-sm font-extrabold text-emerald-950 flex items-center justify-center sm:justify-start">
-                  SUO XI Hospital (Acupuncture)
-                </h3>
-                <p className="text-xs text-slate-700 font-bold flex items-center justify-center sm:justify-start gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                  <span>Shaan Tower, 24/1, Chamelibagh, Shantinagar, Dhaka 1217</span>
-                </p>
-                <p className="text-xs text-slate-700 font-bold flex items-center justify-center sm:justify-start gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                  <span>+88 09613 100 600</span>
-                </p>
-              </div>
-            </div>
-
-            {/* Quotation Badge */}
-            <div className="text-center sm:text-right bg-emerald-50 p-3 rounded-xl border border-emerald-200">
-              <span className="text-xs font-bold text-emerald-800 uppercase tracking-widest block flex items-center justify-center sm:justify-end gap-1.5">
-                <span>INVOICE QUOTATION</span>
-                {quotation.visitLabel && (
-                  <span className="bg-emerald-700 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
-                    {quotation.visitLabel}
-                  </span>
-                )}
-              </span>
-              <p className="text-lg font-black text-emerald-900 mt-0.5">
-                {quotation.quotationNumber}
-              </p>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Date: <span className="font-semibold text-slate-700">{quotation.createdDate}</span>
-              </p>
-            </div>
-
-          </div>
-        </div>
-
-        {/* Patient & Doctor Information Box */}
-        <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 text-xs sm:text-sm">
-          <div>
-            <p className="text-slate-500 text-xs font-semibold uppercase">Patient Name</p>
-            <p className="font-bold text-slate-900 text-base">{quotation.patientName}</p>
-            {quotation.patientAge && <p className="text-slate-600">Age: {quotation.patientAge} Yrs</p>}
-          </div>
-
-          <div>
-            <p className="text-slate-500 text-xs font-semibold uppercase">Mobile Number</p>
-            <p className="font-bold text-slate-900 text-base">{quotation.patientPhone}</p>
-            {quotation.patientGender && <p className="text-slate-600">Gender: {quotation.patientGender}</p>}
-          </div>
-
-          <div>
-            <p className="text-slate-500 text-xs font-semibold uppercase">Chief Consultant</p>
-            <p className="font-bold text-emerald-900">Dr. S.M. Shahidul Islam PhD.</p>
-            <p className="text-slate-500 text-[11px] font-semibold uppercase mt-1">Consulting Doctor</p>
-            <p className="font-bold text-slate-900">{quotation.doctorName || 'Senior Consultant'}</p>
-          </div>
-
-          <div>
-            <p className="text-slate-500 text-xs font-semibold uppercase">Validity & Status</p>
-            <p className="font-bold text-emerald-800">{quotation.validUntil}</p>
-            <p className="text-slate-500 text-xs font-semibold">Status: {quotation.paymentStatus}</p>
-          </div>
-        </div>
-
-        {/* TABLE 1: Individual Treatments */}
-        {quotation.treatments && quotation.treatments.length > 0 && (
-          <div className="mb-6 space-y-2">
-            <h3 className="text-xs font-extrabold text-emerald-900 uppercase tracking-wider border-b border-emerald-800 pb-1">
-              1. Individual Treatments & Therapies
-            </h3>
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-emerald-900 text-white font-bold">
-                  <th className="p-2.5">Treatment Name</th>
-                  <th className="p-2.5 text-center">Unit Price</th>
-                  <th className="p-2.5 text-center">Sessions</th>
-                  <th className="p-2.5 text-center">Discount (%)</th>
-                  <th className="p-2.5 text-center">Discount (BDT)</th>
-                  <th className="p-2.5 text-right">Total Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 border-b border-slate-200">
-                {quotation.treatments.map((tr, i) => (
-                  <tr key={i} className="even:bg-slate-50">
-                    <td className="p-2.5 font-semibold text-slate-900">
-                      <div className="flex items-center justify-between gap-2">
-                        <span>{tr.treatmentName}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyText(tr.treatmentName, `tr-${i}`)}
-                          title="Copy treatment name"
-                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
-                        >
-                          {copiedKey === `tr-${i}` ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
-                              <Check className="w-3 h-3 text-emerald-700" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-emerald-700" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                    <td className="p-2.5 text-center">BDT {tr.unitCost.toLocaleString()}</td>
-                    <td className="p-2.5 text-center font-bold">{tr.sessions}</td>
-                    <td className="p-2.5 text-center font-bold text-amber-800">
-                      {tr.discountPercent === 100 ? '100% (Free)' : `${tr.discountPercent}%`}
-                    </td>
-                    <td className="p-2.5 text-center text-rose-600">-BDT {(tr.discountAmount || 0).toLocaleString()}</td>
-                    <td className="p-2.5 text-right font-bold text-emerald-900">BDT {(tr.totalCost || 0).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* TABLE 2: Outdoor Service Packages */}
-        {quotation.outdoorPackages && quotation.outdoorPackages.length > 0 && (
-          <div className="mb-6 space-y-2">
-            <h3 className="text-xs font-extrabold text-teal-900 uppercase tracking-wider border-b border-teal-800 pb-1">
-              2. Outdoor Packages
-            </h3>
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-teal-900 text-white font-bold">
-                  <th className="p-2.5">Package Details</th>
-                  <th className="p-2.5 text-center">Base Price</th>
-                  <th className="p-2.5 text-center">Discount (%)</th>
-                  <th className="p-2.5 text-center">Discount (BDT)</th>
-                  <th className="p-2.5 text-right">Net Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 border-b border-slate-200">
-                {quotation.outdoorPackages.map((pkg, i) => (
-                  <tr key={i} className="even:bg-slate-50">
-                    <td className="p-2.5 font-semibold text-slate-900">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div>{pkg.packageName}</div>
-                          {pkg.description && <div className="text-[11px] text-slate-500 font-normal">{pkg.description}</div>}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyText(pkg.packageName, `pkg-${i}`)}
-                          title="Copy package name"
-                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-teal-700 hover:bg-teal-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
-                        >
-                          {copiedKey === `pkg-${i}` ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded">
-                              <Check className="w-3 h-3 text-teal-700" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-teal-700" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                    <td className="p-2.5 text-center">BDT {pkg.totalBaseCost.toLocaleString()}</td>
-                    <td className="p-2.5 text-center text-amber-700 font-bold">{pkg.discountPercent}%</td>
-                    <td className="p-2.5 text-center text-rose-600">-BDT {(pkg.discountAmount || 0).toLocaleString()}</td>
-                    <td className="p-2.5 text-right font-bold text-teal-900">BDT {(pkg.netCost || 0).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* TABLE 3: Indoor Accommodation Services */}
-        {quotation.indoorServices && quotation.indoorServices.length > 0 && (
-          <div className="mb-6 space-y-2">
-            <h3 className="text-xs font-extrabold text-indigo-900 uppercase tracking-wider border-b border-indigo-800 pb-1">
-              3. Indoor Room & Accommodation
-            </h3>
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-indigo-900 text-white font-bold">
-                  <th className="p-2.5">Cabin / Ward Category</th>
-                  <th className="p-2.5 text-center">Daily Rate</th>
-                  <th className="p-2.5 text-center">Days</th>
-                  <th className="p-2.5 text-right">Total Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 border-b border-slate-200">
-                {quotation.indoorServices.map((ind, i) => (
-                  <tr key={i} className="even:bg-slate-50">
-                    <td className="p-2.5 font-semibold text-slate-900">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div>{ind.roomType}</div>
-                          {ind.remarks && <div className="text-[11px] text-slate-500 font-normal">{ind.remarks}</div>}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyText(ind.roomType, `ind-${i}`)}
-                          title="Copy room name"
-                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-indigo-700 hover:bg-indigo-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
-                        >
-                          {copiedKey === `ind-${i}` ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">
-                              <Check className="w-3 h-3 text-indigo-700" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-indigo-700" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                    <td className="p-2.5 text-center">BDT {ind.dailyRate.toLocaleString()}</td>
-                    <td className="p-2.5 text-center font-bold">{ind.days} Days</td>
-                    <td className="p-2.5 text-right font-bold text-indigo-900">BDT {(ind.totalAmount || 0).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* TABLE 4: Weekly Treatments */}
-        {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
-          <div className="mb-6 space-y-2">
-            <h3 className="text-xs font-extrabold text-sky-900 uppercase tracking-wider border-b border-sky-800 pb-1">
-              4. Weekly Treatments
-            </h3>
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-sky-900 text-white font-bold">
-                  <th className="p-2.5">Treatment / Therapy Name</th>
-                  <th className="p-2.5 text-center">Unit Cost</th>
-                  <th className="p-2.5 text-center">Sessions</th>
-                  <th className="p-2.5 text-center">Discount (%)</th>
-                  <th className="p-2.5 text-center">Discount (BDT)</th>
-                  <th className="p-2.5 text-right">Total Cost</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 border-b border-slate-200">
-                {quotation.additionalTreatments.map((tr, i) => (
-                  <tr key={i} className="even:bg-slate-50">
-                    <td className="p-2.5 font-semibold text-slate-900">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div>{tr.treatmentName}</div>
-                          {tr.description && <div className="text-[11px] text-slate-500 font-normal">{tr.description}</div>}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyText(tr.treatmentName, `add-${i}`)}
-                          title="Copy treatment name"
-                          className="print:hidden inline-flex items-center gap-1 text-slate-400 hover:text-sky-700 hover:bg-sky-50 p-1 rounded-md transition-all cursor-pointer shrink-0"
-                        >
-                          {copiedKey === `add-${i}` ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded">
-                              <Check className="w-3 h-3 text-sky-700" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-sky-700" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                    <td className="p-2.5 text-center">BDT {tr.unitCost.toLocaleString()}</td>
-                    <td className="p-2.5 text-center font-bold">{tr.sessions}</td>
-                    <td className="p-2.5 text-center font-bold text-amber-800">{tr.discountPercent}%</td>
-                    <td className="p-2.5 text-center text-rose-600">-BDT {(tr.discountAmount || 0).toLocaleString()}</td>
-                    <td className="p-2.5 text-right font-bold text-sky-900">BDT {(tr.totalCost || 0).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Calculation Summary Table */}
-        <div className="flex flex-col sm:flex-row items-start justify-between gap-6 mb-8 pt-2">
-          
-          {/* Terms & Conditions */}
-          <div className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
-            <p className="font-bold text-slate-800 uppercase text-[11px]">Terms & Conditions:</p>
-            <p className="text-slate-600 leading-relaxed">
-              {quotation.notes || 'This quotation is valid for 7 days from issue date. All treatments are prescribed as per consulting physician assessment.'}
-            </p>
-            <div className="pt-2 text-[11px] text-slate-500 space-y-0.5">
-              <p>• Regular attendance for acupuncture sessions is strongly advised.</p>
-              <p>• All financial transactions must be completed strictly at the billing counter.</p>
-            </div>
-          </div>
-
-          {/* Billing Summary Box */}
-          <div className="w-full sm:w-80 bg-white text-slate-900 p-4 rounded-xl border-2 border-slate-300 text-xs space-y-3">
-            
-            {/* Treatments Subtotal Section */}
-            <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200/90 space-y-2">
-              <div className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider border-b border-emerald-200/80 pb-1.5 flex items-center justify-between">
-                <span>
-                  {mode === 'outdoor' 
-                    ? 'Treatments Subtotal - Outdoor Packages' 
-                    : mode === 'indoor'
-                    ? 'Treatments Subtotal - Indoor'
-                    : 'Treatments Subtotal'}
-                </span>
-              </div>
-
-              <div className="space-y-1 text-slate-700 text-[11px]">
-                <div className="flex justify-between">
-                  <span>Total Bill:</span>
-                  <span className="font-bold text-slate-900">BDT {treatmentsGrossSubtotal.toLocaleString()}</span>
-                </div>
-
-                <div className="flex justify-between text-rose-700 font-medium">
-                  <span>Discount Amount:</span>
-                  <span className="font-bold text-rose-700">-BDT {treatmentsTotalDiscount.toLocaleString()}</span>
-                </div>
-
-                <div className="flex justify-between pt-1 border-t border-emerald-200/80 font-bold text-emerald-900">
-                  <span>After Discount Gross Total Bill:</span>
-                  <span className="font-extrabold text-emerald-800">BDT {treatmentsSubtotal.toLocaleString()}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Additional Services */}
-            <div className="space-y-1.5 pt-1 border-t border-slate-200 text-[11px]">
-              {roomServices.length > 0 ? (
-                <div className="space-y-1 bg-indigo-50/60 p-2 rounded-xl border border-indigo-200/80">
-                  <div className="flex justify-between items-center text-xs font-bold text-indigo-900">
-                    <span>Indoor Rooms ({roomServices.length}):</span>
-                    <span className="text-indigo-800">BDT {indoorRoomOnlySubtotal.toLocaleString()}</span>
-                  </div>
-                  <div className="space-y-0.5 pt-1 border-t border-indigo-200/60">
-                    {roomServices.map((room, rIdx) => (
-                      <div key={room.id || rIdx} className="flex justify-between items-center text-[10px] text-slate-700">
-                        <span className="truncate pr-1 text-slate-700" title={room.roomType}>• {room.roomType} ({room.days}d)</span>
-                        <span className="font-bold text-slate-900 shrink-0">BDT {(room.totalAmount || 0).toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex justify-between items-center text-slate-700">
-                  <span>Indoor Accommodation:</span>
-                  <span className="font-bold text-slate-500">BDT 0</span>
-                </div>
-              )}
-
-              <div className="flex justify-between items-center text-slate-700">
-                <span>Food Charge:</span>
-                <span className="font-bold text-slate-900">BDT {foodChargeTotal.toLocaleString()}</span>
-              </div>
-
-              <div className="flex justify-between items-center text-slate-700">
-                <span>Admission Fee:</span>
-                <span className="font-bold text-slate-900">BDT {actualAdmissionFee.toLocaleString()}</span>
-              </div>
-            </div>
-
-            {/* Additional Special Discount */}
-            {overallDiscountAmount > 0 && (
-              <div className="pt-1.5 border-t border-slate-200 flex justify-between items-center text-[11px] text-amber-800 font-bold">
-                <span>Additional Special Discount ({quotation.overallDiscountPercent || 0}%):</span>
-                <span>-BDT {overallDiscountAmount.toLocaleString()}</span>
-              </div>
-            )}
-
-            {/* Grand Total */}
-            <div className="pt-2 border-t-2 border-slate-300">
-              <div className="flex justify-between items-end font-extrabold">
-                <span className="text-[11px] text-slate-800 uppercase tracking-wider">Grand Total Bill:</span>
-                <span className="text-xl text-emerald-800 font-black">
-                  BDT {quotation.grandTotal.toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            {/* Weekly Treatments (Separated Below Grand Total) */}
-            {quotation.additionalTreatments && quotation.additionalTreatments.length > 0 && (
-              <div className="p-2.5 bg-sky-50/80 rounded-xl border border-sky-200 space-y-1.5 text-[11px]">
-                <div className="flex justify-between items-center font-bold text-sky-950">
-                  <span>Weekly Treatments ({quotation.additionalTreatments.length}):</span>
-                  <span className="text-sky-900 font-extrabold">BDT {(quotation.additionalTreatmentsSubtotal || 0).toLocaleString()}</span>
-                </div>
-                <div className="space-y-0.5 pt-1 border-t border-sky-200/80">
-                  {quotation.additionalTreatments.map((tr, idx) => (
-                    <div key={tr.id || idx} className="flex justify-between items-center text-[10px] text-slate-700">
-                      <span className="truncate pr-1 text-slate-700">• {tr.treatmentName} ({tr.sessions}s)</span>
-                      <span className="font-bold text-slate-900 shrink-0">BDT {(tr.totalCost || 0).toLocaleString()}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-[9px] text-sky-800 pt-0.5 border-t border-sky-200/60 italic">
-                  * Billed separately per session/week (Excluded from Grand Total)
-                </div>
-              </div>
-            )}
-
-            {/* Advance Paid & Net Due */}
-            <div className="p-2.5 bg-slate-50 rounded-xl space-y-1 text-[11px] font-semibold border border-slate-200">
-              <div className="flex justify-between text-slate-700">
-                <span>Advance Paid:</span>
-                <span className="font-bold text-slate-900">BDT {(quotation.advancePaid || 0).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-rose-700 font-bold">
-                <span>Net Due Balance:</span>
-                <span className="font-black text-rose-700 text-xs">BDT {(quotation.dueAmount || 0).toLocaleString()}</span>
-              </div>
-            </div>
-
-          </div>
-
-        </div>
-
-        {/* PAYMENT CYCLE & SCHEDULE BREAKDOWN TABLE (FOR PATIENT COUNSELING) */}
-        {quotation.paymentPhases && quotation.paymentPhases.length > 0 && (
-          <div className="mt-6 bg-slate-50 border border-slate-300 rounded-xl p-4 space-y-2">
-            <div className="flex items-center justify-between border-b border-slate-300 pb-2">
-              <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                <span>Payment Schedule & Counseling Breakdown</span>
-              </h4>
-              <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300 uppercase">
-                {quotation.paymentPlanMode === '10_day_cycles' 
-                  ? '10-Day Cycle Plan' 
-                  : quotation.paymentPlanMode === '15_day_cycles'
-                  ? '15-Day Cycle Plan'
-                  : quotation.paymentPlanMode === 'full'
-                  ? '1-Time Full Payment'
-                  : 'Custom Installment Plan'}
-              </span>
-            </div>
-
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-200/80 text-slate-800 text-[10px] uppercase font-bold">
-                  <th className="p-2 border border-slate-300">Cycle / Title</th>
-                  <th className="p-2 border border-slate-300 text-center">% Share</th>
-                  <th className="p-2 border border-slate-300 text-right">Payment Amount</th>
-                  <th className="p-2 border border-slate-300">Counseling Notes / Remark</th>
-                </tr>
-              </thead>
-              <tbody>
-                {quotation.paymentPhases.map((phase, pIdx) => (
-                  <tr key={phase.id || pIdx} className="bg-white hover:bg-slate-50 text-[11px]">
-                    <td className="p-2 border border-slate-300 font-bold text-slate-900">
-                      {phase.phaseName}
-                    </td>
-                    <td className="p-2 border border-slate-300 text-center font-bold text-slate-700">
-                      {phase.percentage || Math.round((phase.amount / (quotation.grandTotal || 1)) * 100)}%
-                    </td>
-                    <td className="p-2 border border-slate-300 text-right font-black text-emerald-800">
-                      BDT {(phase.amount || 0).toLocaleString()}
-                    </td>
-                    <td className="p-2 border border-slate-300 text-slate-600 font-medium">
-                      {phase.notes || '-'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Signature Area */}
-        <div className="grid grid-cols-2 gap-8 pt-12 mt-8 border-t border-dashed border-slate-300 text-xs text-center font-bold">
-          <div>
-            <div className="w-48 mx-auto border-t border-slate-800 mb-1" />
-            <p className="text-slate-800">Patient / Guardian Signature</p>
-          </div>
-
-          <div>
-            <div className="w-48 mx-auto border-t border-slate-800 mb-1" />
-            <p className="text-slate-800">Authorized Billing Officer</p>
-            <p className="text-[10px] text-slate-500 font-normal">SUO XI Hospital Billing Counter</p>
-          </div>
-        </div>
-
-        {/* Footer Note */}
-        <div className="mt-8 text-center text-[10px] text-slate-400 border-t border-slate-100 pt-3 space-y-0.5">
-          <p>Computer generated invoice quotation • SUO XI Hospital Acupuncture Billing System</p>
-          <p className="text-emerald-700 font-bold text-[10px]">Developed & Designed By SUOXI IT</p>
-        </div>
-
+      {/* Printable A4 Sheet(s) */}
+      <div>
+        {showOutdoor && renderPage('outdoor', showIndoor)}
+        {showIndoor && renderPage('indoor', false)}
       </div>
-
     </div>
   );
 };

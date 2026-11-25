@@ -174,7 +174,7 @@ const DEFAULT_CATALOG = [
   { id: 'room-non-ac', name: 'General Non-AC Ward Bed', category: 'indoor_room', defaultPrice: 800, defaultDiscountPercent: 0, description: 'General ward bed with fan' },
   { id: 'doc-consult', name: 'Doctor Counseling & Assessment Fee', category: 'consultation', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Senior acupuncture doctor consultation' },
   { id: 'add-ozon', name: 'Ozon Therapy', category: 'additional_treatment', defaultPrice: 1500, defaultDiscountPercent: 0, description: 'Medical ozone oxygen therapy session', isIndoorFree: true, isRatioBased: true, sessionsPer10Days: 3 },
-  { id: 'add-ed', name: 'Erectile Dysfunction (ED) Therapy', category: 'additional_treatment', defaultPrice: 2000, defaultDiscountPercent: 0, description: 'Specialized shockwave & ED therapy session', isIndoorFree: true, isRatioBased: true, sessionsPer10Days: 3 }
+  { id: 'add-ed', name: 'Erectile Dysfunction (ED) Therapy', category: 'additional_treatment', defaultPrice: 2000, defaultDiscountPercent: 0, fixedDiscountAmount: 5000, description: 'Specialized shockwave & ED therapy session', isIndoorFree: false, isRatioBased: true, sessionsPer10Days: 3 }
 ];
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -945,7 +945,7 @@ function toFiniteMoney(val: any): number {
 
 function formatQuotationRow(r: any): any {
   if (!r) return r;
-  const packageComparison = parseJsonColumn(r.packageComparison, undefined);
+  const packageComparison = parseJsonColumn<any>(r.packageComparison, undefined);
   return {
     id: r.id,
     quotationNumber: r.quotationNumber || r.id,
@@ -954,6 +954,7 @@ function formatQuotationRow(r: any): any {
     patientPhone: r.patientPhone || '',
     patientAge: r.patientAge ?? '',
     patientGender: r.patientGender ?? '',
+    patientAddress: r.patientAddress ?? packageComparison?.patientAddress ?? '',
     doctorName: r.doctorName ?? '',
     createdDate: r.createdDate || '',
     createdAt: r.createdAt || '',
@@ -961,6 +962,9 @@ function formatQuotationRow(r: any): any {
     visitNumber: r.visitNumber !== null && r.visitNumber !== undefined ? Number(r.visitNumber) : 1,
     visitLabel: r.visitLabel || '',
     patientTreatmentMode: r.patientTreatmentMode || undefined,
+    advanceCourseDays: packageComparison?.advanceCourseDays !== undefined ? Number(packageComparison.advanceCourseDays) : undefined,
+    outdoorDiscountPercent: packageComparison?.outdoorDiscountPercent !== undefined ? Number(packageComparison.outdoorDiscountPercent) : undefined,
+    indoorDiscountPercent: packageComparison?.indoorDiscountPercent !== undefined ? Number(packageComparison.indoorDiscountPercent) : undefined,
     treatments: parseJsonColumn(r.treatments, []),
     treatmentsSubtotal: toFiniteMoney(r.treatmentsSubtotal),
     outdoorPackages: parseJsonColumn(r.outdoorPackages, []),
@@ -1046,6 +1050,21 @@ function buildQuotationDbParams(q: any): any[] {
   const visitNum = q.visitNumber !== null && q.visitNumber !== undefined && q.visitNumber !== '' && Number.isFinite(Number(q.visitNumber))
     ? Number(q.visitNumber)
     : 1;
+  const mergedComparison = (
+    q.packageComparison ||
+    q.patientAddress !== undefined ||
+    q.advanceCourseDays !== undefined ||
+    q.outdoorDiscountPercent !== undefined ||
+    q.indoorDiscountPercent !== undefined
+  )
+    ? {
+        ...(q.packageComparison || {}),
+        ...(q.patientAddress !== undefined ? { patientAddress: q.patientAddress } : {}),
+        ...(q.advanceCourseDays !== undefined ? { advanceCourseDays: q.advanceCourseDays } : {}),
+        ...(q.outdoorDiscountPercent !== undefined ? { outdoorDiscountPercent: q.outdoorDiscountPercent } : {}),
+        ...(q.indoorDiscountPercent !== undefined ? { indoorDiscountPercent: q.indoorDiscountPercent } : {})
+      }
+    : null;
   return [
     q.id ?? null,
     (q.quotationNumber ?? q.id) ?? null,
@@ -1083,7 +1102,7 @@ function buildQuotationDbParams(q: any): any[] {
     (q.paymentStatus ?? 'Quotation') ?? null,
     q.notes ?? null,
     q.createdBy ?? null,
-    (q.packageComparison ? JSON.stringify(q.packageComparison) : null) ?? null
+    (mergedComparison ? JSON.stringify(mergedComparison) : null) ?? null
   ];
 }
 
@@ -1608,8 +1627,8 @@ app.get('/api/reports/summary', authenticateToken, requireRole('System Admin', '
           COALESCE(SUM(CASE WHEN ${COND_CONFIRMED} THEN 1 ELSE 0 END), 0) AS confirmedCount,
           COALESCE(SUM(CASE WHEN ${COND_PRE} THEN 1 ELSE 0 END), 0) AS preConsultationCount,
           COALESCE(SUM(CASE WHEN ${COND_POST} THEN 1 ELSE 0 END), 0) AS postConsultationCount,
-          COALESCE(SUM(CASE WHEN isInstant = 1 THEN 1 ELSE 0 END), 0) AS instantCount,
-          COALESCE(SUM(CASE WHEN isInstant = 1 THEN COALESCE(instantFee, 2000) ELSE 0 END), 0) AS instantRevenue,
+          COALESCE(SUM(CASE WHEN isInstant = 1 AND ${COND_CONFIRMED} THEN 1 ELSE 0 END), 0) AS instantCount,
+          COALESCE(SUM(CASE WHEN isInstant = 1 AND ${COND_CONFIRMED} THEN COALESCE(instantFee, 2000) ELSE 0 END), 0) AS instantRevenue,
           COALESCE(SUM(CASE WHEN isEd = 1 THEN 1 ELSE 0 END), 0) AS edCount,
           COALESCE(SUM(CASE WHEN (${COND_POST}) AND pathologyStatus = 'Yes' THEN 1 ELSE 0 END), 0) AS pathYes,
           COALESCE(SUM(CASE WHEN (${COND_POST}) AND pathologyStatus = 'No' THEN 1 ELSE 0 END), 0) AS pathNo,
@@ -1660,24 +1679,26 @@ app.get('/api/reports/summary', authenticateToken, requireRole('System Admin', '
 
       const andJoin = whereSql ? `${whereSql} AND` : 'WHERE';
 
+      const preDocExpr = `TRIM(COALESCE(NULLIF(TRIM(preDoctorName), ''), NULLIF(TRIM(doctorName), ''), 'Doctor Not Assigned'))`;
       const [preDocRows]: any = await mysqlPool.execute(
-        `SELECT TRIM(COALESCE(NULLIF(TRIM(preDoctorName), ''), NULLIF(TRIM(doctorName), ''), 'Doctor Not Assigned')) AS doctorName,
+        `SELECT ${preDocExpr} AS resolvedDoctor,
                 COUNT(*) AS cnt
          FROM patients ${andJoin} ${COND_DOCTOR_PRE}
-         GROUP BY doctorName`,
+         GROUP BY ${preDocExpr}`,
         params
       );
 
+      const postDocExpr = `TRIM(COALESCE(NULLIF(TRIM(postDoctorName), ''), NULLIF(TRIM(doctorName), ''), 'Doctor Not Assigned'))`;
       const [postDocRows]: any = await mysqlPool.execute(
-        `SELECT TRIM(COALESCE(NULLIF(TRIM(postDoctorName), ''), NULLIF(TRIM(doctorName), ''), 'Doctor Not Assigned')) AS doctorName,
+        `SELECT ${postDocExpr} AS resolvedDoctor,
                 COUNT(*) AS cnt
          FROM patients ${andJoin} ${COND_DOCTOR_POST}
-         GROUP BY doctorName`,
+         GROUP BY ${postDocExpr}`,
         params
       );
 
       const [assignedOnlyDocRows]: any = await mysqlPool.execute(
-        `SELECT DISTINCT TRIM(doctorName) AS doctorName
+        `SELECT DISTINCT TRIM(doctorName) AS resolvedDoctor
          FROM patients ${andJoin} NOT (${COND_DOCTOR_PRE}) AND NOT (${COND_DOCTOR_POST})
          AND doctorName IS NOT NULL AND TRIM(doctorName) != ''`,
         params
@@ -1692,40 +1713,41 @@ app.get('/api/reports/summary', authenticateToken, requireRole('System Admin', '
         return doctorMap.get(clean)!;
       };
       for (const r of preDocRows || []) {
-        ensureDoc(r.doctorName).preCount += Number(r.cnt || 0);
+        ensureDoc(r.resolvedDoctor).preCount += Number(r.cnt || 0);
       }
       for (const r of postDocRows || []) {
-        ensureDoc(r.doctorName).postCount += Number(r.cnt || 0);
+        ensureDoc(r.resolvedDoctor).postCount += Number(r.cnt || 0);
       }
       for (const r of assignedOnlyDocRows || []) {
-        ensureDoc(r.doctorName);
+        ensureDoc(r.resolvedDoctor);
       }
       const doctors = Array.from(doctorMap.values())
         .map(d => ({ ...d, totalConsulted: d.preCount + d.postCount }))
         .filter(d => d.totalConsulted > 0 || d.preCount > 0 || d.postCount > 0)
         .sort((a, b) => b.totalConsulted - a.totalConsulted);
 
+      const profExpr = `COALESCE(NULLIF(TRIM(profession), ''), 'Not Specified')`;
       const [profRows]: any = await mysqlPool.execute(
-        `SELECT COALESCE(NULLIF(TRIM(profession), ''), 'Not Specified') AS name, COUNT(*) AS count
+        `SELECT ${profExpr} AS profName, COUNT(*) AS count
          FROM patients ${andJoin} ${COND_POST}
-         GROUP BY name
+         GROUP BY ${profExpr}
          ORDER BY count DESC`,
         params
       );
       const professions = (profRows || []).map((r: any) => ({
-        name: String(r.name || 'Not Specified'),
+        name: String(r.profName || 'Not Specified'),
         count: Number(r.count || 0)
       }));
 
       const [commentRows]: any = await mysqlPool.execute(
-        `SELECT TRIM(consultationComment) AS comment, COUNT(*) AS count
+        `SELECT TRIM(consultationComment) AS commentText, COUNT(*) AS count
          FROM patients ${andJoin} (consultationComment IS NOT NULL AND TRIM(consultationComment) != '')
-         GROUP BY comment
+         GROUP BY TRIM(consultationComment)
          ORDER BY count DESC`,
         params
       );
       const comments = (commentRows || []).map((r: any) => ({
-        comment: String(r.comment || ''),
+        comment: String(r.commentText || ''),
         count: Number(r.count || 0)
       }));
 
@@ -1920,7 +1942,11 @@ app.get('/api/reports/summary', authenticateToken, requireRole('System Admin', '
   );
   const postConsultationCount = postPatients.length;
 
-  const instantPatients = filtered.filter((p: any) => Boolean(p.isInstant));
+  const isPatientConfirmedLocal = (p: any) =>
+    Boolean(p.isConfirmed) ||
+    (p.consultationSerial !== null && p.consultationSerial !== undefined && p.consultationSerial !== '') ||
+    Boolean(p.confirmedAt);
+  const instantPatients = filtered.filter((p: any) => Boolean(p.isInstant) && isPatientConfirmedLocal(p));
   const instantCount = instantPatients.length;
   const instantRevenue = instantPatients.reduce((sum: number, p: any) => sum + (p.instantFee != null ? Number(p.instantFee) : 2000), 0);
   const edCount = filtered.filter((p: any) => Boolean(p.isEd)).length;

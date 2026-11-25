@@ -54,7 +54,10 @@ export interface IndividualTreatment {
   discountPercent: number; // Discount percentage (%)
   discountAmount: number; // Discount amount
   totalCost: number; // Total cost
+  discountType?: 'percent' | 'fixed';
   isIndoorFree?: boolean;
+  fixedDiscountAmount?: number;
+  outdoorDiscountPercent?: number;
 }
 
 export interface AdditionalTreatment {
@@ -65,10 +68,14 @@ export interface AdditionalTreatment {
   discountPercent: number; // Discount percentage (%)
   discountAmount: number; // Discount amount
   totalCost: number; // Total cost
+  discountType?: 'percent' | 'fixed';
   isRatioBased?: boolean; // If true, auto-calculates sessions based on treatmentDays ratio (e.g. 3 sessions per 10 days)
   sessionsPer10Days?: number; // e.g. 3
   description?: string;
   rateNote?: string;
+  isIndoorFree?: boolean;
+  fixedDiscountAmount?: number;
+  outdoorDiscountPercent?: number;
 }
 
 export interface OutdoorPackage {
@@ -101,6 +108,27 @@ export interface PaymentPhase {
   notes?: string;
 }
 
+export interface QuotationCounselingSnapshot {
+  showOutdoor?: boolean;
+  showIndoor?: boolean;
+  customDays?: Record<string, number>;
+  customDiscounts?: Record<string, number>;
+  foodChargeSelected?: boolean;
+  foodChargePerDay?: number;
+  includeAdmissionFee?: boolean;
+  admissionFee?: number;
+  comparedAt?: string;
+  // 1-Day Counseling Model fields
+  patientAddress?: string;
+  advanceCourseDays?: number;
+  outdoorDiscountPercent?: number;
+  indoorDiscountPercent?: number;
+  outdoorTreatments?: IndividualTreatment[];
+  indoorTreatments?: IndividualTreatment[];
+  outdoorAdditionalTreatments?: AdditionalTreatment[];
+  indoorAdditionalTreatments?: AdditionalTreatment[];
+}
+
 export interface InvoiceQuotation {
   id: string;
   quotationNumber: string; // e.g. SXH-2026-0001
@@ -109,13 +137,17 @@ export interface InvoiceQuotation {
   patientPhone: string;
   patientAge?: string | number;
   patientGender?: string;
+  patientAddress?: string;
   doctorName?: string;
   createdDate: string;
   createdAt?: string;
   validUntil: string;
   visitNumber?: number;
   visitLabel?: string;
-  patientTreatmentMode?: 'outdoor' | 'indoor' | 'individual';
+  patientTreatmentMode?: 'outdoor' | 'indoor' | 'both' | 'individual' | '';
+  advanceCourseDays?: number;
+  outdoorDiscountPercent?: number;
+  indoorDiscountPercent?: number;
   
   // Section 1: Individual Treatments
   treatments: IndividualTreatment[];
@@ -154,18 +186,8 @@ export interface InvoiceQuotation {
   notes?: string;
   createdBy: string;
 
-  // Saved Package Comparison snapshot
-  packageComparison?: {
-    showOutdoor?: boolean;
-    showIndoor?: boolean;
-    customDays?: Record<string, number>;
-    customDiscounts?: Record<string, number>;
-    foodChargeSelected?: boolean;
-    foodChargePerDay?: number;
-    includeAdmissionFee?: boolean;
-    admissionFee?: number;
-    comparedAt?: string;
-  };
+  // Saved Counseling / Mode Comparison snapshot (persisted in quotations_v2.packageComparison)
+  packageComparison?: QuotationCounselingSnapshot;
 }
 
 export interface CatalogItem {

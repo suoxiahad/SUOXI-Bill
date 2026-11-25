@@ -14,8 +14,6 @@ import {
   LogIn,
   Users,
   Receipt,
-  Eye,
-  EyeOff,
   RefreshCw,
   FlaskConical,
   Leaf,
@@ -35,8 +33,6 @@ interface NavbarProps {
   currentUser: User | null;
   onOpenLoginModal: () => void;
   onLogout: () => void;
-  isAllCalculationsFull?: boolean;
-  onToggleAllCalculations?: () => void;
   isSyncing?: boolean;
   onRefreshData?: () => void;
 }
@@ -51,8 +47,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onOpenLoginModal,
   onLogout,
-  isAllCalculationsFull,
-  onToggleAllCalculations,
   isSyncing = false,
   onRefreshData
 }) => {
@@ -66,7 +60,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   const canAccessDeptClearance = userRole === 'System Admin' || userRole === 'Pathology' || userRole === 'Organic' || userRole === 'Nutrition';
   const canAccessReports = userRole === 'System Admin' || userRole === 'SSD';
   const canAccessUsers = !!currentUser;
-  const canAccessCalculationToggle = userRole === 'System Admin' || userRole === 'Doctor';
   const canCreateNewPatient = userRole === 'System Admin' || userRole === 'Call Center';
 
   const getRoleBadge = () => {
@@ -329,31 +322,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          {/* Eye Icon Global Toggle Button beside User Account Tab for Sections 1 & 4 Calculation View (Only for Doctor & System Admin) */}
-          {canAccessCalculationToggle && onToggleAllCalculations && (
-            <button
-              type="button"
-              onClick={onToggleAllCalculations}
-              title={
-                isAllCalculationsFull
-                  ? 'Toggle All Calculations (1. Treatments & 4. Indoor Rooms): Click to Switch to Per Day View (1-Day Cost Focus)'
-                  : 'Toggle All Calculations (1. Treatments & 4. Indoor Rooms): Click to Switch to Full Course Calculation View'
-              }
-              aria-label={isAllCalculationsFull ? "Switch to Per Day Calculation View" : "Switch to Full Course Calculation View"}
-              className={`p-2 rounded-lg transition-all cursor-pointer border ml-auto sm:ml-2 shrink-0 flex items-center justify-center ${
-                isAllCalculationsFull
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                  : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
-              }`}
-            >
-              {isAllCalculationsFull ? (
-                <Eye className="w-4 h-4 text-emerald-400 shrink-0" />
-              ) : (
-                <EyeOff className="w-4 h-4 text-amber-400 shrink-0" />
-              )}
-            </button>
-          )}
-
           {/* Real-time Data Sync & Cache Invalidation Status Button */}
           {currentUser && onRefreshData && (
             <button
@@ -362,9 +330,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               disabled={isSyncing}
               title="Force Sync with Server: Fetches latest appointments and current catalog rates across all browsers"
               aria-label="Refresh and sync latest data from server"
-              className={`p-2 rounded-lg transition-all cursor-pointer border shrink-0 flex items-center justify-center ${
-                !canAccessCalculationToggle ? 'ml-auto sm:ml-2' : 'ml-2'
-              } ${
+              className={`p-2 rounded-lg transition-all cursor-pointer border shrink-0 flex items-center justify-center ml-auto sm:ml-2 ${
                 isSyncing
                   ? 'bg-emerald-500/30 text-emerald-300 border-emerald-500/50'
                   : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white'

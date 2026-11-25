@@ -248,7 +248,7 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     defaultDiscountPercent: 0,
     fixedDiscountAmount: 5000,
     description: 'Specialized shockwave & ED therapy session',
-    isIndoorFree: true,
+    isIndoorFree: false,
     isRatioBased: true,
     sessionsPer10Days: 3
   }

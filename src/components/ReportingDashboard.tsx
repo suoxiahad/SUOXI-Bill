@@ -29,7 +29,11 @@ import {
   Clock,
   Sparkles,
   Receipt,
-  AlertTriangle
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 
 interface ReportingDashboardProps {
@@ -68,6 +72,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
 
   // Detailed Activity Log sub-tabs: exactly 2 tabs: 'confirmed' & 'pending'
   const [patientLogTab, setPatientLogTab] = useState<'confirmed' | 'pending'>('confirmed');
+  const [activityPage, setActivityPage] = useState<number>(1);
+  const activityPageSize = 25;
 
   // Server aggregate summary & range patient records (capped at 2000 for activity table / CSV)
   const [serverSummary, setServerSummary] = useState<ReportsSummaryResponse | null>(null);
@@ -289,18 +295,21 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
   // INSTANT & ED PATIENT METRICS (Server SQL aggregates)
   // ==========================================
   const instantMetrics = useMemo(() => {
-    const total = funnelMetrics.totalAppointments;
+    const total = funnelMetrics.confirmedCount;
     if (serverSummary) {
       const { instantCount, instantRevenue } = serverSummary.instant;
       const instantRate = total > 0 ? ((instantCount / total) * 100).toFixed(1) : '0';
       return { instantCount, instantRevenue, instantRate };
     }
-    const instantPatients = filteredPatients.filter(p => Boolean(p.isInstant));
+    const instantPatients = filteredPatients.filter(p =>
+      Boolean(p.isInstant) &&
+      (Boolean(p.isConfirmed) || typeof p.consultationSerial === 'number' || Boolean(p.confirmedAt))
+    );
     const instantCount = instantPatients.length;
     const instantRevenue = instantPatients.reduce((sum, p) => sum + (p.instantFee != null ? p.instantFee : 2000), 0);
     const instantRate = total > 0 ? ((instantCount / total) * 100).toFixed(1) : '0';
     return { instantCount, instantRevenue, instantRate };
-  }, [serverSummary, funnelMetrics.totalAppointments, filteredPatients]);
+  }, [serverSummary, funnelMetrics.confirmedCount, filteredPatients]);
 
   const edMetrics = useMemo(() => {
     const total = funnelMetrics.totalAppointments;
@@ -394,21 +403,52 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
     return { allList, maxConsulted, totalAll };
   }, [serverSummary, filteredPatients]);
 
-  // Confirmed vs Pending Patient lists for Detailed Activity Log table
+  // Confirmed vs Pending Patient lists for Detailed Activity Log table (sorted 1, 2, 3... ascending)
+  const parseSerialNumber = (val?: string | number | null): number => {
+    if (typeof val === 'number' && Number.isFinite(val)) return val;
+    if (typeof val === 'string') {
+      const m = val.match(/\d+/);
+      if (m) return parseInt(m[0], 10);
+    }
+    return 999999;
+  };
+
   const confirmedPatients = useMemo(() => {
-    return filteredPatients.filter(p => 
-      Boolean(p.isConfirmed) || 
-      typeof p.consultationSerial === 'number' || 
-      Boolean(p.confirmedAt)
-    );
+    return filteredPatients
+      .filter(p =>
+        Boolean(p.isConfirmed) ||
+        typeof p.consultationSerial === 'number' ||
+        Boolean(p.confirmedAt)
+      )
+      .slice()
+      .sort((a, b) => {
+        const dA = a.appointmentDate || '';
+        const dB = b.appointmentDate || '';
+        if (dA !== dB) return dA.localeCompare(dB);
+        const sA = a.consultationSerial != null ? parseSerialNumber(a.consultationSerial) : parseSerialNumber(a.serialNo);
+        const sB = b.consultationSerial != null ? parseSerialNumber(b.consultationSerial) : parseSerialNumber(b.serialNo);
+        if (sA !== sB) return sA - sB;
+        return (a.createdAt || '').localeCompare(b.createdAt || '');
+      });
   }, [filteredPatients]);
 
   const pendingPatients = useMemo(() => {
-    return filteredPatients.filter(p => 
-      !Boolean(p.isConfirmed) && 
-      p.consultationSerial == null && 
-      !Boolean(p.confirmedAt)
-    );
+    return filteredPatients
+      .filter(p =>
+        !Boolean(p.isConfirmed) &&
+        p.consultationSerial == null &&
+        !Boolean(p.confirmedAt)
+      )
+      .slice()
+      .sort((a, b) => {
+        const dA = a.appointmentDate || '';
+        const dB = b.appointmentDate || '';
+        if (dA !== dB) return dA.localeCompare(dB);
+        const sA = parseSerialNumber(a.serialNo);
+        const sB = parseSerialNumber(b.serialNo);
+        if (sA !== sB) return sA - sB;
+        return (a.createdAt || '').localeCompare(b.createdAt || '');
+      });
   }, [filteredPatients]);
 
   const displayedPatients = useMemo(() => {
@@ -416,6 +456,17 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
     if (patientLogTab === 'pending') return pendingPatients;
     return filteredPatients;
   }, [patientLogTab, confirmedPatients, pendingPatients, filteredPatients]);
+
+  useEffect(() => {
+    setActivityPage(1);
+  }, [patientLogTab, datePreset, customStartDate, customEndDate, selectedDoctorFilter, searchTerm]);
+
+  const totalActivityPages = Math.max(1, Math.ceil(displayedPatients.length / activityPageSize));
+  const safeActivityPage = Math.min(Math.max(1, activityPage), totalActivityPages);
+  const activityStartIdx = (safeActivityPage - 1) * activityPageSize;
+  const paginatedActivityPatients = useMemo(() => {
+    return displayedPatients.slice(activityStartIdx, activityStartIdx + activityPageSize);
+  }, [displayedPatients, activityStartIdx, activityPageSize]);
 
   // ==========================================
   // 4. PATIENT PROFESSION DEMOGRAPHICS (Post Consultation Only - Server SQL aggregates)
@@ -580,7 +631,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       'Instant (Fee)',
       'ED Patient',
       'Is Confirmed',
-      'Doctor Name',
+      'Pre Doctor',
+      'Post Doctor',
       'Pre Consultation',
       'Post Consultation',
       'Consultation Decision / Comment',
@@ -590,11 +642,20 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       'Remark / Notes'
     ];
 
-    const rows = filteredPatients.map(p => {
+    const sortedForCsv = [...filteredPatients].sort((a, b) => {
+      const dA = a.appointmentDate || '';
+      const dB = b.appointmentDate || '';
+      if (dA !== dB) return dA.localeCompare(dB);
+      const sA = a.consultationSerial != null ? parseSerialNumber(a.consultationSerial) : parseSerialNumber(a.serialNo);
+      const sB = b.consultationSerial != null ? parseSerialNumber(b.consultationSerial) : parseSerialNumber(b.serialNo);
+      return sA - sB;
+    });
+
+    const rows = sortedForCsv.map(p => {
       const isConfirmed = Boolean(p.isConfirmed || p.consultationSerial) ? 'Yes' : 'No';
       const isPre = (p.status === 'Pre Consultation' || p.preConsultationAt) ? 'Yes' : 'No';
       const isPost = (p.status === 'Post Consultation' || p.postConsultationConfirmed) ? 'Yes' : 'No';
-      const instantCol = p.isInstant ? `৳${p.instantFee || 2000}` : '-';
+      const instantCol = p.isInstant && Boolean(p.isConfirmed || p.consultationSerial || p.confirmedAt) ? `৳${p.instantFee || 2000}` : '-';
       const edCol = p.isEd ? 'ED' : '-';
 
       return [
@@ -608,7 +669,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
         `"${instantCol}"`,
         `"${edCol}"`,
         `"${isConfirmed}"`,
-        `"${p.postDoctorName || p.doctorName || ''}"`,
+        `"${p.preDoctorName || ''}"`,
+        `"${p.postDoctorName || ''}"`,
         `"${isPre}"`,
         `"${isPost}"`,
         `"${(p.consultationComment || '').replace(/"/g, '""')}"`,
@@ -1151,7 +1213,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                     {instantMetrics.instantCount}
                   </div>
                   <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
-                    {Math.max(0, funnelMetrics.totalAppointments - instantMetrics.instantCount)} Regular (Free)
+                    {Math.max(0, funnelMetrics.confirmedCount - instantMetrics.instantCount)} Confirmed Regular (Free)
                   </div>
                 </div>
 
@@ -1771,7 +1833,8 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                 <th className="py-3 px-3 min-w-[110px]">Profession</th>
                 <th className="py-3 px-3 text-center min-w-[80px]">Instant</th>
                 <th className="py-3 px-3 text-center min-w-[70px]">ED</th>
-                <th className="py-3 px-3 min-w-[130px]">Doctor</th>
+                <th className="py-3 px-3 min-w-[130px]">Pre Doctor</th>
+                <th className="py-3 px-3 min-w-[130px]">Post Doctor</th>
                 <th className="py-3 px-3 text-center min-w-[100px]">Pre Consult</th>
                 <th className="py-3 px-3 text-center min-w-[100px]">Post Consult</th>
                 <th className="py-3 px-3 text-center min-w-[80px]">Pathology</th>
@@ -1785,7 +1848,7 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
             <tbody className="divide-y divide-slate-100">
               {displayedPatients.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-slate-400">
+                  <td colSpan={13} className="py-12 text-center text-slate-400">
                     <p className="text-sm font-semibold">
                       {patientLogTab === 'confirmed' 
                         ? 'No confirmed patients found for the selected period.' 
@@ -1801,12 +1864,16 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                   </td>
                 </tr>
               ) : (
-                displayedPatients.slice(0, 100).map((p, idx) => {
+                paginatedActivityPatients.map((p, idx) => {
+                  const rowNum = activityStartIdx + idx + 1;
                   const serialDisplay = p.consultationSerial 
                     ? `#${p.consultationSerial}` 
-                    : (p.serialNo || (patientLogTab === 'pending' ? 'Pending' : `${idx + 1}`));
+                    : (p.serialNo || (patientLogTab === 'pending' ? `${rowNum}` : `${rowNum}`));
                   const isPre = (p.status === 'Pre Consultation' || p.preConsultationAt || p.preDoctorName);
                   const isPost = (p.status === 'Post Consultation' || p.postConsultationConfirmed || p.postDoctorName);
+                  const isRowConfirmed = Boolean(p.isConfirmed) || typeof p.consultationSerial === 'number' || Boolean(p.confirmedAt);
+                  const preDoc = p.preDoctorName?.trim() || '';
+                  const postDoc = p.postDoctorName?.trim() || '';
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/70 transition-colors">
@@ -1839,9 +1906,15 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                       {/* Instant */}
                       <td className="py-2.5 px-3 text-center whitespace-nowrap">
                         {p.isInstant ? (
-                          <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]">
-                            ৳{p.instantFee || 2000}
-                          </span>
+                          isRowConfirmed ? (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]">
+                              ৳{p.instantFee || 2000}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200 font-semibold text-[10px]" title="Not counted in Instant Report until confirmed">
+                              Unconfirmed
+                            </span>
+                          )
                         ) : (
                           <span className="text-slate-400 text-[11px] font-semibold">-</span>
                         )}
@@ -1858,9 +1931,14 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
                         )}
                       </td>
 
-                      {/* Doctor */}
+                      {/* Pre Doctor */}
                       <td className="py-2.5 px-3 text-slate-800 font-medium">
-                        {p.postDoctorName || p.preDoctorName || p.doctorName || <span className="text-slate-400 italic">Not Assigned</span>}
+                        {preDoc || <span className="text-slate-400 italic">-</span>}
+                      </td>
+
+                      {/* Post Doctor */}
+                      <td className="py-2.5 px-3 text-slate-800 font-medium">
+                        {postDoc || <span className="text-slate-400 italic">-</span>}
                       </td>
 
                       {/* Pre Consult */}
@@ -1953,6 +2031,85 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls (25 patients per page) */}
+        {displayedPatients.length > 0 && (
+          <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="text-slate-600 font-medium">
+              Showing <span className="font-bold text-slate-900">{activityStartIdx + 1}</span>–
+              <span className="font-bold text-slate-900">{Math.min(activityStartIdx + activityPageSize, displayedPatients.length)}</span> of{' '}
+              <span className="font-bold text-slate-900">{displayedPatients.length}</span> patients (25 per page)
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setActivityPage(1)}
+                disabled={safeActivityPage === 1}
+                className="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
+                title="First Page"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivityPage(p => Math.max(1, p - 1))}
+                disabled={safeActivityPage === 1}
+                className="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
+                title="Previous Page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              {(() => {
+                const pages: number[] = [];
+                const startPage = Math.max(1, safeActivityPage - 2);
+                const endPage = Math.min(totalActivityPages, startPage + 4);
+                const adjustedStart = Math.max(1, endPage - 4);
+                for (let i = adjustedStart; i <= endPage; i++) {
+                  pages.push(i);
+                }
+                return pages.map(pageNum => (
+                  <button
+                    key={pageNum}
+                    type="button"
+                    onClick={() => setActivityPage(pageNum)}
+                    className={`min-w-[30px] h-8 px-2 rounded-lg font-bold transition cursor-pointer ${
+                      pageNum === safeActivityPage
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                ));
+              })()}
+
+              <button
+                type="button"
+                onClick={() => setActivityPage(p => Math.min(totalActivityPages, p + 1))}
+                disabled={safeActivityPage === totalActivityPages}
+                className="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
+                title="Next Page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivityPage(totalActivityPages)}
+                disabled={safeActivityPage === totalActivityPages}
+                className="p-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition"
+                title="Last Page"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+
+              <span className="ml-2 text-slate-500 font-semibold">
+                Page {safeActivityPage} / {totalActivityPages}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
     </div>

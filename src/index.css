@@ -1,18 +1,28 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Inter', 'Noto Sans Bengali', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Inter', 'Noto Sans Bengali', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-bengali: 'Noto Sans Bengali', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-architects: 'Architects Daughter', cursive, 'Inter', system-ui, sans-serif;
 }
 
 *, *::before, *::after, html, body, input, button, select, textarea {
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-family: 'Inter', 'Noto Sans Bengali', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+.font-bengali, .font-bengali * {
+  font-family: 'Noto Sans Bengali', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+.font-architects, .font-architects * {
+  font-family: 'Architects Daughter', cursive, 'Inter', system-ui, sans-serif !important;
 }
 
 @media print {
   @page {
     size: A4 portrait;
-    margin: 4mm 4mm 4mm 4mm;
+    margin: 8mm 10mm 8mm 10mm;
   }
 
   html, body {
@@ -30,5 +40,10 @@
 
   .print\:block {
     display: block !important;
+  }
+
+  .print-page-break {
+    break-after: page !important;
+    page-break-after: always !important;
   }
 }
