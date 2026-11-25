@@ -371,36 +371,48 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
   // 3. DOCTOR-WISE PERFORMANCE METRICS (Server SQL aggregates)
   // ==========================================
   const doctorMetrics = useMemo(() => {
+    let allList: Array<{ doctorName: string; totalConsulted: number; preCount: number; postCount: number }>;
+
     if (serverSummary) {
-      const allList = serverSummary.doctors;
-      const maxConsulted = allList.length > 0 ? Math.max(...allList.map(d => d.totalConsulted)) : 1;
-      const totalAll = allList.reduce((sum, d) => sum + d.totalConsulted, 0);
-      return { allList, maxConsulted, totalAll };
+      allList = serverSummary.doctors;
+    } else {
+      const map = new Map<string, { doctorName: string; totalConsulted: number; preCount: number; postCount: number }>();
+      const getDocEntry = (name: string) => {
+        const clean = name.trim();
+        if (!map.has(clean)) map.set(clean, { doctorName: clean, totalConsulted: 0, preCount: 0, postCount: 0 });
+        return map.get(clean)!;
+      };
+      filteredPatients.forEach(p => {
+        const isPre = p.status === 'Pre Consultation' || p.consultationStatus === 'Pre Consultation' ||
+          p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+          Boolean(p.preDoctorName) || Boolean(p.preConsultationAt);
+        const isPost = p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
+          Boolean(p.postConsultationConfirmed) || Boolean(p.postDoctorName) || Boolean(p.postConsultationAt);
+        if (isPre) getDocEntry(p.preDoctorName || p.doctorName || 'Doctor Not Assigned').preCount += 1;
+        if (isPost) getDocEntry(p.postDoctorName || p.doctorName || 'Doctor Not Assigned').postCount += 1;
+        if (!isPre && !isPost && p.doctorName) getDocEntry(p.doctorName);
+      });
+      map.forEach(item => { item.totalConsulted = item.preCount + item.postCount; });
+      allList = Array.from(map.values())
+        .filter(d => d.totalConsulted > 0 || d.preCount > 0 || d.postCount > 0)
+        .sort((a, b) => b.totalConsulted - a.totalConsulted);
     }
 
-    const map = new Map<string, { doctorName: string; totalConsulted: number; preCount: number; postCount: number }>();
-    const getDocEntry = (name: string) => {
-      const clean = name.trim();
-      if (!map.has(clean)) map.set(clean, { doctorName: clean, totalConsulted: 0, preCount: 0, postCount: 0 });
-      return map.get(clean)!;
-    };
-    filteredPatients.forEach(p => {
-      const isPre = p.status === 'Pre Consultation' || p.consultationStatus === 'Pre Consultation' ||
-        p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
-        Boolean(p.preDoctorName) || Boolean(p.preConsultationAt);
-      const isPost = p.status === 'Post Consultation' || p.consultationStatus === 'Post Consultation' ||
-        Boolean(p.postConsultationConfirmed) || Boolean(p.postDoctorName) || Boolean(p.postConsultationAt);
-      if (isPre) getDocEntry(p.preDoctorName || p.doctorName || 'Doctor Not Assigned').preCount += 1;
-      if (isPost) getDocEntry(p.postDoctorName || p.doctorName || 'Doctor Not Assigned').postCount += 1;
-      if (!isPre && !isPost && p.doctorName) getDocEntry(p.doctorName);
-    });
-    map.forEach(item => { item.totalConsulted = item.preCount + item.postCount; });
-    const allList = Array.from(map.values())
-      .filter(d => d.totalConsulted > 0 || d.preCount > 0 || d.postCount > 0)
-      .sort((a, b) => b.totalConsulted - a.totalConsulted);
-    const maxConsulted = allList.length > 0 ? Math.max(...allList.map(d => d.totalConsulted)) : 1;
-    const totalAll = allList.reduce((sum, d) => sum + d.totalConsulted, 0);
-    return { allList, maxConsulted, totalAll };
+    const preList = allList
+      .filter(d => d.preCount > 0)
+      .slice()
+      .sort((a, b) => b.preCount - a.preCount);
+    const totalPre = preList.reduce((sum, d) => sum + d.preCount, 0);
+    const maxPre = preList.length > 0 ? Math.max(...preList.map(d => d.preCount)) : 1;
+
+    const postList = allList
+      .filter(d => d.postCount > 0)
+      .slice()
+      .sort((a, b) => b.postCount - a.postCount);
+    const totalPost = postList.reduce((sum, d) => sum + d.postCount, 0);
+    const maxPost = postList.length > 0 ? Math.max(...postList.map(d => d.postCount)) : 1;
+
+    return { preList, totalPre, maxPre, postList, totalPost, maxPost };
   }, [serverSummary, filteredPatients]);
 
   // Confirmed vs Pending Patient lists for Detailed Activity Log table (sorted 1, 2, 3... ascending)
@@ -1467,85 +1479,107 @@ export const ReportingDashboard: React.FC<ReportingDashboardProps> = ({
       {/* 4. DOCTOR-WISE PERFORMANCE & VOLUME (Bar chart & table) */}
       {/* ======================================================== */}
       {(activeTab === 'all' || activeTab === 'doctors') && (
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Card 1: Pre Consultation Doctor Insights */}
+          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <Stethoscope className="w-5 h-5 text-blue-600" />
-                <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                  Doctor Insights
-                </h2>
+                <Stethoscope className="w-5 h-5 text-purple-600" />
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                    Doctor Insights — Pre Consultation
+                  </h2>
+                </div>
               </div>
+              <span className="text-xs font-bold text-purple-800 bg-purple-50 px-3 py-1 rounded-xl border border-purple-200">
+                Doctors: <strong>{doctorMetrics.preList.length}</strong> • Total: <strong>{doctorMetrics.totalPre}</strong>
+              </span>
             </div>
 
-            {/* Total Doctor count pill */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                Total Doctors: <strong>{doctorMetrics.allList.length}</strong>
-              </span>
+            <div className="space-y-2.5 pt-2 max-h-[420px] overflow-y-auto pr-2">
+              {doctorMetrics.preList.length === 0 ? (
+                <p className="text-xs text-slate-400 italic py-6 text-center">
+                  No pre consultation doctor records found for the selected period.
+                </p>
+              ) : (
+                doctorMetrics.preList.map((doc, idx) => {
+                  const count = doc.preCount;
+                  const barWidth = doctorMetrics.maxPre > 0 ? (count / doctorMetrics.maxPre) * 100 : 0;
+                  const percentOfTotal = doctorMetrics.totalPre > 0 ? ((count / doctorMetrics.totalPre) * 100).toFixed(1) : '0';
+
+                  return (
+                    <div key={`pre-${doc.doctorName}`} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs gap-2">
+                        <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                          <span className="text-slate-400 text-[11px] w-4">{idx + 1}.</span>
+                          <span>{doc.doctorName}</span>
+                        </span>
+                        <span className="font-extrabold text-purple-900 shrink-0">
+                          {count} <span className="text-slate-400 font-normal">({percentOfTotal}%)</span>
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-purple-500 to-violet-600 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${Math.max(4, barWidth)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
-          {/* Visual Doctor Volume Comparison Bar Chart */}
-          <div className="space-y-3 pt-2">
-            {doctorMetrics.allList.length === 0 ? (
-              <p className="text-xs text-slate-400 italic py-6 text-center">
-                No doctor consultation records found for the selected period.
-              </p>
-            ) : (
-              doctorMetrics.allList.map((doc, idx) => {
-                const count = doc.totalConsulted;
-                const percentOfMax = doctorMetrics.maxConsulted > 0 ? (count / doctorMetrics.maxConsulted) * 100 : 0;
-                const percentOfTotal = doctorMetrics.totalAll > 0 ? ((count / doctorMetrics.totalAll) * 100).toFixed(1) : '0';
+          {/* Card 2: Post Consultation Doctor Insights */}
+          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Stethoscope className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                    Doctor Insights — Post Consultation
+                  </h2>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-indigo-800 bg-indigo-50 px-3 py-1 rounded-xl border border-indigo-200">
+                Doctors: <strong>{doctorMetrics.postList.length}</strong> • Total: <strong>{doctorMetrics.totalPost}</strong>
+              </span>
+            </div>
 
-                return (
-                  <div key={doc.doctorName} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5 hover:border-slate-300 transition">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-full text-white font-mono font-bold text-[10px] flex items-center justify-center shrink-0 bg-slate-900">
-                          {idx + 1}
+            <div className="space-y-2.5 pt-2 max-h-[420px] overflow-y-auto pr-2">
+              {doctorMetrics.postList.length === 0 ? (
+                <p className="text-xs text-slate-400 italic py-6 text-center">
+                  No post consultation doctor records found for the selected period.
+                </p>
+              ) : (
+                doctorMetrics.postList.map((doc, idx) => {
+                  const count = doc.postCount;
+                  const barWidth = doctorMetrics.maxPost > 0 ? (count / doctorMetrics.maxPost) * 100 : 0;
+                  const percentOfTotal = doctorMetrics.totalPost > 0 ? ((count / doctorMetrics.totalPost) * 100).toFixed(1) : '0';
+
+                  return (
+                    <div key={`post-${doc.doctorName}`} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs gap-2">
+                        <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                          <span className="text-slate-400 text-[11px] w-4">{idx + 1}.</span>
+                          <span>{doc.doctorName}</span>
                         </span>
-                        <span className="font-extrabold text-slate-900 text-sm">{doc.doctorName}</span>
+                        <span className="font-extrabold text-indigo-900 shrink-0">
+                          {count} <span className="text-slate-400 font-normal">({percentOfTotal}%)</span>
+                        </span>
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-blue-100 text-blue-900 border border-blue-200">
-                          {count} Consultation{count > 1 ? 's' : ''}
-                        </span>
-                        <span className="text-slate-500 font-semibold text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200">
-                          {percentOfTotal}% share
-                        </span>
+                      <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-blue-500 to-indigo-600 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${Math.max(4, barWidth)}%` }}
+                        ></div>
                       </div>
                     </div>
-
-                    {/* Comparative Bar */}
-                    <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
-                      <div 
-                        className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${Math.max(5, percentOfMax)}%` }}
-                      ></div>
-                    </div>
-
-                    {/* Pre & Post Breakdown Pill Indicators: Pre and Post doctor counts */}
-                    <div className="text-[11px] flex items-center gap-2 pt-1 flex-wrap">
-                      <span className="px-2.5 py-0.5 rounded-md font-semibold flex items-center gap-1.5 bg-purple-50 text-purple-700 border border-purple-200">
-                        <span>Pre Consultation:</span>
-                        <strong className="font-bold text-purple-900">{doc.preCount}</strong>
-                      </span>
-
-                      <span className="px-2.5 py-0.5 rounded-md font-semibold flex items-center gap-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        <span>Post Consultation:</span>
-                        <strong className="font-bold text-indigo-900">{doc.postCount}</strong>
-                      </span>
-
-                      <span className="px-2.5 py-0.5 rounded-md bg-slate-200/80 text-slate-700 font-semibold flex items-center gap-1.5">
-                        <span>Total:</span>
-                        <strong className="font-bold text-slate-900">{doc.totalConsulted}</strong>
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}

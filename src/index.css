@@ -25,7 +25,7 @@
     margin: 8mm 10mm 8mm 10mm;
   }
 
-  html, body {
+  html, body, #root {
     margin: 0 !important;
     padding: 0 !important;
     background-color: #ffffff !important;

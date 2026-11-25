@@ -316,7 +316,7 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
     return (
       <div
         key={pageMode}
-        className={`bg-white text-black mx-auto w-full max-w-[210mm] min-h-[275mm] px-8 py-6 sm:px-10 sm:py-7 shadow-xl border border-slate-200 rounded-xl print:rounded-none print:shadow-none print:border-none print:px-3 print:py-2 flex flex-col justify-between ${
+        className={`bg-white text-black mx-auto w-full max-w-[210mm] px-8 py-6 sm:px-10 sm:py-7 shadow-xl border border-slate-200 rounded-xl print:max-w-none print:w-full print:rounded-none print:shadow-none print:border-none print:px-0 print:py-0 ${
           addPageBreakAfter ? 'print-page-break mb-8 print:mb-0' : ''
         }`}
       >
@@ -586,7 +586,7 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
         </div>
 
         {/* Bottom Boxed Bengali Reminder + Architects Daughter Footer Credit */}
-        <div className="pt-6 pb-1 flex flex-col items-center gap-3">
+        <div className="pt-6 pb-1 flex flex-col items-center gap-2.5 break-inside-avoid">
           <div className="font-bengali border border-slate-700 rounded-[10px] px-7 py-2.5 text-center text-[14.5px] text-black bg-white">
             প্রেসক্রিপশনে উল্লেখিত চিকিৎসার নির্ধারিত মেয়াদ সম্পূর্ণভাবে সম্পন্ন করার জন্য বলা হলো।
           </div>
