@@ -235,6 +235,7 @@ export const DEFAULT_CATALOG: CatalogItem[] = [
     category: 'additional_treatment',
     defaultPrice: 1500,
     defaultDiscountPercent: 0,
+    outdoorDiscountPercent: 40,
     description: 'Medical ozone oxygen therapy session',
     isIndoorFree: true,
     isRatioBased: true,

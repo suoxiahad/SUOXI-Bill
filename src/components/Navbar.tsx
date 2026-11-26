@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { 
   FileSpreadsheet, 
   UserPlus, 
@@ -50,10 +50,28 @@ export const Navbar: React.FC<NavbarProps> = ({
   isSyncing = false,
   onRefreshData
 }) => {
+  const headerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof document === 'undefined') return;
+    const updateHeight = () => {
+      document.documentElement.style.setProperty('--navbar-height', `${el.offsetHeight}px`);
+    };
+    updateHeight();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(updateHeight);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
+  }, []);
+
   const userRole = currentUser?.role;
 
   const canAccessAppointments = userRole === 'System Admin' || userRole === 'Call Center';
-  const canAccessConsultation = userRole === 'System Admin' || userRole === 'Doctor';
+  const canAccessConsultation = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter' || userRole === 'Call Center';
   const canAccessQuotation = userRole === 'System Admin' || userRole === 'Doctor';
   const canAccessHistory = userRole === 'System Admin' || userRole === 'Doctor' || userRole === 'Billing Counter';
   const canAccessCatalog = userRole === 'System Admin';
@@ -127,7 +145,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="bg-slate-900 text-white shadow-xl sticky top-0 z-40 print:hidden">
+    <header ref={headerRef} className="bg-slate-900 text-white shadow-xl sticky top-0 z-40 print:hidden">
       {/* Top Banner / Hospital Branding */}
       <div className="max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">

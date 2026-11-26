@@ -77,6 +77,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
   initialSubTab,
   onSubTabChange
 }) => {
+  const isReadOnlyConsultation = currentUser?.role === 'Billing Counter' || currentUser?.role === 'Call Center';
   const activeProfessions = professions && professions.length > 0 ? professions : getProfessionsLocal();
   const activeComments = comments && comments.length > 0 ? comments : getConsultationCommentsLocal();
 
@@ -329,6 +330,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Update single patient profession (Instant 1ms UI update + Silent background sync)
   const handleUpdateProfession = (patient: Patient, newProfession: string) => {
+    if (isReadOnlyConsultation) return;
     setEditingProfessionPatientId(null);
     setCustomProfessionPatientId(null);
     const updated: Patient = {
@@ -372,6 +374,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Update single patient decision / comment (Instant 1ms UI update + Silent background sync)
   const handleUpdateComment = (patient: Patient, newComment: string) => {
+    if (isReadOnlyConsultation) return;
     setEditingCommentPatientId(null);
     setCustomCommentPatientId(null);
     const updated: Patient = {
@@ -415,11 +418,13 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Disease editing handlers
   const handleStartEditDisease = (patient: Patient) => {
+    if (isReadOnlyConsultation) return;
     setEditingDiseaseId(patient.id);
     setEditingDiseaseText(patient.remark || patient.notes || '');
   };
 
   const handleSaveDisease = async (patient: Patient) => {
+    if (isReadOnlyConsultation) return;
     if (isSavingDisease) return;
     setIsSavingDisease(true);
     const clean = editingDiseaseText.trim();
@@ -445,6 +450,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Mark single patient as Done in Pre Consultation -> moves to Post Consultation with Auto-Detected Doctor
   const handleMarkDone = async (patient: Patient) => {
+    if (isReadOnlyConsultation) return;
     setIsProcessingDone(patient.id);
     const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
     const updated: Patient = {
@@ -479,6 +485,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Create Quotation in Post Consultation -> auto-records doctor and opens Quotation Builder
   const handleCreateQuotation = async (patient: Patient) => {
+    if (isReadOnlyConsultation) return;
     setIsProcessingDone(patient.id);
     const attendingDoctor = currentUser?.name || currentUser?.username || 'Doctor';
     const updated: Patient = {
@@ -500,6 +507,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Mark single patient as Done / Confirmed in Post Consultation
   const handleConfirmPostConsultation = async (patient: Patient) => {
+    if (isReadOnlyConsultation) return;
     if (!patient.consultationComment || !patient.consultationComment.trim() || patient.consultationComment === 'Other') {
       setActionMessage({
         type: 'error',
@@ -542,6 +550,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
 
   // Action: Revert patient from Post Consultation back to Pre Consultation
   const handleRevertToPre = async (patient: Patient) => {
+    if (isReadOnlyConsultation) return;
     setIsProcessingDone(patient.id);
     const updated: Patient = {
       ...patient,
@@ -826,7 +835,16 @@ export const Consultation: React.FC<ConsultationProps> = ({
           </div>
 
           <div className="text-sm text-slate-600 font-medium">
-            {activeSubTab === 'pre' ? (
+            {isReadOnlyConsultation ? (
+              <span className="text-slate-700 font-semibold flex items-center gap-2">
+                <Eye className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  {activeSubTab === 'pre'
+                    ? 'View-only Pre Consultation patient queue.'
+                    : 'View-only Post Consultation patient list.'}
+                </span>
+              </span>
+            ) : activeSubTab === 'pre' ? (
               <span className="text-amber-900 font-semibold flex items-center gap-2">
                 <Clock className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>Patients waiting for doctor's consultation. Click <strong>Done</strong> to record doctor and move to Post Consultation.</span>
@@ -997,7 +1015,9 @@ export const Consultation: React.FC<ConsultationProps> = ({
                       </th>
                     )}
                     <th className="px-3 py-2.5 font-semibold whitespace-nowrap">Doctor</th>
-                    <th className="px-3 py-2.5 font-semibold text-right whitespace-nowrap">CONSULTATION ACTION</th>
+                    {!isReadOnlyConsultation && (
+                      <th className="px-3 py-2.5 font-semibold text-right whitespace-nowrap">CONSULTATION ACTION</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
@@ -1038,7 +1058,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                           {p.address || '—'}
                         </td>
                         <td className="px-3 py-2.5 text-slate-700 text-sm max-w-[210px] font-normal">
-                          {editingDiseaseId === p.id ? (
+                          {!isReadOnlyConsultation && editingDiseaseId === p.id ? (
                             <div className="flex items-center gap-1">
                               <input
                                 type="text"
@@ -1075,7 +1095,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                               <span className="line-clamp-2" title={p.remark || p.notes || ''}>
                                 {p.remark || p.notes || 'General Assessment'}
                               </span>
-                              {activeSubTab === 'pre' && (
+                              {activeSubTab === 'pre' && !isReadOnlyConsultation && (
                                 <button
                                   type="button"
                                   onClick={() => handleStartEditDisease(p)}
@@ -1089,7 +1109,15 @@ export const Consultation: React.FC<ConsultationProps> = ({
                           )}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
-                          {activeSubTab === 'pre' ? (
+                          {isReadOnlyConsultation ? (
+                            p.profession ? (
+                              <span className="px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-800 rounded-md text-xs font-medium inline-block">
+                                {p.profession}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">—</span>
+                            )
+                          ) : activeSubTab === 'pre' ? (
                             customProfessionPatientId === p.id ? (
                               <div className="flex items-center gap-1 min-w-[155px]">
                                 <input
@@ -1235,7 +1263,25 @@ export const Consultation: React.FC<ConsultationProps> = ({
                         {/* Comment Column: Only in Post Consultation with Edit Permission */}
                         {activeSubTab === 'post' && (
                           <td className="px-3 py-2.5 whitespace-nowrap bg-blue-50/20 border-l border-r border-blue-100">
-                            {customCommentPatientId === p.id ? (
+                            {isReadOnlyConsultation ? (
+                              p.consultationComment ? (
+                                <span className={`px-2.5 py-1 rounded-md text-xs font-medium border inline-block ${
+                                  p.consultationComment === 'Will take today'
+                                    ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
+                                    : p.consultationComment === 'Will admit'
+                                    ? 'bg-blue-50 text-blue-950 border-blue-300'
+                                    : p.consultationComment === 'Costly'
+                                    ? 'bg-rose-50 text-rose-950 border-rose-300'
+                                    : p.consultationComment === 'Will take later'
+                                    ? 'bg-amber-50 text-amber-950 border-amber-300'
+                                    : 'bg-slate-100 text-slate-800 border-slate-200'
+                                }`}>
+                                  {p.consultationComment}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 text-xs italic">—</span>
+                              )
+                            ) : customCommentPatientId === p.id ? (
                               <div className="flex items-center gap-1 min-w-[165px]">
                                 <input
                                   type="text"
@@ -1347,16 +1393,20 @@ export const Consultation: React.FC<ConsultationProps> = ({
                           {activeSubTab === 'pre' ? (
                             <div className="flex flex-col">
                               <span className="font-normal text-slate-800 text-sm">
-                                {p.preDoctorName || currentUser?.name || currentUser?.username || p.doctorName || 'Attending Doctor'}
+                                {isReadOnlyConsultation
+                                  ? (p.preDoctorName || p.doctorName || 'Pending')
+                                  : (p.preDoctorName || currentUser?.name || currentUser?.username || p.doctorName || 'Attending Doctor')}
                               </span>
                               <span className="text-[11px] text-emerald-700">
-                                {p.preDoctorName ? 'Recorded' : 'Active Doctor'}
+                                {p.preDoctorName ? 'Recorded' : (isReadOnlyConsultation ? 'Assigned' : 'Active Doctor')}
                               </span>
                             </div>
                           ) : (
                             <div className="flex flex-col">
                               <span className="font-normal text-slate-800 text-sm">
-                                {p.postDoctorName || currentUser?.name || currentUser?.username || p.preDoctorName || 'Doctor'}
+                                {isReadOnlyConsultation
+                                  ? (p.postDoctorName || p.preDoctorName || p.doctorName || '—')
+                                  : (p.postDoctorName || currentUser?.name || currentUser?.username || p.preDoctorName || 'Doctor')}
                               </span>
                               <span className="text-[11px] text-slate-500 font-normal">
                                 Pre: {p.preDoctorName || p.doctorName || 'Doctor'}
@@ -1364,6 +1414,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                             </div>
                           )}
                         </td>
+                        {!isReadOnlyConsultation && (
                         <td className="px-3 py-2.5 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             {/* In Pre Consultation: Done Button */}
@@ -1444,6 +1495,7 @@ export const Consultation: React.FC<ConsultationProps> = ({
                             )}
                           </div>
                         </td>
+                        )}
                       </tr>
                     );
                   })}

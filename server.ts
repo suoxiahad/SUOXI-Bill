@@ -173,7 +173,7 @@ const DEFAULT_CATALOG = [
   { id: 'room-ac-ward', name: 'General AC Ward Bed', category: 'indoor_room', defaultPrice: 1200, defaultDiscountPercent: 0, description: 'Air conditioned general ward bed' },
   { id: 'room-non-ac', name: 'General Non-AC Ward Bed', category: 'indoor_room', defaultPrice: 800, defaultDiscountPercent: 0, description: 'General ward bed with fan' },
   { id: 'doc-consult', name: 'Doctor Counseling & Assessment Fee', category: 'consultation', defaultPrice: 1000, defaultDiscountPercent: 0, description: 'Senior acupuncture doctor consultation' },
-  { id: 'add-ozon', name: 'Ozon Therapy', category: 'additional_treatment', defaultPrice: 1500, defaultDiscountPercent: 0, description: 'Medical ozone oxygen therapy session', isIndoorFree: true, isRatioBased: true, sessionsPer10Days: 3 },
+  { id: 'add-ozon', name: 'Ozon Therapy', category: 'additional_treatment', defaultPrice: 1500, defaultDiscountPercent: 0, outdoorDiscountPercent: 40, description: 'Medical ozone oxygen therapy session', isIndoorFree: true, isRatioBased: true, sessionsPer10Days: 3 },
   { id: 'add-ed', name: 'Erectile Dysfunction (ED) Therapy', category: 'additional_treatment', defaultPrice: 2000, defaultDiscountPercent: 0, fixedDiscountAmount: 5000, description: 'Specialized shockwave & ED therapy session', isIndoorFree: false, isRatioBased: true, sessionsPer10Days: 3 }
 ];
 
@@ -384,15 +384,38 @@ function loadLocalDb() {
         serverDataVersion = parsed.dataVersion;
       }
 
+      let catalogList = Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : DEFAULT_CATALOG;
+      let ozonMigrated = Boolean((parsed as any).ozonOutdoor40Migrated);
+      if (!ozonMigrated) {
+        let changed = false;
+        catalogList = catalogList.map((item: any) => {
+          if (!item) return item;
+          const isOzon = item.id === 'add-ozon' || String(item.name || '').toLowerCase().includes('ozon');
+          if (isOzon && (item.outdoorDiscountPercent === undefined || item.outdoorDiscountPercent === null || Number(item.outdoorDiscountPercent) === 0)) {
+            changed = true;
+            return { ...item, outdoorDiscountPercent: 40 };
+          }
+          return item;
+        });
+        if (changed) {
+          serverDataVersion += 1;
+        }
+        ozonMigrated = true;
+      }
+
       localData = {
         users,
         patients,
         quotations,
-        catalog: Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : DEFAULT_CATALOG,
+        catalog: catalogList,
         professions: Array.isArray(parsed.professions) && parsed.professions.length > 0 ? parsed.professions : DEFAULT_PROFESSIONS,
         comments: Array.isArray(parsed.comments) && parsed.comments.length > 0 ? parsed.comments : DEFAULT_CONSULTATION_COMMENTS,
-        dataVersion: serverDataVersion
+        dataVersion: serverDataVersion,
+        ozonOutdoor40Migrated: ozonMigrated
       } as any;
+      if (ozonMigrated && !(parsed as any).ozonOutdoor40Migrated) {
+        saveLocalDb();
+      }
     } else {
       saveLocalDb();
     }
@@ -772,6 +795,59 @@ async function initDatabase() {
       );
       if (Array.isArray(verRows) && verRows.length > 0) {
         serverDataVersion = Math.max(1, Number(verRows[0].ver || 1));
+      }
+
+      // One-time migration: ensure Ozon Therapy defaults to 40% outdoor discount in existing MySQL catalog
+      try {
+        const [ozonMigRows]: any = await pool.query(
+          "SELECT setting_value FROM app_settings WHERE setting_key = 'ozon_outdoor_40_migrated' LIMIT 1"
+        );
+        if (!Array.isArray(ozonMigRows) || ozonMigRows.length === 0) {
+          const [ozonCatRows]: any = await pool.query(
+            "SELECT id, outdoorDiscountPercent, details_json FROM catalog WHERE id = 'add-ozon' OR LOWER(name) LIKE '%ozon%'"
+          );
+          let updatedAny = false;
+          if (Array.isArray(ozonCatRows)) {
+            for (const row of ozonCatRows) {
+              let details: any = {};
+              if (row.details_json) {
+                try {
+                  details = typeof row.details_json === 'string' ? JSON.parse(row.details_json) : row.details_json;
+                } catch {}
+              }
+              const currentPct = row.outdoorDiscountPercent !== null && row.outdoorDiscountPercent !== undefined
+                ? Number(row.outdoorDiscountPercent)
+                : (details.outdoorDiscountPercent !== undefined ? Number(details.outdoorDiscountPercent) : 0);
+              if (!Number.isFinite(currentPct) || currentPct === 0) {
+                details.outdoorDiscountPercent = 40;
+                await pool.query(
+                  'UPDATE catalog SET outdoorDiscountPercent = 40, details_json = ? WHERE id = ?',
+                  [JSON.stringify(details), row.id]
+                );
+                updatedAny = true;
+              }
+            }
+          }
+          if (updatedAny) {
+            const conn = await pool.getConnection();
+            try {
+              await conn.beginTransaction();
+              const nextVer = await bumpDataVersionInTx(conn);
+              await conn.execute('UPDATE catalog SET lastModifiedVersion = ? WHERE id = ? OR LOWER(name) LIKE ?', [nextVer, 'add-ozon', '%ozon%']);
+              await conn.commit();
+              serverDataVersion = nextVer;
+            } catch {
+              try { await conn.rollback(); } catch {}
+            } finally {
+              conn.release();
+            }
+          }
+          await pool.query(
+            "INSERT IGNORE INTO app_settings (setting_key, setting_value) VALUES ('ozon_outdoor_40_migrated', '1')"
+          );
+        }
+      } catch (ozonErr) {
+        console.warn('Ozon 40% outdoor migration warning:', ozonErr);
       }
 
       // Update existing database patient records with placeholder doctorName to Dr. S.M. Shahidul Islam PhD

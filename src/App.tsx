@@ -51,8 +51,66 @@ import {
   syncPatientsToDailySheet 
 } from './services/googleSheetsService';
 
+type AppTab = 'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users' | 'departments' | 'reports';
+
+const TAB_TO_SLUG: Record<AppTab, string> = {
+  appointments: '/appointments',
+  consultation: '/consultation',
+  quotation: '/quotation',
+  history: '/history',
+  departments: '/update',
+  reports: '/reporting',
+  catalog: '/settings',
+  users: '/accounts',
+};
+
+const SLUG_TO_TAB: Record<string, AppTab> = {
+  '/appointments': 'appointments',
+  '/consultation': 'consultation',
+  '/quotation': 'quotation',
+  '/history': 'history',
+  '/update': 'departments',
+  '/reporting': 'reports',
+  '/settings': 'catalog',
+  '/accounts': 'users',
+};
+
+function normalizePath(pathname: string): string {
+  const cleaned = (pathname || '/').toLowerCase().replace(/\/+$/, '');
+  return cleaned || '/';
+}
+
+function getDefaultTabForRole(role?: User['role']): AppTab {
+  if (role === 'Call Center') return 'appointments';
+  if (role === 'Doctor') return 'consultation';
+  if (role === 'Billing Counter') return 'history';
+  if (role === 'Pathology' || role === 'Organic' || role === 'Nutrition') return 'departments';
+  if (role === 'SSD') return 'reports';
+  if (role === 'System Admin') return 'consultation';
+  return 'appointments';
+}
+
+function canRoleAccessTab(role: User['role'] | undefined, tab: AppTab): boolean {
+  if (!role) return false;
+  if (role === 'System Admin') return true;
+  if (role === 'Doctor') return tab === 'consultation' || tab === 'quotation' || tab === 'history' || tab === 'users';
+  if (role === 'Call Center') return tab === 'appointments' || tab === 'consultation' || tab === 'users';
+  if (role === 'Billing Counter') return tab === 'consultation' || tab === 'history' || tab === 'users';
+  if (role === 'Pathology' || role === 'Organic' || role === 'Nutrition') return tab === 'departments' || tab === 'users';
+  if (role === 'SSD') return tab === 'reports' || tab === 'users';
+  return false;
+}
+
+function getTabFromCurrentUrl(role?: User['role']): AppTab {
+  if (typeof window !== 'undefined') {
+    const tab = SLUG_TO_TAB[normalizePath(window.location.pathname)];
+    if (tab) return tab;
+  }
+  return getDefaultTabForRole(role);
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'appointments' | 'consultation' | 'quotation' | 'history' | 'catalog' | 'users' | 'departments' | 'reports'>('appointments');
+  const [activeTab, setActiveTab] = useState<AppTab>(() => getTabFromCurrentUrl(getActiveUser()?.role));
   
   const [currentUser, setCurrentUser] = useState<User | null>(() => getActiveUser());
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -66,8 +124,10 @@ export default function App() {
   const [comments, setComments] = useState<string[]>(() => getConsultationCommentsLocal());
 
   const [selectedPatientForQuotation, setSelectedPatientForQuotation] = useState<Patient | null>(null);
+  const [patientSelectionKey, setPatientSelectionKey] = useState<number>(0);
   const [editingQuotation, setEditingQuotation] = useState<InvoiceQuotation | null>(null);
   const [printQuotation, setPrintQuotation] = useState<InvoiceQuotation | null>(null);
+  const [printReturnTab, setPrintReturnTab] = useState<AppTab | null>(null);
   const [isAddPatientOpen, setIsAddPatientOpen] = useState(false);
   const [consultationSubTab, setConsultationSubTab] = useState<'pre' | 'post'>('pre');
 
@@ -551,64 +611,59 @@ export default function App() {
     };
   }, [currentUser, loadWorkingDatePatients, loadServerPatientCounts]);
 
-  // Guard tabs based on role
+  const navigateToTab = useCallback((tab: AppTab, options?: { replace?: boolean; keepPrintOpen?: boolean }) => {
+    if (!options?.keepPrintOpen) {
+      setPrintQuotation(null);
+      setPrintReturnTab(null);
+    }
+    setActiveTab(tab);
+    if (typeof window !== 'undefined') {
+      const targetSlug = TAB_TO_SLUG[tab];
+      if (targetSlug && normalizePath(window.location.pathname) !== targetSlug) {
+        if (options?.replace) {
+          window.history.replaceState({ tab }, '', targetSlug);
+        } else {
+          window.history.pushState({ tab }, '', targetSlug);
+        }
+      }
+    }
+  }, []);
+
+  // Sync URL slug on initial load & browser Back/Forward navigation
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const currentNorm = normalizePath(window.location.pathname);
+    if (!SLUG_TO_TAB[currentNorm]) {
+      window.history.replaceState({ tab: activeTabRef.current }, '', TAB_TO_SLUG[activeTabRef.current]);
+    }
+
+    const handlePopState = () => {
+      const nextNorm = normalizePath(window.location.pathname);
+      const urlTab = SLUG_TO_TAB[nextNorm];
+      setPrintQuotation(null);
+      setPrintReturnTab(null);
+      if (urlTab) {
+        setActiveTab(urlTab);
+      } else {
+        const fallback = getDefaultTabForRole(getActiveUser()?.role);
+        setActiveTab(fallback);
+        window.history.replaceState({ tab: fallback }, '', TAB_TO_SLUG[fallback]);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Guard tabs based on role and keep URL slug synchronized
   useEffect(() => {
     if (!currentUser) return;
     const role = currentUser.role;
-    const isDoctorOrAdmin = role === 'System Admin' || role === 'Doctor';
-
-    // Strictly protect Consultation tab for Doctor & System Admin only
-    if (activeTab === 'consultation' && !isDoctorOrAdmin) {
-      if (role === 'Call Center') {
-        setActiveTab('appointments');
-      } else if (role === 'Pathology' || role === 'Organic' || role === 'Nutrition') {
-        setActiveTab('departments');
-      } else {
-        setActiveTab('history');
-      }
-      return;
+    if (!canRoleAccessTab(role, activeTab)) {
+      const fallbackTab = getDefaultTabForRole(role);
+      navigateToTab(fallbackTab, { replace: true });
     }
-
-    // Strictly protect Department Updates tab for Pathology, Organic, Nutrition, and System Admin
-    const isDeptOrAdmin = role === 'System Admin' || role === 'Pathology' || role === 'Organic' || role === 'Nutrition';
-    if (activeTab === 'departments' && !isDeptOrAdmin) {
-      if (role === 'Call Center') {
-        setActiveTab('appointments');
-      } else if (role === 'Doctor') {
-        setActiveTab('consultation');
-      } else {
-        setActiveTab('history');
-      }
-      return;
-    }
-
-    // Strictly protect SSD user to reports and my profile & password (users tab) only
-    if (role === 'SSD') {
-      if (activeTab !== 'reports' && activeTab !== 'users') {
-        setActiveTab('reports');
-      }
-      return;
-    }
-
-    // Restrict all other roles from reports tab (only System Admin and SSD have access to reports)
-    if (role === 'Pathology' || role === 'Organic' || role === 'Nutrition') {
-      if (activeTab !== 'departments' && activeTab !== 'users') {
-        setActiveTab('departments');
-      }
-    } else if (role === 'Call Center') {
-      if (activeTab !== 'appointments' && activeTab !== 'users') {
-        setActiveTab('appointments');
-      }
-    } else if (role === 'Billing Counter') {
-      if (activeTab !== 'history' && activeTab !== 'users') {
-        setActiveTab('history');
-      }
-    } else if (role === 'Doctor') {
-      if (activeTab !== 'consultation' && activeTab !== 'quotation' && activeTab !== 'history' && activeTab !== 'users') {
-        setActiveTab('consultation');
-      }
-    }
-  }, [currentUser, activeTab]);
+  }, [currentUser, activeTab, navigateToTab]);
 
   // Silent debounced background auto-sync to Google Sheets whenever patients change
   useEffect(() => {
@@ -628,47 +683,42 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [patients]);
 
-  // Set initial default tab on login without strictly trapping the user
+  // Set initial default tab on login while honoring an explicitly opened permitted slug
   const handleLoginSuccess = async (user: User) => {
     setCurrentUser(user);
     setIsLoginModalOpen(false);
-    if (user.role === 'Call Center') {
-      setActiveTab('appointments');
-    } else if (user.role === 'Doctor') {
-      setActiveTab('consultation');
-    } else if (user.role === 'Billing Counter') {
-      setActiveTab('history');
-    } else if (user.role === 'Pathology' || user.role === 'Organic' || user.role === 'Nutrition') {
-      setActiveTab('departments');
-    } else if (user.role === 'SSD') {
-      setActiveTab('reports');
-    } else {
-      setActiveTab('consultation');
-    }
+    const urlTab = typeof window !== 'undefined' ? SLUG_TO_TAB[normalizePath(window.location.pathname)] : undefined;
+    const targetTab = urlTab && canRoleAccessTab(user.role, urlTab)
+      ? urlTab
+      : getDefaultTabForRole(user.role);
+    navigateToTab(targetTab, { replace: true });
     await initializeAppData();
   };
 
   const handleLogout = () => {
     setActiveUser(null);
     setCurrentUser(null);
+    setPrintQuotation(null);
+    setPrintReturnTab(null);
     setIsLoginModalOpen(true);
   };
 
   const handleSelectPatientForQuotation = (patient: Patient) => {
     setEditingQuotation(null);
     setSelectedPatientForQuotation(patient);
-    setActiveTab('quotation');
+    setPatientSelectionKey(k => k + 1);
+    navigateToTab('quotation');
   };
 
   const handleBackToPostConsultation = () => {
     setConsultationSubTab('post');
-    setActiveTab('consultation');
+    navigateToTab('consultation');
   };
 
   const handleEditQuotation = (quotation: InvoiceQuotation) => {
     setEditingQuotation(quotation);
     setSelectedPatientForQuotation(null);
-    setActiveTab('quotation');
+    navigateToTab('quotation');
   };
 
   const handleSavePatient = async (patient: Patient) => {
@@ -715,7 +765,8 @@ export default function App() {
     if (foundPatient) {
       setEditingQuotation(null);
       setSelectedPatientForQuotation(foundPatient);
-      setActiveTab('quotation');
+      setPatientSelectionKey(k => k + 1);
+      navigateToTab('quotation');
       return;
     }
 
@@ -742,7 +793,8 @@ export default function App() {
 
       setEditingQuotation(null);
       setSelectedPatientForQuotation(synchedPatient);
-      setActiveTab('quotation');
+      setPatientSelectionKey(k => k + 1);
+      navigateToTab('quotation');
       return;
     }
 
@@ -775,7 +827,13 @@ export default function App() {
     setQuotations(updated);
   };
 
-  const handlePreviewPrint = (quotation: InvoiceQuotation) => {
+  const handlePreviewPrint = (quotation: InvoiceQuotation, options?: { fromBuilder?: boolean }) => {
+    if (options?.fromBuilder) {
+      setEditingQuotation(quotation);
+      setPrintReturnTab('quotation');
+    } else {
+      setPrintReturnTab(null);
+    }
     setPrintQuotation(quotation);
   };
 
@@ -800,7 +858,7 @@ export default function App() {
       {/* Navigation Header */}
       <Navbar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={navigateToTab}
         onOpenAddPatient={() => {
           if (currentUser?.role === 'Doctor') return;
           setIsAddPatientOpen(true);
@@ -837,13 +895,21 @@ export default function App() {
               Sign In / Login Now
             </button>
           </div>
-        ) : printQuotation ? (
-          <QuotationPrintView
-            quotation={printQuotation}
-            onBack={() => setPrintQuotation(null)}
-          />
         ) : (
           <>
+            {printQuotation && (
+              <QuotationPrintView
+                quotation={printQuotation}
+                onBack={() => {
+                  setPrintQuotation(null);
+                  if (printReturnTab === 'quotation') {
+                    navigateToTab('quotation');
+                  }
+                  setPrintReturnTab(null);
+                }}
+              />
+            )}
+            <div className={printQuotation ? 'hidden' : ''}>
             <div className={activeTab === 'appointments' ? 'block' : 'hidden'}>
               <AppointmentImporter
                 patients={patients}
@@ -869,7 +935,7 @@ export default function App() {
             </div>
 
             <div className={activeTab === 'consultation' ? 'block' : 'hidden'}>
-              {(currentUser?.role === 'System Admin' || currentUser?.role === 'Doctor') ? (
+              {(currentUser?.role === 'System Admin' || currentUser?.role === 'Doctor' || currentUser?.role === 'Billing Counter' || currentUser?.role === 'Call Center') ? (
                 <Consultation
                   patients={patients}
                   quotations={quotations}
@@ -899,7 +965,7 @@ export default function App() {
                   </div>
                   <h3 className="text-xl font-bold text-slate-800">Access Restricted</h3>
                   <p className="text-sm text-slate-500 leading-relaxed">
-                    Consultation tab is accessible only by Doctor and System Admin accounts.
+                    Consultation tab is accessible only by Doctor, Billing Counter, Call Center, and System Admin accounts.
                   </p>
                 </div>
               )}
@@ -908,6 +974,7 @@ export default function App() {
             <div className={activeTab === 'quotation' ? 'block max-w-7xl mx-auto w-full' : 'hidden'}>
               <QuotationBuilder
                 initialPatient={selectedPatientForQuotation}
+                patientSelectionKey={patientSelectionKey}
                 patients={patients}
                 quotations={quotations}
                 catalog={catalog}
@@ -988,8 +1055,7 @@ export default function App() {
                   dataVersion={dataVersion}
                   onSelectPatient={(p) => {
                     if (currentUser?.role === 'SSD') return;
-                    setSelectedPatientForQuotation(p);
-                    setActiveTab('quotation');
+                    handleSelectPatientForQuotation(p);
                   }}
                 />
               ) : (
@@ -1007,6 +1073,7 @@ export default function App() {
 
             <div className={activeTab === 'users' ? 'block' : 'hidden'}>
               <UserManagement currentUser={currentUser} />
+            </div>
             </div>
           </>
         )}

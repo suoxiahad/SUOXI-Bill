@@ -602,35 +602,40 @@ export const QuotationPrintView: React.FC<QuotationPrintViewProps> = ({ quotatio
 
   return (
     <div className="space-y-6">
-      {/* Top Action Bar (Hidden on Print) */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-slate-600 hover:text-slate-900 font-bold text-xs px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Back</span>
-        </button>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold">
-            <FileText className="w-3.5 h-3.5 text-emerald-700" />
-            <span>
-              {totalPages === 2
-                ? '2 Pages in 1 PDF (Page 1: Outdoor, Page 2: Indoor)'
-                : showIndoor
-                ? '1 Page PDF (Indoor Treatment Cost)'
-                : '1 Page PDF (Outdoor Treatment Cost)'}
-            </span>
-          </div>
-
+      {/* Top Action Bar (Sticky & Matched to Invoice Width, Hidden on Print) */}
+      <div
+        className="sticky z-30 max-w-[210mm] w-full mx-auto print:hidden"
+        style={{ top: 'calc(var(--navbar-height, 116px) + 8px)' }}
+      >
+        <div className="bg-white/95 backdrop-blur-sm rounded-2xl p-3.5 sm:p-4 shadow-md border border-slate-200 flex flex-wrap items-center justify-between gap-3">
           <button
-            onClick={handlePrint}
-            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+            onClick={onBack}
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 font-bold text-xs px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
           >
-            <Printer className="w-4 h-4" />
-            <span>Print / Save PDF</span>
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back</span>
           </button>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold">
+              <FileText className="w-3.5 h-3.5 text-emerald-700" />
+              <span>
+                {totalPages === 2
+                  ? '2 Pages in 1 PDF (Page 1: Outdoor, Page 2: Indoor)'
+                  : showIndoor
+                  ? '1 Page PDF (Indoor Treatment Cost)'
+                  : '1 Page PDF (Outdoor Treatment Cost)'}
+              </span>
+            </div>
+
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print / Save PDF</span>
+            </button>
+          </div>
         </div>
       </div>
 

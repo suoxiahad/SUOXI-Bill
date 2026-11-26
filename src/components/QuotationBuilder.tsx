@@ -97,6 +97,7 @@ interface IndoorServiceRowState {
 
 interface QuotationBuilderProps {
   initialPatient?: Patient | null;
+  patientSelectionKey?: number;
   patients: Patient[];
   quotations?: InvoiceQuotation[];
   catalog: CatalogItem[];
@@ -104,7 +105,7 @@ interface QuotationBuilderProps {
   editingQuotation?: InvoiceQuotation | null;
   onCancelEdit?: () => void;
   onSaveQuotation: (quotation: InvoiceQuotation) => Promise<InvoiceQuotation | void> | InvoiceQuotation | void;
-  onPreviewPrint: (quotation: InvoiceQuotation) => void;
+  onPreviewPrint: (quotation: InvoiceQuotation, options?: { fromBuilder?: boolean }) => void;
   onBackToPostConsultation?: () => void;
   onUpdatePatient?: (patient: Patient) => void;
 }
@@ -233,6 +234,7 @@ function computeRowPricing(
 
 export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   initialPatient,
+  patientSelectionKey = 0,
   patients,
   quotations = [],
   catalog,
@@ -248,6 +250,7 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(initialPatient || null);
   const [patientAddress, setPatientAddress] = useState<string>(initialPatient?.address || '');
   const draftInvoiceIdRef = useRef<string>(makeUniqueId());
+  const prevSelectionKeyRef = useRef<number>(patientSelectionKey);
 
   const [billingDoctor, setBillingDoctor] = useState(
     currentUser?.name || initialPatient?.doctorName || 'Dr. S.M. Shahidul Islam PhD'
@@ -1402,13 +1405,13 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     overallDiscountPercent, advancePaid, paymentStatus, notes, DRAFT_STORAGE_KEY, editingQuotation
   ]);
 
-  const clearFormAndDraftState = () => {
+  const clearFormAndDraftState = (nextPatient?: Patient | null) => {
     isClearingDraftRef.current = true;
     idbDel(DRAFT_STORAGE_KEY).catch(() => {});
-    setSelectedPatient(null);
-    setPhoneSearch('');
-    setPatientAddress('');
-    setBillingDoctor(currentUser?.name || '');
+    setSelectedPatient(nextPatient || null);
+    setPhoneSearch(nextPatient?.phone || '');
+    setPatientAddress(nextPatient?.address || '');
+    setBillingDoctor(currentUser?.name || nextPatient?.doctorName || '');
     setTreatmentSearch('');
     setIndoorSearch('');
     setAdditionalTreatmentSearch('');
@@ -1457,8 +1460,16 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     }, 600);
   };
 
+  useEffect(() => {
+    if (patientSelectionKey > 0 && patientSelectionKey !== prevSelectionKeyRef.current) {
+      prevSelectionKeyRef.current = patientSelectionKey;
+      clearFormAndDraftState(initialPatient || null);
+    }
+  }, [patientSelectionKey, initialPatient]);
+
   const handleResetDraft = () => {
     if (confirm('Are you sure you want to clear all form inputs and start a new quotation?')) {
+      if (editingQuotation && onCancelEdit) onCancelEdit();
       clearFormAndDraftState();
     }
   };
@@ -1725,9 +1736,8 @@ export const QuotationBuilder: React.FC<QuotationBuilderProps> = ({
     try {
       const quot = generateQuotationData();
       const savedQuotation = (await onSaveQuotation(quot)) || quot;
-      if (editingQuotation && onCancelEdit) onCancelEdit();
-      clearFormAndDraftState();
-      onPreviewPrint(savedQuotation);
+      setIsSaved(true);
+      onPreviewPrint(savedQuotation, { fromBuilder: true });
     } catch (err: any) {
       setSaveError(err?.message || 'Failed to save quotation before printing.');
     } finally {
